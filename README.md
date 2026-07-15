@@ -16,6 +16,8 @@ The river **mirrors the skyline** with real planar reflections, the golden hour 
 
 The river isn't game-designer squiggle — the three channels are **medial-axis centerlines extracted from real GIS hydrography** of the Chicago Area Waterway System (IEPA/USGS bank-line data), with channel widths measured from the same survey. All three branches meet at the true Wolf Point junction, and the Main Stem jogs north at Trump Tower exactly like the real river does.
 
+And it's built like the real thing vertically: the river runs in a **trough a full level (~20 ft) below the street grid**, just like Upper Wacker Drive — you race down at water level between tall quay walls, with the Riverwalk promenade at the water's edge and the Loop's dense wall of buildings rising from the street above.
+
 Along the banks, modeled from their actual footprints and heights:
 
 - **Marina City** corncobs, **Willis Tower**'s nine stepped tubes, **Trump Tower**, the **Wrigley Building** clock tower, **Tribune Tower**'s gothic crown, **Merchandise Mart**, **333 W Wacker**'s curved green glass at the bend, **St. Regis**, **Aqua**, the **Jewelers Building** cupolas, **Civic Opera House**, **150 N Riverside** on its impossible base, **River Point**, **Lake Point Tower**, and more — plus landmark callouts as you pass.

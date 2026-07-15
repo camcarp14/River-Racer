@@ -7,8 +7,8 @@
   const RW = {};
   const U = () => RR.U;
   let rng;
-  const GY = () => RR.City.GROUND_Y;   // upper street level (2.3)
-  const PY = 1.0;                       // lower promenade height above the water
+  const GY = () => RR.City.GROUND_Y;   // upper street level (~6m)
+  const PY = 1.5;                       // lower promenade — the walkway a few feet above the water
   const PROM = 9;                       // promenade reaches w .. w+9
 
   let deck = [], flat = [], wall = [], bright = [];   // geometry buckets

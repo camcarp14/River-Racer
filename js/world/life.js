@@ -3,7 +3,7 @@
 (function () {
   const LIFE = {};
   const U = () => RR.U;
-  const PY = 1.0;                 // promenade height (matches riverwalk.js)
+  const PY = 1.5;                 // promenade height (matches riverwalk.js)
 
   let people, peopleData = [], nWalk = 0;
   let bikes, bikeData = [];

@@ -19,7 +19,7 @@
     const C = window.CHICAGO;
     const lake = C.lake;
     const geoms = [];
-    const GY = RR.City.GROUND_Y;
+    const GY = 2.2;              // the lakefront sits near water level, not up at the downtown street grid
 
     // ---------- Chicago Harbor Lock: concrete chamber walls + gate machinery ----------
     const lock = lake.lock;

@@ -2535,7 +2535,9 @@ window.CHICAGO = {
     return flatMat;
   };
 
-  const GROUND_Y = 2.3;                       // street level above water
+  // Upper Wacker / street grid sits a full level (~20 ft) above the river, matching the
+  // bascule bridge decks — the river runs in a trough down at water level.
+  const GROUND_Y = 6.0;
   CITY.GROUND_Y = GROUND_Y;
 
   // keep-out: signed clearance to the NEAREST water edge — channels AND the lake basin.
@@ -2728,60 +2730,90 @@ window.CHICAGO = {
       }
     }
 
-    for (let gx = -22; gx <= 24; gx++) {
-      for (let gz = -20; gz <= 22; gz++) {
+    // place one building, footprint keep-out checked; returns true if placed
+    function placeBuilding(bxx, bzz, w, d, dLoop, loRise) {
+      const halfDiag = Math.hypot(w, d) * 0.5;
+      if (landClearance(bxx, bzz) < halfDiag + 2) return false;          // whole footprint must be on dry land
+      if (bxx > C.lake.openWaterX - halfDiag - 18) return false;
+      let h;
+      if (loRise) h = 14 + rng() * 46;
+      else h = (20 + rng() * rng() * 165) * U().clamp(1.4 - dLoop / 2100, 0.3, 1.2);
+      if (landClearance(bxx, bzz) < 70) h = Math.min(h, 34 + rng() * 60);  // step down toward the water
+      h = Math.max(11, h);
+      const g = towerGeom(w, h, d, bxx, bzz, 0);
+      g.translate(0, GROUND_Y, 0);
+      tintGeom(g, palettes[Math.floor(rng() * palettes.length)], 0.22, rng);
+      geoms.push(g);
+      // ground-floor retail band (darker base) for street-level realism
+      const band = towerGeom(w + 0.4, 4.5, d + 0.4, bxx, bzz, 0);
+      band.translate(0, GROUND_Y, 0);
+      tintGeom(band, 0x3b3f45, 0.1, rng); geoms.push(band);
+      if (h > 90 && rng() > 0.4) {                                       // setback crown
+        const g2 = towerGeom(w * 0.62, h * 0.28, d * 0.62, bxx, bzz, 0);
+        g2.translate(0, GROUND_Y + h, 0);
+        tintGeom(g2, palettes[Math.floor(rng() * palettes.length)], 0.22, rng);
+        geoms.push(g2);
+        roofClutter(bxx, bzz, GROUND_Y + h + h * 0.28, w * 0.62, d * 0.62);
+      } else {
+        roofClutter(bxx, bzz, GROUND_Y + h, w, d);
+      }
+      return true;
+    }
+
+    // ---- riverfront building wall: a near-continuous line of mid/low-rise right along the banks ----
+    for (const key in RR.River.paths) {
+      if (key.startsWith('lake')) continue;
+      const p = RR.River.paths[key];
+      for (let i = 3; i < p.n - 3; i += 3) {
+        let tx = p.x[i + 1] - p.x[i - 1], tz = p.z[i + 1] - p.z[i - 1];
+        const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
+        for (const s of [-1, 1]) {
+          const w = 26 + rng() * 26, d = 24 + rng() * 22;
+          const set = p.w[i] + 15 + d / 2;                               // just behind street + riverwalk
+          const bxx = p.x[i] - tz * set * s, bzz = p.z[i] + tx * set * s;
+          if (bxx > C.lake.openWaterX - 40) continue;
+          if (nearBridge(bxx, bzz, 26)) continue;                        // leave room for the bridge approaches
+          let ok = true;
+          for (const l of lm) if (Math.abs(l.x - bxx) < l.w / 2 + 30 && Math.abs(l.z - bzz) < l.d / 2 + 30) { ok = false; break; }
+          if (ok) placeBuilding(bxx, bzz, w, d, Math.hypot(bxx - cx0, bzz - cz0), rng() < 0.5);
+        }
+      }
+    }
+
+    // ---- Loop street-grid fill behind the riverfront ----
+    for (let gx = -24; gx <= 26; gx++) {
+      for (let gz = -22; gz <= 24; gz++) {
         const bx = gx * (BLOCK + STREET), bz = gz * (BLOCK + STREET);
         if (bx > C.lake.openWaterX - 90) continue;                       // lakefront park stays open
         const clear = landClearance(bx, bz);
         if (clear < 4) continue;                                         // block center basically in the water
         let owned = false;
         for (const l of lm) {
-          if (Math.abs(l.x - bx) < (l.w / 2 + 60) && Math.abs(l.z - bz) < (l.d / 2 + 60)) { owned = true; break; }
+          if (Math.abs(l.x - bx) < (l.w / 2 + 58) && Math.abs(l.z - bz) < (l.d / 2 + 58)) { owned = true; break; }
         }
         if (owned) continue;
         const dLoop = Math.hypot(bx - cx0, bz - cz0);
-        if (dLoop > 2600) continue;
+        if (dLoop > 3100) continue;
 
-        // some near-water blocks become riverfront parks instead of towers
-        if (clear < 60 && rng() < 0.22) {
-          const tile = new THREE.PlaneGeometry(BLOCK - 6, BLOCK - 6);
+        // occasional pocket park right at the water (much rarer now)
+        if (clear < 45 && rng() < 0.1) {
+          const tile = new THREE.PlaneGeometry(BLOCK - 8, BLOCK - 8);
           tile.rotateX(-Math.PI / 2); tile.translate(bx, GROUND_Y + 0.02, bz);
           tintGeom(tile, 0x4f7a3e, 0.14, rng); detailGeoms.push(tile);
-          const nT = 4 + Math.floor(rng() * 6);
-          for (let t = 0; t < nT; t++) {
+          for (let t = 0; t < 5 + (rng() * 5 | 0); t++) {
             const tx = bx + (rng() - 0.5) * (BLOCK - 16), tz = bz + (rng() - 0.5) * (BLOCK - 16);
             if (landClearance(tx, tz) > 3) treeAt(dressGeoms, tx, tz, 0.9 + rng() * 0.4);
           }
           continue;
         }
 
-        const density = U().clamp(1.25 - dLoop / 2200, 0.2, 1);
-        if (rng() > density + 0.2) continue;
-        const nBld = 1 + Math.floor(rng() * 2.2 * density + 0.5);
+        const density = U().clamp(1.45 - dLoop / 2800, 0.45, 1);
+        if (rng() > density + 0.35) continue;                            // skip far fewer blocks
+        const nBld = 2 + Math.floor(rng() * 2.6 * density);              // pack the block
         for (let b = 0; b < nBld; b++) {
-          const w = 22 + rng() * 44, d = 22 + rng() * 44;
+          const w = 20 + rng() * 44, d = 20 + rng() * 44;
           const ox = (rng() - 0.5) * (BLOCK - w), oz = (rng() - 0.5) * (BLOCK - d);
-          const bxx = bx + ox, bzz = bz + oz;
-          const halfDiag = Math.hypot(w, d) * 0.5;
-          // FOOTPRINT keep-out: the whole building, not just its center, must sit on dry land
-          if (landClearance(bxx, bzz) < halfDiag + 3) continue;
-          if (bxx > C.lake.openWaterX - halfDiag - 20) continue;
-          let h = (18 + rng() * rng() * 155) * U().clamp(1.35 - dLoop / 1900, 0.25, 1.15);
-          if (landClearance(bxx, bzz) < 80) h = Math.min(h, 55 + rng() * 55);   // step down toward the water
-          h = Math.max(12, h);
-          const g = towerGeom(w, h, d, bxx, bzz, 0);
-          g.translate(0, GROUND_Y, 0);
-          tintGeom(g, palettes[Math.floor(rng() * palettes.length)], 0.22, rng);
-          geoms.push(g);
-          if (h > 85 && rng() > 0.4) {                                   // setback crown
-            const g2 = towerGeom(w * 0.62, h * 0.28, d * 0.62, bxx, bzz, 0);
-            g2.translate(0, GROUND_Y + h, 0);
-            tintGeom(g2, palettes[Math.floor(rng() * palettes.length)], 0.22, rng);
-            geoms.push(g2);
-            roofClutter(bxx, bzz, GROUND_Y + h + h * 0.28, w * 0.62, d * 0.62);
-          } else {
-            roofClutter(bxx, bzz, GROUND_Y + h, w, d);
-          }
+          placeBuilding(bx + ox, bz + oz, w, d, dLoop, rng() < 0.28);
         }
       }
     }
@@ -2860,8 +2892,8 @@ window.CHICAGO = {
   const RW = {};
   const U = () => RR.U;
   let rng;
-  const GY = () => RR.City.GROUND_Y;   // upper street level (2.3)
-  const PY = 1.0;                       // lower promenade height above the water
+  const GY = () => RR.City.GROUND_Y;   // upper street level (~6m)
+  const PY = 1.5;                       // lower promenade — the walkway a few feet above the water
   const PROM = 9;                       // promenade reaches w .. w+9
 
   let deck = [], flat = [], wall = [], bright = [];   // geometry buckets
@@ -3702,7 +3734,7 @@ window.CHICAGO = {
     const C = window.CHICAGO;
     const lake = C.lake;
     const geoms = [];
-    const GY = RR.City.GROUND_Y;
+    const GY = 2.2;              // the lakefront sits near water level, not up at the downtown street grid
 
     // ---------- Chicago Harbor Lock: concrete chamber walls + gate machinery ----------
     const lock = lake.lock;
@@ -4047,7 +4079,7 @@ window.CHICAGO = {
 (function () {
   const LIFE = {};
   const U = () => RR.U;
-  const PY = 1.0;                 // promenade height (matches riverwalk.js)
+  const PY = 1.5;                 // promenade height (matches riverwalk.js)
 
   let people, peopleData = [], nWalk = 0;
   let bikes, bikeData = [];
