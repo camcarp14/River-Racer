@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>River Racer — Chicago</title>
+<style>
+  :root {
+    --chi-blue: #7ec8e3;      /* Chicago flag light blue */
+    --chi-red: #ff3b30;       /* Chicago flag star red */
+    --ink: #0b1e2d;
+    --gold: #ffc857;
+    --hud-bg: rgba(6, 20, 32, 0.72);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0b1e2d; }
+  body { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; color: #eaf6ff; user-select: none; -webkit-user-select: none; }
+  #gl { position: fixed; inset: 0; display: block; }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; inset: 0; pointer-events: none; display: none; }
+  #hud.on { display: block; }
+  .hud-panel { position: absolute; background: var(--hud-bg); border: 1px solid rgba(126,200,227,.35); border-radius: 10px; backdrop-filter: blur(4px); }
+  #speedo { right: 22px; bottom: 20px; width: 190px; padding: 12px 16px 10px; text-align: right; }
+  #speed-num { font-size: 52px; font-weight: 800; font-style: italic; line-height: 1; letter-spacing: -2px; color: #fff; text-shadow: 0 0 18px rgba(126,200,227,.8); }
+  #speed-unit { font-size: 13px; letter-spacing: 3px; color: var(--chi-blue); font-weight: 700; }
+  #throttle-bar { height: 5px; background: rgba(255,255,255,.15); border-radius: 3px; margin-top: 8px; overflow: hidden; }
+  #throttle-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--chi-blue), var(--gold)); border-radius: 3px; }
+  #race-info { left: 22px; top: 18px; padding: 10px 18px; }
+  #pos-big { font-size: 44px; font-weight: 800; font-style: italic; line-height: 1; color: var(--gold); text-shadow: 0 2px 12px rgba(0,0,0,.6); display: inline-block; }
+  #pos-suffix { font-size: 18px; font-weight: 700; color: var(--gold); vertical-align: top; }
+  #pos-total { font-size: 15px; color: #9fc9dd; margin-left: 6px; }
+  #lap-line { font-size: 13px; letter-spacing: 2px; color: var(--chi-blue); font-weight: 700; margin-top: 3px; }
+  #timer { left: 50%; top: 16px; transform: translateX(-50%); padding: 8px 22px; font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: 1px; }
+  #timer small { display: block; font-size: 10px; letter-spacing: 3px; color: var(--chi-blue); text-align: center; }
+  #checkpoint-flash { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); font-size: 28px; font-weight: 800; font-style: italic; color: var(--gold); text-shadow: 0 0 22px rgba(255,200,87,.9); opacity: 0; transition: opacity .25s; }
+  #wrongway { position: absolute; left: 50%; top: 32%; transform: translateX(-50%); font-size: 40px; font-weight: 900; color: var(--chi-red); text-shadow: 0 0 24px rgba(255,59,48,.8); display: none; animation: blink .5s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: .15; } }
+  #countdown { position: absolute; left: 50%; top: 38%; transform: translate(-50%,-50%); font-size: 140px; font-weight: 900; font-style: italic; color: #fff; text-shadow: 0 0 40px rgba(126,200,227,.9), 0 6px 0 rgba(0,0,0,.35); display: none; }
+  #minimap { position: absolute; right: 22px; top: 18px; width: 200px; height: 260px; border-radius: 12px; border: 1px solid rgba(126,200,227,.35); background: var(--hud-bg); }
+  #landmark-tag { position: absolute; left: 50%; bottom: 108px; transform: translateX(-50%); font-size: 15px; letter-spacing: 2px; font-weight: 700; color: #cfeaf7; background: var(--hud-bg); border: 1px solid rgba(126,200,227,.3); border-radius: 20px; padding: 6px 18px; opacity: 0; transition: opacity .5s; }
+  #boost-hint { position: absolute; left: 22px; bottom: 20px; font-size: 12px; color: #9fc9dd; background: var(--hud-bg); border-radius: 8px; padding: 8px 12px; line-height: 1.7; border: 1px solid rgba(126,200,227,.2); }
+  #boost-hint b { color: #fff; }
+
+  /* ---------- Menus ---------- */
+  #menu { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; z-index: 10; }
+  #menu.off { display: none; }
+  .stars { letter-spacing: 12px; color: var(--chi-red); font-size: 22px; text-shadow: 0 0 12px rgba(255,59,48,.5); }
+  #title { font-size: clamp(54px, 9vw, 118px); font-weight: 900; font-style: italic; letter-spacing: -3px; line-height: .95; text-align: center;
+           background: linear-gradient(180deg, #ffffff 25%, var(--chi-blue) 60%, #2d8bb5 100%);
+           -webkit-background-clip: text; background-clip: text; color: transparent;
+           filter: drop-shadow(0 4px 0 rgba(8,40,60,.9)) drop-shadow(0 10px 30px rgba(0,0,0,.5)); }
+  #subtitle { font-size: clamp(13px, 1.6vw, 19px); letter-spacing: 8px; color: var(--gold); font-weight: 700; margin-top: 10px; text-shadow: 0 2px 8px rgba(0,0,0,.7); }
+  .menu-list { margin-top: 44px; display: flex; flex-direction: column; gap: 10px; min-width: 340px; }
+  .menu-item { pointer-events: auto; cursor: pointer; text-align: center; font-size: 21px; font-weight: 700; letter-spacing: 3px; padding: 13px 30px;
+               color: #d7edf8; background: rgba(6,20,32,.68); border: 1px solid rgba(126,200,227,.25); border-radius: 10px; transition: all .12s; }
+  .menu-item.sel, .menu-item:hover { background: rgba(126,200,227,.22); border-color: var(--chi-blue); color: #fff; transform: scale(1.04); box-shadow: 0 0 24px rgba(126,200,227,.25); }
+  .menu-item.dim { opacity: .45; }
+  .menu-note { margin-top: 26px; font-size: 12px; letter-spacing: 2px; color: #8fb8cc; text-align: center; line-height: 2; }
+  .menu-note b { color: #d7edf8; }
+  #select-title { font-size: 34px; font-weight: 800; font-style: italic; letter-spacing: 2px; margin-bottom: 6px; text-shadow: 0 2px 10px rgba(0,0,0,.8); }
+  #select-sub { font-size: 13px; letter-spacing: 4px; color: var(--chi-blue); margin-bottom: 24px; }
+  #cards { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; max-width: 1100px; }
+  .card { pointer-events: auto; cursor: pointer; width: 235px; background: rgba(6,20,32,.78); border: 1px solid rgba(126,200,227,.22); border-radius: 14px; padding: 14px; transition: all .15s; }
+  .card.sel { border-color: var(--gold); box-shadow: 0 0 30px rgba(255,200,87,.28); transform: translateY(-6px); }
+  .card h3 { font-size: 17px; font-style: italic; letter-spacing: 1px; color: #fff; }
+  .card .tag { font-size: 10px; letter-spacing: 2px; color: var(--gold); font-weight: 700; }
+  .card canvas { width: 100%; height: 110px; border-radius: 8px; background: rgba(11,30,45,.6); margin: 8px 0; }
+  .card .desc { font-size: 11.5px; color: #a8cbdc; line-height: 1.5; min-height: 50px; }
+  .statbar { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 10px; letter-spacing: 1px; color: #9fc9dd; }
+  .statbar .track { flex: 1; height: 4px; background: rgba(255,255,255,.12); border-radius: 2px; }
+  .statbar .fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--chi-blue), var(--gold)); }
+  #results-list { margin-top: 24px; min-width: 460px; }
+  .result-row { display: flex; justify-content: space-between; padding: 10px 22px; margin: 6px 0; background: rgba(6,20,32,.7); border-radius: 8px; border: 1px solid rgba(126,200,227,.15); font-size: 17px; }
+  .result-row.you { border-color: var(--gold); background: rgba(255,200,87,.12); font-weight: 800; }
+  .result-row .t { font-variant-numeric: tabular-nums; color: #9fc9dd; }
+  #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity .4s; z-index: 50; }
+  #loading { position: fixed; inset: 0; background: #0b1e2d; z-index: 100; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 18px; }
+  #loading .bar { width: 280px; height: 6px; background: rgba(126,200,227,.15); border-radius: 3px; overflow: hidden; }
+  #loading .fill { width: 0%; height: 100%; background: var(--chi-blue); transition: width .2s; }
+  #loading .msg { font-size: 12px; letter-spacing: 4px; color: var(--chi-blue); }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="loading"><div id="load-title" style="font-size:28px;font-weight:900;font-style:italic;letter-spacing:-1px;">RIVER RACER</div><div class="bar"><div class="fill" id="load-fill"></div></div><div class="msg" id="load-msg">DREDGING THE RIVER…</div></div>
+
+<div id="hud">
+  <div id="race-info" class="hud-panel"><span id="pos-big">1</span><span id="pos-suffix">ST</span><span id="pos-total">/ 6</span><div id="lap-line">CHECKPOINT 0/12</div></div>
+  <div id="timer" class="hud-panel"><small>RACE TIME</small><span id="timer-num">0:00.00</span></div>
+  <canvas id="minimap" width="200" height="260"></canvas>
+  <div id="speedo" class="hud-panel"><div id="speed-num">0</div><div id="speed-unit">MPH</div><div id="throttle-bar"><div id="throttle-fill"></div></div></div>
+  <div id="checkpoint-flash"></div>
+  <div id="wrongway">WRONG WAY!</div>
+  <div id="countdown"></div>
+  <div id="landmark-tag"></div>
+  <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake<br><b>SHIFT</b> trim boost &nbsp;<b>C</b> camera &nbsp;<b>R</b> reset &nbsp;<b>ESC</b> pause</div>
+</div>
+
+<div id="menu"></div>
+<div id="fade"></div>
+
+<script src="lib/three.min.js"></script>
+<script src="js/core/utils.js"></script>
+<script src="js/data/chicago.js"></script>
+<script src="js/core/engine.js"></script>
+<script src="js/core/input.js"></script>
+<script src="js/core/camera.js"></script>
+<script src="js/world/river.js"></script>
+<script src="js/world/sky.js"></script>
+<script src="js/world/water.js"></script>
+<script src="js/world/city.js"></script>
+<script src="js/world/landmarks.js"></script>
+<script src="js/world/bridges.js"></script>
+<script src="js/world/lake.js"></script>
+<script src="js/game/boats.js"></script>
+<script src="js/game/physics.js"></script>
+<script src="js/game/ai.js"></script>
+<script src="js/game/effects.js"></script>
+<script src="js/game/audio.js"></script>
+<script src="js/game/race.js"></script>
+<script src="js/ui/hud.js"></script>
+<script src="js/ui/minimap.js"></script>
+<script src="js/ui/menus.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
