@@ -4,6 +4,8 @@
   const B = {};
   const U = () => RR.U;
   let rng;
+  const ANIMATED = { 'LaSalle St': 1, 'Clark St': 1, 'Dearborn St': 1, 'Columbus Dr': 1 };
+  let animLeaves = [];
 
   const RED = 0x7a3428;          // Chicago bascule oxide
   const RED_DK = 0x5e2820;
@@ -143,29 +145,57 @@
 
     // ---- roadway deck + sidewalks ----
     const deckW = bridge.kind === 'deck' ? 22 : 13;
-    cross(deckW, 1.6, span, 0, cl + 0.8, bridge.kind === 'deck' ? CONC : RED);
-    for (const s of [-1, 1]) {                            // raised sidewalks
-      cross(2.2, 0.4, span, s * (deckW / 2 - 1.1), cl + 1.8, 0x8a8880, 0.05);
+    const anim = (bridge.kind === 'bascule' || bridge.kind === 'bascule2') && ANIMATED[bridge.name];
+
+    // each half of the deck as a leaf that pivots up at its bank (bascule bridge opening)
+    function buildLeaf(s) {
+      const parts = [];
+      const gap = 1.3, acrossLen = half - gap, cAcross = ((gap + half) / 2) * s;
+      function piece(aSize, h, alongSize, alongC, oy, color, jit) {
+        const g = new THREE.BoxGeometry(aSize, h, alongSize);
+        g.rotateY(ang);
+        g.translate(cx + tx * alongC - tz * cAcross, oy, cz + tz * alongC + tx * cAcross);
+        RR.City.tintGeom(g, color, jit == null ? 0.05 : jit, rng);
+        parts.push(g);
+      }
+      piece(acrossLen, 1.4, deckW, 0, cl + 0.8, RED);
+      piece(acrossLen, 0.4, 2.2, deckW / 2 - 1.1, cl + 1.8, 0x8a8880);
+      piece(acrossLen, 0.4, 2.2, -(deckW / 2 - 1.1), cl + 1.8, 0x8a8880);
+      for (const so of [-1, 1]) {
+        piece(acrossLen, 2.4, 1.1, so * (deckW / 2 - 0.4), cl + 1.5, RED_DK);
+        piece(acrossLen, 0.95, 0.3, so * (deckW / 2 + 0.1), cl + 2.4, RED);
+      }
+      const geo = RR.City.mergeGeoms(parts);
+      const px = cx - tz * half * s, py = cl + 0.8, pz = cz + tx * half * s;
+      geo.translate(-px, -py, -pz);
+      const mesh = new THREE.Mesh(geo, RR.City.flatMaterial());
+      mesh.castShadow = true;
+      const hinge = new THREE.Group();
+      hinge.position.set(px, py, pz);
+      hinge.add(mesh);
+      RR.Engine.scene.add(hinge);
+      animLeaves.push({ hinge, axis: new THREE.Vector3(tx, 0, tz).normalize(), s, phase: ((cx * 0.7 + cz) % 100) / 100 });
     }
-    // side girders
-    for (const s of [-1, 1]) cross(1.1, 2.6, span, s * (deckW / 2 - 0.4), cl + 1.5, RED_DK);
+
+    if (anim) {
+      buildLeaf(1); buildLeaf(-1);
+    } else {
+      cross(deckW, 1.6, span, 0, cl + 0.8, bridge.kind === 'deck' ? CONC : RED);
+      for (const s of [-1, 1]) cross(2.2, 0.4, span, s * (deckW / 2 - 1.1), cl + 1.8, 0x8a8880, 0.05);
+      for (const s of [-1, 1]) cross(1.1, 2.6, span, s * (deckW / 2 - 0.4), cl + 1.5, RED_DK);
+      for (const s of [-1, 1]) {
+        const acr = deckW / 2 + 0.1;
+        cross(0.3, 0.95, span, s * acr, cl + 2.4, RED);
+        cross(0.45, 0.18, span, s * acr, cl + 3.0, 0xcbb59a);
+        for (let a = -half - 4; a <= half + 4; a += 4.5) cylAt(0.13, 1.05, s * acr, a, cl + 2.4, RED_DK, 4);
+      }
+      if (bridge.kind !== 'deck') cross(deckW + 0.5, 1.2, 6, 0, cl + 2.2, RED_DK);
+    }
+
     // counterweight housings, tucked in the pit on the LAND side of each pivot
     if (bridge.kind !== 'deck') {
       for (const s of [-1, 1]) at(6, 4, 9, 0, s * (half + 4), cl - 2, RED_DK, true);
     }
-
-    // ---- balustrade railing: low wall + top rail + balusters (spaced ACROSS the span) ----
-    for (const s of [-1, 1]) {
-      const acr = deckW / 2 + 0.1;                            // railing sits at the deck's along-edge
-      cross(0.3, 0.95, span, s * acr, cl + 2.4, RED);        // low wall, runs across the channel
-      cross(0.45, 0.18, span, s * acr, cl + 3.0, 0xcbb59a);  // pale top rail
-      for (let a = -half - 4; a <= half + 4; a += 4.5) {     // balusters march bank-to-bank
-        cylAt(0.13, 1.05, s * acr, a, cl + 2.4, RED_DK, 4);
-      }
-    }
-
-    // bascule center seam hump
-    if (bridge.kind !== 'deck') cross(deckW + 0.5, 1.2, 6, 0, cl + 2.2, RED_DK);
 
     // corner lamps — at the four deck corners (along-edge × bank)
     for (const so of [-1, 1]) for (const ao of [-1, 1]) bridgeLamp(ao * (deckW / 2 - 0.4), so * (half - 0.5));
@@ -197,6 +227,7 @@
 
   B.init = function () {
     rng = U().mulberry(4242);
+    animLeaves = [];
     const bridges = window.CHICAGO.bridges;
     const S = { geoms: [], sv: [], suv: [], sidx: [], atlas: buildSignAtlas(bridges) };
     bridges.forEach((b, i) => build(b, i, S));
@@ -215,6 +246,17 @@
       m.renderOrder = 1;
       RR.Engine.scene.add(m);
     }
+
+    // raise & lower the bascule leaves on staggered ~30s cycles
+    const MAX_LIFT = 1.12;
+    RR.Engine.onUpdate((dt, t) => {
+      for (const L of animLeaves) {
+        const cyc = ((t * 0.032 + L.phase) % 1 + 1) % 1;
+        let open = 0;
+        if (cyc > 0.35 && cyc < 0.65) open = Math.sin(((cyc - 0.35) / 0.30) * Math.PI);
+        L.hinge.quaternion.setFromAxisAngle(L.axis, L.s * MAX_LIFT * open);
+      }
+    });
   };
 
   RR.Bridges = B;

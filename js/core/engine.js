@@ -46,6 +46,9 @@
     window.addEventListener('resize', onResize);
 
     E.renderer = renderer; E.scene = scene; E.camera = camera;
+
+    if (RR.Reflect) RR.Reflect.init();
+    if (RR.Post) RR.Post.init(renderer);
   };
 
   function onResize() {
@@ -106,7 +109,9 @@
     }
     step(dt);
 
-    renderer.render(scene, camera);
+    if (RR.Reflect && RR.Reflect.enabled) RR.Reflect.update(renderer, scene, camera);
+    if (RR.Post && RR.Post.enabled) RR.Post.render(renderer, scene, camera);
+    else renderer.render(scene, camera);
   }
 
   RR.Engine = E;

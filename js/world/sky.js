@@ -31,12 +31,17 @@
           float h = clamp(vDir.y, 0.0, 1.0);
           vec3 col = mix(cHorizon, cMid, smoothstep(0.0, 0.28, h));
           col = mix(col, cZenith, smoothstep(0.22, 0.75, h));
-          float sunAmt = pow(max(dot(normalize(vDir), sunDir), 0.0), 5.0);
-          col = mix(col, cWest, sunAmt * (1.0 - h * 0.6));
-          float disc = smoothstep(0.9993, 0.9997, dot(normalize(vDir), sunDir));
-          col += vec3(1.0, 0.86, 0.62) * disc * 2.4;
-          float glow = pow(max(dot(normalize(vDir), sunDir), 0.0), 32.0);
-          col += vec3(1.0, 0.72, 0.4) * glow * 0.55;
+          float sd = max(dot(normalize(vDir), sunDir), 0.0);
+          float sunAmt = pow(sd, 4.0);
+          col = mix(col, cWest, sunAmt * (1.0 - h * 0.55));
+          // warm horizon band that glows into the golden hour
+          col = mix(col, vec3(1.0, 0.78, 0.5), pow(1.0 - h, 6.0) * 0.35 * (0.4 + 0.6 * sunAmt));
+          float disc = smoothstep(0.99900, 0.99955, sd);
+          col += vec3(1.0, 0.9, 0.72) * disc * 3.4;          // bright disc — blooms
+          float glow = pow(sd, 22.0);
+          col += vec3(1.0, 0.74, 0.44) * glow * 0.85;
+          float halo = pow(sd, 6.0);
+          col += vec3(1.0, 0.6, 0.34) * halo * 0.28;
           gl_FragColor = vec4(col, 1.0);
         }`,
     });

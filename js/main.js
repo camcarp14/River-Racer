@@ -176,6 +176,17 @@
     RR.Physics.collidePairs(boats);
     for (const b of boats) RR.Physics.applyVisual(b);
 
+    // feed boat positions to the water shader for bow-wave foam
+    if (RR.Water && RR.Water.material) {
+      const u = RR.Water.material.uniforms;
+      const n = Math.min(8, boats.length);
+      u.uNumBoats.value = n;
+      for (let i = 0; i < n; i++) {
+        const b = boats[i];
+        u.uBoats.value[i].set(b.pos.x, b.pos.z, RR.U.clamp(Math.hypot(b.vel.x, b.vel.z) / 12, 0, 1), b.heading);
+      }
+    }
+
     RR.Race.animateGates(t);
     RR.FX.update(boats, dt, t);
     if (!(window.RRTest && window.RRTest._freecam)) RR.Camera.follow(player, dt);

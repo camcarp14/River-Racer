@@ -8,6 +8,7 @@
   let people, peopleData = [], nWalk = 0;
   let bikes, bikeData = [];
   let cars, carData = [];
+  let riverCraft = [];
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1);
   const _up = new THREE.Vector3(0, 1, 0);
 
@@ -134,6 +135,57 @@
     for (let i = 0; i < carList.length; i++) cars.setColorAt(i, new THREE.Color(carList[i].col));
     scene.add(cars);
 
+    // ---------- live river traffic: taxis, a tour boat, kayakers you weave past ----------
+    riverCraft = [];
+    function craftMesh(kind) {
+      const g = new THREE.Group();
+      if (kind === 'kayak') {
+        const k = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.25, 4.6, 6),
+          new THREE.MeshLambertMaterial({ color: [0xe0a53a, 0x36a852, 0xd8412f][(rng() * 3) | 0] }));
+        k.rotation.z = Math.PI / 2; g.add(k);
+        const fig = new THREE.Mesh(mergedFigure(), new THREE.MeshLambertMaterial({ color: 0x2f5aa0 }));
+        fig.scale.set(0.8, 0.7, 0.8); fig.position.y = 0.35; g.add(fig);
+      } else {
+        const taxi = kind === 'taxi';
+        const L = taxi ? 11 : 23, W = taxi ? 4 : 6;
+        const hull = new THREE.Mesh(new THREE.BoxGeometry(W, 1.7, L),
+          new THREE.MeshLambertMaterial({ color: taxi ? 0xf0c020 : 0x22508a }));
+        const hp = hull.geometry.attributes.position;
+        for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getZ(i)) > L * 0.4) hp.setX(i, hp.getX(i) * 0.4); }
+        hull.geometry.computeVertexNormals(); hull.position.y = 0.55; g.add(hull);
+        const deck = new THREE.Mesh(new THREE.BoxGeometry(W - 0.6, 0.3, L - 3), new THREE.MeshLambertMaterial({ color: 0xe8e6de }));
+        deck.position.y = 1.45; g.add(deck);
+        if (!taxi) {
+          const can = new THREE.Mesh(new THREE.BoxGeometry(W - 0.4, 0.16, L - 6), new THREE.MeshLambertMaterial({ color: 0xcf3b2f }));
+          can.position.y = 3.3; g.add(can);
+          for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+            const p = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.9, 5), new THREE.MeshLambertMaterial({ color: 0x8a8f94 }));
+            p.position.set(sx * (W / 2 - 0.5), 2.3, sz * (L / 2 - 3)); g.add(p);
+          }
+        } else {
+          const cab = new THREE.Mesh(new THREE.BoxGeometry(W - 1, 1.1, 3.5), new THREE.MeshLambertMaterial({ color: 0x2b2f36 }));
+          cab.position.set(0, 2.1, -1); g.add(cab);
+        }
+      }
+      g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+      RR.Engine.scene.add(g);
+      return g;
+    }
+    const traffic = [
+      { key: 'main', kind: 'tour', off: 0.5, spd: 6, dir: 1 },
+      { key: 'main', kind: 'taxi', off: -0.55, spd: 9, dir: 1 },
+      { key: 'main', kind: 'kayak', off: -0.62, spd: 2.5, dir: 1 },
+      { key: 'main', kind: 'kayak', off: -0.66, spd: 2.5, dir: 1 },
+      { key: 'south', kind: 'taxi', off: 0.5, spd: 8, dir: 1 },
+      { key: 'north', kind: 'taxi', off: -0.5, spd: 8, dir: -1 },
+    ];
+    for (const t of traffic) {
+      const p = RR.River.paths[t.key]; if (!p) continue;
+      const obst = { x: 0, z: 0, r: t.kind === 'tour' ? 5 : t.kind === 'taxi' ? 3 : 1.5 };
+      RR.River.obstacles.push(obst);
+      riverCraft.push({ g: craftMesh(t.kind), p, d: rng() * p.len, off: t.off, spd: t.spd, dir: t.dir, ph: rng() * 9, obst });
+    }
+
     LIFE._ready = true;
   };
 
@@ -181,6 +233,21 @@
       _m.compose(_p, _q, _s); cars.setMatrixAt(i, _m);
     }
     cars.instanceMatrix.needsUpdate = true;
+
+    // river traffic
+    for (const c of riverCraft) {
+      c.d += c.spd * c.dir * dt;
+      c.d = ((c.d % c.p.len) + c.p.len) % c.p.len;      // loop around the channel
+      const a = U().pathAt(c.p, c.d, bp);
+      const nx = -a.tz, nz = a.tx;
+      const x = a.x + nx * a.w * c.off, z = a.z + nz * a.w * c.off;
+      const amp = RR.River.waveAmp(x, z);
+      const y = U().waterHeight(x, z, t, amp) + 0.1;
+      c.g.position.set(x, y, z);
+      c.g.rotation.y = Math.atan2(a.tx * c.dir, a.tz * c.dir);
+      c.g.rotation.z = Math.sin(t * 0.8 + c.ph) * 0.04 * amp;
+      c.obst.x = x; c.obst.z = z;                        // keep the collision blob under it
+    }
   };
 
   RR.Life = LIFE;

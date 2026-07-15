@@ -10,7 +10,7 @@ Arcade boat racing down the **real Chicago River** and out into **Lake Michigan*
 
 **From the repo:** open `index.html` in any browser.
 
-Runs at 60 fps on any ordinary machine with a GPU — the renderer scales resolution dynamically to hold frame rate, and the whole city draws in a few dozen draw calls.
+The river **mirrors the skyline** with real planar reflections, the golden hour **blooms**, boats kick up **bow-wave foam**, **bascule bridges raise and lower**, and water taxis and tour boats cruise the channels. The renderer scales resolution dynamically to hold frame rate.
 
 ## The map is real
 
@@ -19,7 +19,7 @@ The river isn't game-designer squiggle — the three channels are **medial-axis 
 Along the banks, modeled from their actual footprints and heights:
 
 - **Marina City** corncobs, **Willis Tower**'s nine stepped tubes, **Trump Tower**, the **Wrigley Building** clock tower, **Tribune Tower**'s gothic crown, **Merchandise Mart**, **333 W Wacker**'s curved green glass at the bend, **St. Regis**, **Aqua**, the **Jewelers Building** cupolas, **Civic Opera House**, **150 N Riverside** on its impossible base, **River Point**, **Lake Point Tower**, and more — plus landmark callouts as you pass.
-- **28 bridges** in their real order, each with its **street-name sign** (WELLS ST, WABASH AVE, LAKE SHORE DR…), cream-limestone tender houses with verdigris roofs, baluster railings and lamp posts: the bascule spans of the Loop, Wells and Lake St double-deckers carrying the L, the DuSable/Michigan Ave bridge with four tender houses, and the **Kinzie St rail bridge permanently saluting the sky**.
+- **28 bridges** in their real order, each with its **street-name sign** (WELLS ST, WABASH AVE, LAKE SHORE DR…), cream-limestone tender houses with verdigris roofs, baluster railings and lamp posts: the bascule spans of the Loop, Wells and Lake St double-deckers carrying the L, the DuSable/Michigan Ave bridge with four tender houses, and the **Kinzie St rail bridge permanently saluting the sky**. Several **bascule bridges raise and lower** their leaves on their own cycles.
 - The real **multi-level Chicago Riverwalk**: a lower promenade at the water's edge with quay walls and railings, stepped up to the street, threaded with its themed "rooms" — café pavilions under canopies, umbrella plazas, the stepped **River Theater**, floating gardens and kayak docks — plus docked **architecture-tour boats** and water taxis.
 - A **living city**: crowds of people and cyclists stroll the promenades and **cars stream across every bridge**, all GPU-instanced. Lamp posts, benches, planters, street trees and pocket parks line the upper level — with strict keep-out so nothing but the bridges ever crosses the water.
 - The **Chicago Harbor Lock** (real 24 m chamber — a genuine pinch at speed), **Navy Pier** with a turning **Centennial Wheel**, the **Chicago Harbor Lighthouse**, and a **living harbor**: a marina of moored sailboats, yachts under sail, nav buoys, a lake freighter, and the Gold Coast and Museum Campus skylines low on the far shore.
