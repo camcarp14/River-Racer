@@ -21,8 +21,8 @@
       segments: [{ path: 'south' }, { path: 'main' }],
     },
     {
-      id: 'lakecircuit', name: 'LAKE MICHIGAN CIRCUIT', laps: 3,
-      desc: 'Three laps of open-water chop between Navy Pier, the lighthouse and the breakwater. Big waves, big air.',
+      id: 'lakecircuit', name: 'LAKE MICHIGAN CIRCUIT', laps: 2,
+      desc: 'Two laps of open-water chop around the harbor lighthouse, skimming Navy Pier. Big waves, big air.',
       segments: [{ path: 'lakeLoop' }], loop: true,
     },
   ];
@@ -128,16 +128,17 @@
     };
     buildGates(S);
 
-    // grid placement: staggered rows behind the start
+    // grid placement: staggered rows just past the line (loop seams stay behind everyone)
     const pt = {};
     boats.forEach((b, i) => {
-      const startD = S.route.loop ? S.route.len - 30 - Math.floor(i / 2) * 14 : 26 + Math.floor(i / 2) * 14;
-      U().pathAt(S.route, S.route.loop ? startD % S.route.len : startD, pt);
+      const startD = 26 + Math.floor(i / 2) * 14;
+      U().pathAt(S.route, startD, pt);
       const side = (i % 2 ? 1 : -1) * Math.min(8, pt.w * 0.4);
       b.pos.set(pt.x - pt.tz * side, 0.2, pt.z + pt.tx * side);
       b.heading = Math.atan2(pt.tx, pt.tz);
       b.vel.x = 0; b.vel.z = 0; b.angVel = 0;
-      b.routeD = S.route.loop ? 0 : startD;
+      b.routeD = startD;
+      b._inLap = startD;
       b.lap = 0; b.nextCp = 0; b.finished = false; b.finishTime = 0;
       b.routeHint = null;
       b.boostEnergy = 1;
@@ -149,14 +150,21 @@
   // track progress; returns true the frame the boat crosses a checkpoint
   function updateProgress(b, dt) {
     const route = S.route;
-    const q = U().pathNearest(route, b.pos.x, b.pos.z, b.routeHint, b.routeHint != null ? 40 : 0);
+    let q = U().pathNearest(route, b.pos.x, b.pos.z, b.routeHint, b.routeHint != null ? 40 : 0);
+    if (route.loop && (q.idx > route.n - 6 || q.idx < 4 || q.dist > 25)) {
+      // hinted window can't see across the seam — retry unhinted near the join
+      const q2 = U().pathNearest(route, b.pos.x, b.pos.z);
+      if (q2.dist < q.dist - 0.01) q = q2;
+    }
     b.routeHint = q.idx;
     let d = q.d;
     if (route.loop) {
-      const prev = b.routeD % route.len;
+      // compare raw in-lap distances — never routeD % len, which snaps to ~0 right at the seam
+      const prev = b._inLap == null ? d : b._inLap;
       let delta = d - prev;
       if (delta < -route.len * 0.5) { b.lap++; delta += route.len; if (b.isPlayer && S.phase === 'racing') RACE.onLap && RACE.onLap(b.lap); }
       else if (delta > route.len * 0.5) { delta -= route.len; b.lap = Math.max(0, b.lap - 1); }
+      b._inLap = d;
       b.routeD = b.lap * route.len + d;
       b._backT = delta < -0.5 ? (b._backT || 0) + dt : 0;
     } else {
@@ -170,7 +178,7 @@
     const cps = S.checkpoints;
     const inLapD = route.loop ? b.routeD % route.len : b.routeD;
     while (b.nextCp < cps.length && inLapD > cps[b.nextCp].d - 6 &&
-           U().dist2(b.pos.x, b.pos.z, cps[b.nextCp].x, cps[b.nextCp].z) < 90 * 90) {
+           U().dist2(b.pos.x, b.pos.z, cps[b.nextCp].x, cps[b.nextCp].z) < 130 * 130) {
       b.nextCp++;
       hit = true;
     }

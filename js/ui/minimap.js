@@ -77,8 +77,9 @@
     ctx.beginPath();
     let started = false;
     const inLapD = route.loop ? player.routeD % route.len : player.routeD;
-    for (let d = inLapD; d < Math.min(route.len, inLapD + 2200); d += 40) {
-      const a = RR.U.pathAt(route, d, M._p || (M._p = {}));
+    const ahead = route.loop ? 2200 : Math.min(2200, route.len - inLapD);
+    for (let d = inLapD; d < inLapD + ahead; d += 40) {
+      const a = RR.U.pathAt(route, route.loop ? d % route.len : d, M._p || (M._p = {}));
       const [x, y] = tf(a.x, a.z, cx, cz, scale);
       if (started) ctx.lineTo(x, y); else { ctx.moveTo(x, y); started = true; }
     }

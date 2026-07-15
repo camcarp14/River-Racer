@@ -25,10 +25,12 @@
     const route = pilot.route;
     const speed = Math.hypot(b.vel.x, b.vel.z);
 
-    // progress along route (race.js keeps b.routeD updated)
+    // progress along route (race.js keeps b.routeD updated); loops wrap the lookahead
     const look = 16 + speed * 1.15;
-    U().pathAt(route.path, b.routeD + look, pt);
-    U().pathAt(route.path, b.routeD + look * 2.4, ptFar);
+    const path = route.path;
+    const wrap = (d) => path.loop ? ((d % path.len) + path.len) % path.len : d;
+    U().pathAt(path, wrap(b.routeD + look), pt);
+    U().pathAt(path, wrap(b.routeD + look * 2.4), ptFar);
 
     // corner anticipation: angle between near and far tangents
     const bend = Math.abs(U().wrapAngle(Math.atan2(ptFar.tx, ptFar.tz) - Math.atan2(pt.tx, pt.tz)));

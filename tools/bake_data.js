@@ -60,19 +60,19 @@ const lakeGuide = [
   [3060, -580, 60],                                        // rounding the pier tip, clear of its south face
   [2760, -595, 60],
 ];
+// counter-clockwise oval in the harbor: out along the mouth channel line, around the
+// lighthouse, back west through the corridor between Navy Pier's south face and the shore
 const lakeLoop = [
-  [2150, -60, 55],
-  [2560, -30, 60],
-  [2980, -60, 60],
-  [3230, -160, 55],                                        // lighthouse turn
-  [3310, -340, 55],
-  [3200, -520, 55],
-  [2900, -590, 55],                                        // Navy Pier tip turn
-  [2620, -560, 55],
-  [2360, -500, 55],
-  [2190, -280, 55],
-  [2120, -160, 55],
-  [2150, -60, 55],
+  [2250, -90, 55],
+  [2600, -70, 60],
+  [2950, -90, 60],
+  [3220, -140, 50],
+  [3330, -220, 50],                                        // east of the lighthouse, inside the breakwater
+  [3260, -300, 55],
+  [2950, -280, 60],
+  [2600, -250, 60],
+  [2350, -190, 55],
+  [2250, -90, 55],
 ];
 
 // ---------- bridges (approx crossing coords; builder snaps to channel + aligns to tangent) ----------
