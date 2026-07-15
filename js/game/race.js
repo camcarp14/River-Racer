@@ -84,29 +84,51 @@
       gateGroup.add(L, R);
       state.checkpoints.push({ d, x: pt.x, z: pt.z, L, R });
     }
-    // finish gate: checkered banner between two poles
+    // ---- finish gate: a tall checkered arch with a FINISH banner, flags, and a water line ----
     const fd = route.loop ? route.len : route.len - 12;
     U().pathAt(route, Math.min(fd, route.len - 1), pt);
-    const off = Math.max(6, pt.w - 3);
-    const checker = RR.U.canvasTexture(128, 32, (ctx) => {
-      for (let x = 0; x < 8; x++) for (let y = 0; y < 2; y++) {
-        ctx.fillStyle = (x + y) % 2 ? '#111' : '#fff';
-        ctx.fillRect(x * 16, y * 16, 16, 16);
+    const gOff = Math.max(9, pt.w + 3);
+    const ang = Math.atan2(pt.tx, pt.tz);
+    const checkerTex = RR.U.canvasTexture(128, 128, (ctx, w, h) => {
+      const n = 8, cs = w / n;
+      for (let x = 0; x < n; x++) for (let y = 0; y < n; y++) {
+        ctx.fillStyle = (x + y) % 2 ? '#141414' : '#f5f5f5';
+        ctx.fillRect(x * cs, y * cs, cs, cs);
       }
     });
-    const banner = new THREE.Mesh(new THREE.PlaneGeometry(off * 2, 3),
-      new THREE.MeshBasicMaterial({ map: checker, side: THREE.DoubleSide }));
-    banner.position.set(pt.x, 10, pt.z);
-    banner.rotation.y = Math.atan2(pt.tx, pt.tz);
-    gateGroup.add(banner);
+    checkerTex.wrapS = checkerTex.wrapT = THREE.RepeatWrapping;
+    const finishTex = RR.U.canvasTexture(512, 128, (ctx, w, h) => {
+      const cs = 32;
+      for (let x = 0; x < w / cs; x++) for (let r = 0; r < 2; r++) {
+        ctx.fillStyle = (x + r) % 2 ? '#141414' : '#f5f5f5';
+        ctx.fillRect(x * cs, r === 0 ? 0 : h - cs, cs, cs);
+      }
+      ctx.fillStyle = '#0b1e2d'; ctx.fillRect(0, cs, w, h - 2 * cs);
+      ctx.fillStyle = '#ffc857'; ctx.font = 'bold 60px Arial, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('FINISH', w / 2, h / 2 + 2);
+    });
+    const finishFlags = [];
     for (const s of [-1, 1]) {
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 12, 8),
-        new THREE.MeshStandardMaterial({ color: 0xe8e8ea, roughness: 0.4 }));
-      pole.position.set(pt.x + pt.tz * off * s, 6, pt.z - pt.tx * off * s);
-      gateGroup.add(pole);
+      const px = pt.x + pt.tz * gOff * s, pz = pt.z - pt.tx * gOff * s;
+      const poleTex = checkerTex.clone(); poleTex.repeat.set(1, 9); poleTex.needsUpdate = true;
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.8, 17, 10), new THREE.MeshBasicMaterial({ map: poleTex }));
+      pole.position.set(px, 8.5, pz); gateGroup.add(pole);
+      const flag = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 2.2, 6, 1), new THREE.MeshBasicMaterial({ map: checkerTex, side: THREE.DoubleSide }));
+      flag.position.set(px + pt.tx * 1.7, 17.5, pz + pt.tz * 1.7); flag.rotation.y = ang;
+      gateGroup.add(flag); finishFlags.push(flag);
     }
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(gOff * 2, 3.0, 1.4), new THREE.MeshBasicMaterial({ map: finishTex }));
+    beam.position.set(pt.x, 15, pt.z); beam.rotation.y = ang; gateGroup.add(beam);
+    // checkered line painted across the water
+    const stripGeo = new THREE.PlaneGeometry(gOff * 2, 7); stripGeo.rotateX(-Math.PI / 2);
+    const stripTex = checkerTex.clone(); stripTex.repeat.set(gOff / 2, 2); stripTex.needsUpdate = true;
+    const strip = new THREE.Mesh(stripGeo, new THREE.MeshBasicMaterial({ map: stripTex, transparent: true, opacity: 0.8, depthWrite: false }));
+    strip.rotation.y = ang; strip.position.set(pt.x, 0.35, pt.z); strip.renderOrder = 2;
+    gateGroup.add(strip);
     state.finishD = fd;
     state.finishGate = { x: pt.x, z: pt.z };
+    state.finishFlags = finishFlags;
   }
 
   // ---------- race state ----------

@@ -41,6 +41,7 @@
 
   function finishBoot() {
     setLoad(1, 'READY');
+    if (RR.Theme) { RR.Theme.buildLamps(); RR.Theme.apply('day'); }
     RR.Menus.init(startRace);
     RR.Menus.onResume = () => { mode = 'race'; };
     RR.Menus.onQuit = quitToTitle;
@@ -136,6 +137,7 @@
   window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyC' && mode === 'race') RR.Camera.cycle();
     if (e.code === 'KeyR' && mode === 'race') resetToCourse();
+    if (e.code === 'KeyN' && RR.Theme) { const m = RR.Theme.toggle(); if (RR.HUD && RR.HUD.flash) RR.HUD.flash(m === 'night' ? 'NIGHT' : 'DAY'); }
     if (e.code === 'Escape' && mode === 'race') { mode = 'paused'; RR.Menus.showPause(); }
     RR.Audio.init(); RR.Audio.resume();
   }, { once: false });
@@ -246,6 +248,7 @@
       window.RRTest._freecam = true;
     },
     clearCamera: () => { window.RRTest._freecam = false; },
+    night: (on) => { if (RR.Theme) RR.Theme.apply(on ? 'night' : 'day'); },
     // hold full quality (disable adaptive downgrade) — used by visual tests on the software renderer
     pinQuality: () => { RR.Engine.setAutoQuality(false); if (RR.Reflect) RR.Reflect.enabled = true; if (RR.Post) RR.Post.enabled = true; },
     getState: () => ({

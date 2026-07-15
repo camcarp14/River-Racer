@@ -34,6 +34,12 @@
     cpFlashT = 1.1;
   };
 
+  H.flash = function (text) {
+    els.cpFlash.textContent = text;
+    els.cpFlash.style.opacity = 1;
+    cpFlashT = 0.9;
+  };
+
   // landmark callouts as you pass them
   H.tagLandmark = function (name) {
     if (name === lastTagged) return;

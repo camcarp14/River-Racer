@@ -33,11 +33,17 @@
 
     const tx = boat.pos.x - s * back;
     const tz = boat.pos.z - c * back;
-    const ty = boat.pos.y + up;
+    let ty = boat.pos.y + up;
+    // duck under bridge decks so the span never cuts across the view
+    if (RR.Bridges && RR.Bridges.duckY) {
+      const deckA = RR.Bridges.duckY(tx, tz), deckB = RR.Bridges.duckY(boat.pos.x, boat.pos.z);
+      const deck = Math.min(deckA, deckB);
+      if (isFinite(deck)) ty = Math.min(ty, deck - 1.4);
+    }
     const k = 1 - Math.exp(-m.stiff * dt);
     pos.x += (tx - pos.x) * k;
     pos.z += (tz - pos.z) * k;
-    pos.y += (ty - pos.y) * (1 - Math.exp(-(m.stiff + 2) * dt));
+    pos.y += (ty - pos.y) * (1 - Math.exp(-(m.stiff + 3) * dt));
 
     // never sink the camera under the waves
     const wh = U().waterHeight(pos.x, pos.z, RR.Engine.time(), 1) + 0.9;

@@ -94,10 +94,29 @@
     return tex;
   }
 
+  // emissive map aligned to the facade UVs: a scatter of lit windows for night mode
+  function nightWindows() {
+    const tex = U().canvasTexture(128, 128, (ctx, w, h) => {
+      ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, w, h);
+      const rng = U().mulberry(313);
+      for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+        if (rng() < 0.5) {
+          ctx.fillStyle = rng() < 0.72 ? '#ffcf82' : '#bcd6ff';   // warm interiors, some cool
+          ctx.fillRect(x * 32 + 5, y * 32 + 6, 22, 18);
+        }
+      }
+    });
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    return tex;
+  }
+
   let cityMat;
   CITY.material = function () {
     if (!cityMat) {
-      cityMat = new THREE.MeshLambertMaterial({ vertexColors: true, map: facadeTexture() });
+      cityMat = new THREE.MeshLambertMaterial({
+        vertexColors: true, map: facadeTexture(),
+        emissiveMap: nightWindows(), emissive: 0xffffff, emissiveIntensity: 0,   // theme raises this at night
+      });
     }
     return cityMat;
   };
@@ -263,6 +282,7 @@
       const lamp = new THREE.SphereGeometry(0.3, 6, 5);
       lamp.translate(px + 0.38, GROUND_Y + 4.8, pz);
       tintGeom(lamp, 0xffe6b0, 0, rng); arr.push(lamp);
+      if (RR.Theme) RR.Theme.addLamp(px + 0.38, GROUND_Y + 4.8, pz, 0xffe6b0);
     }
     function planterAt(arr, px, pz) {
       const box = new THREE.BoxGeometry(2.4, 0.9, 1.2);
@@ -322,6 +342,10 @@
       const band = towerGeom(w + 0.4, 4.5, d + 0.4, bxx, bzz, 0);
       band.translate(0, GROUND_Y, 0);
       tintGeom(band, 0x3b3f45, 0.1, rng); geoms.push(band);
+      // parapet cap for a crisp roofline (flat, so it doesn't glow at night)
+      const cap = new THREE.BoxGeometry(w + 0.8, 1.3, d + 0.8);
+      cap.translate(bxx, GROUND_Y + h - 0.35, bzz);
+      tintGeom(cap, 0x565c64, 0.14, rng); detailGeoms.push(cap);
       if (h > 90 && rng() > 0.4) {                                       // setback crown
         const g2 = towerGeom(w * 0.62, h * 0.28, d * 0.62, bxx, bzz, 0);
         g2.translate(0, GROUND_Y + h, 0);

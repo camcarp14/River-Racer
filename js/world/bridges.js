@@ -6,6 +6,17 @@
   let rng;
   const ANIMATED = { 'LaSalle St': 1, 'Clark St': 1, 'Dearborn St': 1, 'Columbus Dr': 1 };
   let animLeaves = [];
+  let decks = [];      // {x, z, cl} snapped deck positions, so the chase cam can duck under them
+
+  // lowest bridge deck within range of (x,z), or Infinity if none near
+  B.duckY = function (x, z) {
+    let best = Infinity;
+    for (let i = 0; i < decks.length; i++) {
+      const d = decks[i], dx = x - d.x, dz = z - d.z;
+      if (dx * dx + dz * dz < 3200 && d.cl < best) best = d.cl;   // within ~57m
+    }
+    return best;
+  };
 
   const RED = 0x7a3428;          // Chicago bascule oxide
   const RED_DK = 0x5e2820;
@@ -69,6 +80,7 @@
     const ang = Math.atan2(-tx, -tz);        // box x-axis spans the channel
     const span = half * 2 + 14;
     const cl = bridge.clearance;
+    if (bridge.kind !== 'railraised') decks.push({ x: cx, z: cz, cl });
     const geoms = S.geoms;
     const cellUV = S.atlas.cell(idx);
 
@@ -111,6 +123,7 @@
         const globe = new THREE.SphereGeometry(0.34, 6, 5);
         globe.translate(gx + tx * d * 0.55, cl + 5.6, gz + tz * d * 0.55);
         RR.City.tintGeom(globe, 0xffe6b0, 0, rng); geoms.push(globe);
+        if (RR.Theme) RR.Theme.addLamp(gx + tx * d * 0.55, cl + 5.6, gz + tz * d * 0.55, 0xffe6b0);
       }
     }
     function addSigns(y) {
@@ -228,6 +241,7 @@
   B.init = function () {
     rng = U().mulberry(4242);
     animLeaves = [];
+    decks = [];
     const bridges = window.CHICAGO.bridges;
     const S = { geoms: [], sv: [], suv: [], sidx: [], atlas: buildSignAtlas(bridges) };
     bridges.forEach((b, i) => build(b, i, S));
