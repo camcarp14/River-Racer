@@ -149,33 +149,33 @@
     }
     // side girders
     for (const s of [-1, 1]) cross(1.1, 2.6, span, s * (deckW / 2 - 0.4), cl + 1.5, RED_DK);
-    // counterweights hanging under the leading edges at each pier
+    // counterweight housings, tucked in the pit on the LAND side of each pivot
     if (bridge.kind !== 'deck') {
-      for (const s of [-1, 1]) at(5, 3, 8, 0, s * (half + 1.5), cl - 1.2, RED_DK, true);
+      for (const s of [-1, 1]) at(6, 4, 9, 0, s * (half + 4), cl - 2, RED_DK, true);
     }
 
-    // ---- balustrade railing: low wall + top rail + sparse posts ----
+    // ---- balustrade railing: low wall + top rail + balusters (spaced ACROSS the span) ----
     for (const s of [-1, 1]) {
-      const acr = deckW / 2 + 0.1;
-      cross(0.3, 0.95, span, s * acr, cl + 2.4, RED);         // low wall
-      cross(0.45, 0.18, span, s * acr, cl + 3.0, 0xcbb59a);   // pale top rail
-      for (let k = -half - 4; k <= half + 4; k += 4.5) {      // balusters
-        cylAt(0.13, 1.05, k, acr * s, cl + 2.4, RED_DK, 4);
+      const acr = deckW / 2 + 0.1;                            // railing sits at the deck's along-edge
+      cross(0.3, 0.95, span, s * acr, cl + 2.4, RED);        // low wall, runs across the channel
+      cross(0.45, 0.18, span, s * acr, cl + 3.0, 0xcbb59a);  // pale top rail
+      for (let a = -half - 4; a <= half + 4; a += 4.5) {     // balusters march bank-to-bank
+        cylAt(0.13, 1.05, s * acr, a, cl + 2.4, RED_DK, 4);
       }
     }
 
     // bascule center seam hump
     if (bridge.kind !== 'deck') cross(deckW + 0.5, 1.2, 6, 0, cl + 2.2, RED_DK);
 
-    // corner lamps
-    for (const so of [-1, 1]) for (const ao of [-1, 1]) bridgeLamp(ao * (half + 1.5), so * (deckW / 2 + 0.6));
+    // corner lamps — at the four deck corners (along-edge × bank)
+    for (const so of [-1, 1]) for (const ao of [-1, 1]) bridgeLamp(ao * (deckW / 2 - 0.4), so * (half - 0.5));
 
     if (bridge.kind === 'l') {
       // Wells/Lake double-deck: L rapid-transit truss overhead
       cross(11, 1.4, span, 0, cl + 7.6, 0x4a4e52);
       for (const s of [-1, 1]) {
         cross(0.9, 6.0, span, s * 5.4, cl + 4.6, RED_DK);
-        for (let k = -half; k <= half; k += 6) cylAt(0.3, 6.0, k, s * 5.4, cl + 4.6, RED_DK, 4);
+        for (let a = -half; a <= half; a += 6) cylAt(0.3, 6.0, s * 5.4, a, cl + 4.6, RED_DK, 4);
         cross(0.5, 0.5, span, s * 5.4, cl + 7.5, 0x3a3f45);
       }
       addSigns(cl + 3.4);
@@ -183,7 +183,7 @@
       // Lake Shore Drive: steel through-truss
       for (const s of [-1, 1]) cross(1.2, 7, span, s * 9.5, cl + 5.4, 0x6a7076);
       cross(20, 1.2, 8, 0, cl + 9.2, 0x6a7076);
-      for (let k = -half; k <= half; k += 8) for (const s of [-1, 1]) cylAt(0.35, 7, k, s * 9.5, cl + 5.4, 0x5a6066, 4);
+      for (let a = -half; a <= half; a += 8) for (const s of [-1, 1]) cylAt(0.35, 7, s * 9.5, a, cl + 5.4, 0x5a6066, 4);
       addSigns(cl + 3.6);
     } else {
       // bascule tender houses

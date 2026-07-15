@@ -2334,6 +2334,17 @@ window.CHICAGO = {
     const C = window.CHICAGO;
     const rng = U().mulberry(C.generic.seed);
 
+    // snapped bridge crossing points, so riverwalk dressing keeps clear of the decks
+    const bridgePts = C.bridges.map((b) => {
+      const p = RR.River.paths[b.branch];
+      const q = U().pathNearest(p, b.x, b.z);
+      return { x: q.x, z: q.z };
+    });
+    function nearBridge(x, z, r) {
+      for (const bp of bridgePts) if (U().dist2(x, z, bp.x, bp.z) < r * r) return true;
+      return false;
+    }
+
     // ---------- ground: bank aprons hugging every channel + a coarse cell grid with
     // water cells skipped (the river must stay open water — no slab over the channels) ----------
     const groundTex = U().canvasTexture(256, 256, (ctx, w, h) => {
@@ -2615,6 +2626,7 @@ window.CHICAGO = {
           const px = p.x[i] - tz * off * s, pz = p.z[i] + tx * off * s;
           if (px > C.lake.openWaterX - 20) continue;
           if (landClearance(px, pz) < 1.2) continue;                     // never over the water
+          if (nearBridge(px, pz, 17)) continue;                          // clear of the bridge decks
           const kind = (Math.floor(i / 7) + (s > 0 ? 0 : 1)) % 4;
           if (kind === 0) lampAt(dressGeoms, px, pz);
           else if (kind === 1) treeAt(dressGeoms, px, pz, 1);
@@ -2910,11 +2922,37 @@ window.CHICAGO = {
     },
   };
 
+  // Nudge a landmark landward until its whole footprint clears every channel.
+  // The hand-placed lat/lons don't perfectly match the GIS centerline, so without this
+  // a few towers (Marina City, 333 W Wacker, River Point...) overhang the water.
+  const BULGE = { wacker333: 0.42, riverpoint: 0.4, aqua: 0.12 };  // curved builders reach past w/d
+  function clampToLand(l) {
+    for (let pass = 0; pass < 4; pass++) {
+      let worst = null;
+      for (const key in RR.River.paths) {
+        if (key.startsWith('lake')) continue;
+        const p = RR.River.paths[key];
+        const q = U().pathNearest(p, l.x, l.z);
+        let nx = l.x - q.x, nz = l.z - q.z;
+        const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
+        // half-extent of the (axis-aligned) footprint toward this channel, plus curve bulge
+        let extent = 0.5 * (Math.abs(nx) * l.w + Math.abs(nz) * l.d);
+        if (BULGE[l.kind]) extent += BULGE[l.kind] * Math.max(l.w, l.d);
+        const deficit = (q.w + extent + 7) - q.dist;   // >0 means it overhangs the water
+        if (deficit > 0 && (!worst || deficit > worst.deficit)) worst = { nx, nz, deficit };
+      }
+      if (!worst) break;
+      l.x += worst.nx * worst.deficit;
+      l.z += worst.nz * worst.deficit;
+    }
+  }
+
   L.init = function () {
     rng = U().mulberry(808);
     const glass = [], flat = [];
     const tags = [];
     for (const l of window.CHICAGO.landmarks) {
+      clampToLand(l);
       const fn = builders[l.kind] || builders.boxglass;
       fn(l, glass, flat);
       tags.push({ name: l.name, x: l.x, z: l.z, r2: Math.pow(Math.max(l.w, l.d) / 2 + 95, 2) });
@@ -3087,33 +3125,33 @@ window.CHICAGO = {
     }
     // side girders
     for (const s of [-1, 1]) cross(1.1, 2.6, span, s * (deckW / 2 - 0.4), cl + 1.5, RED_DK);
-    // counterweights hanging under the leading edges at each pier
+    // counterweight housings, tucked in the pit on the LAND side of each pivot
     if (bridge.kind !== 'deck') {
-      for (const s of [-1, 1]) at(5, 3, 8, 0, s * (half + 1.5), cl - 1.2, RED_DK, true);
+      for (const s of [-1, 1]) at(6, 4, 9, 0, s * (half + 4), cl - 2, RED_DK, true);
     }
 
-    // ---- balustrade railing: low wall + top rail + sparse posts ----
+    // ---- balustrade railing: low wall + top rail + balusters (spaced ACROSS the span) ----
     for (const s of [-1, 1]) {
-      const acr = deckW / 2 + 0.1;
-      cross(0.3, 0.95, span, s * acr, cl + 2.4, RED);         // low wall
-      cross(0.45, 0.18, span, s * acr, cl + 3.0, 0xcbb59a);   // pale top rail
-      for (let k = -half - 4; k <= half + 4; k += 4.5) {      // balusters
-        cylAt(0.13, 1.05, k, acr * s, cl + 2.4, RED_DK, 4);
+      const acr = deckW / 2 + 0.1;                            // railing sits at the deck's along-edge
+      cross(0.3, 0.95, span, s * acr, cl + 2.4, RED);        // low wall, runs across the channel
+      cross(0.45, 0.18, span, s * acr, cl + 3.0, 0xcbb59a);  // pale top rail
+      for (let a = -half - 4; a <= half + 4; a += 4.5) {     // balusters march bank-to-bank
+        cylAt(0.13, 1.05, s * acr, a, cl + 2.4, RED_DK, 4);
       }
     }
 
     // bascule center seam hump
     if (bridge.kind !== 'deck') cross(deckW + 0.5, 1.2, 6, 0, cl + 2.2, RED_DK);
 
-    // corner lamps
-    for (const so of [-1, 1]) for (const ao of [-1, 1]) bridgeLamp(ao * (half + 1.5), so * (deckW / 2 + 0.6));
+    // corner lamps — at the four deck corners (along-edge × bank)
+    for (const so of [-1, 1]) for (const ao of [-1, 1]) bridgeLamp(ao * (deckW / 2 - 0.4), so * (half - 0.5));
 
     if (bridge.kind === 'l') {
       // Wells/Lake double-deck: L rapid-transit truss overhead
       cross(11, 1.4, span, 0, cl + 7.6, 0x4a4e52);
       for (const s of [-1, 1]) {
         cross(0.9, 6.0, span, s * 5.4, cl + 4.6, RED_DK);
-        for (let k = -half; k <= half; k += 6) cylAt(0.3, 6.0, k, s * 5.4, cl + 4.6, RED_DK, 4);
+        for (let a = -half; a <= half; a += 6) cylAt(0.3, 6.0, s * 5.4, a, cl + 4.6, RED_DK, 4);
         cross(0.5, 0.5, span, s * 5.4, cl + 7.5, 0x3a3f45);
       }
       addSigns(cl + 3.4);
@@ -3121,7 +3159,7 @@ window.CHICAGO = {
       // Lake Shore Drive: steel through-truss
       for (const s of [-1, 1]) cross(1.2, 7, span, s * 9.5, cl + 5.4, 0x6a7076);
       cross(20, 1.2, 8, 0, cl + 9.2, 0x6a7076);
-      for (let k = -half; k <= half; k += 8) for (const s of [-1, 1]) cylAt(0.35, 7, k, s * 9.5, cl + 5.4, 0x5a6066, 4);
+      for (let a = -half; a <= half; a += 8) for (const s of [-1, 1]) cylAt(0.35, 7, s * 9.5, a, cl + 5.4, 0x5a6066, 4);
       addSigns(cl + 3.6);
     } else {
       // bascule tender houses
@@ -6059,7 +6097,7 @@ window.CHICAGO = {
 
     RR.Race.animateGates(t);
     RR.FX.update(boats, dt, t);
-    RR.Camera.follow(player, dt);
+    if (!(window.RRTest && window.RRTest._freecam)) RR.Camera.follow(player, dt);
     RR.Engine.trackShadow(player.pos.x, player.pos.z);
 
     RR.HUD.update(dt, player, raceState);
@@ -6106,6 +6144,15 @@ window.CHICAGO = {
       }
       RR.Engine.warp(sec);
     },
+    // debug inspection: freeze a free camera anywhere in the world
+    setCamera: (px, py, pz, lx, ly, lz) => {
+      const cam = RR.Engine.camera;
+      cam.position.set(px, py, pz);
+      cam.up.set(0, 1, 0);
+      cam.lookAt(lx, ly, lz);
+      window.RRTest._freecam = true;
+    },
+    clearCamera: () => { window.RRTest._freecam = false; },
     getState: () => ({
       scene: mode === 'menu' ? 'menu' : mode === 'results' ? 'results' : 'race',
       speed: player ? Math.hypot(player.vel.x, player.vel.z) : 0,

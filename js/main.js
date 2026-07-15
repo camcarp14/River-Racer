@@ -175,7 +175,7 @@
 
     RR.Race.animateGates(t);
     RR.FX.update(boats, dt, t);
-    RR.Camera.follow(player, dt);
+    if (!(window.RRTest && window.RRTest._freecam)) RR.Camera.follow(player, dt);
     RR.Engine.trackShadow(player.pos.x, player.pos.z);
 
     RR.HUD.update(dt, player, raceState);
@@ -222,6 +222,15 @@
       }
       RR.Engine.warp(sec);
     },
+    // debug inspection: freeze a free camera anywhere in the world
+    setCamera: (px, py, pz, lx, ly, lz) => {
+      const cam = RR.Engine.camera;
+      cam.position.set(px, py, pz);
+      cam.up.set(0, 1, 0);
+      cam.lookAt(lx, ly, lz);
+      window.RRTest._freecam = true;
+    },
+    clearCamera: () => { window.RRTest._freecam = false; },
     getState: () => ({
       scene: mode === 'menu' ? 'menu' : mode === 'results' ? 'results' : 'race',
       speed: player ? Math.hypot(player.vel.x, player.vel.z) : 0,

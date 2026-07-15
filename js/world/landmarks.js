@@ -260,11 +260,37 @@
     },
   };
 
+  // Nudge a landmark landward until its whole footprint clears every channel.
+  // The hand-placed lat/lons don't perfectly match the GIS centerline, so without this
+  // a few towers (Marina City, 333 W Wacker, River Point...) overhang the water.
+  const BULGE = { wacker333: 0.42, riverpoint: 0.4, aqua: 0.12 };  // curved builders reach past w/d
+  function clampToLand(l) {
+    for (let pass = 0; pass < 4; pass++) {
+      let worst = null;
+      for (const key in RR.River.paths) {
+        if (key.startsWith('lake')) continue;
+        const p = RR.River.paths[key];
+        const q = U().pathNearest(p, l.x, l.z);
+        let nx = l.x - q.x, nz = l.z - q.z;
+        const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
+        // half-extent of the (axis-aligned) footprint toward this channel, plus curve bulge
+        let extent = 0.5 * (Math.abs(nx) * l.w + Math.abs(nz) * l.d);
+        if (BULGE[l.kind]) extent += BULGE[l.kind] * Math.max(l.w, l.d);
+        const deficit = (q.w + extent + 7) - q.dist;   // >0 means it overhangs the water
+        if (deficit > 0 && (!worst || deficit > worst.deficit)) worst = { nx, nz, deficit };
+      }
+      if (!worst) break;
+      l.x += worst.nx * worst.deficit;
+      l.z += worst.nz * worst.deficit;
+    }
+  }
+
   L.init = function () {
     rng = U().mulberry(808);
     const glass = [], flat = [];
     const tags = [];
     for (const l of window.CHICAGO.landmarks) {
+      clampToLand(l);
       const fn = builders[l.kind] || builders.boxglass;
       fn(l, glass, flat);
       tags.push({ name: l.name, x: l.x, z: l.z, r2: Math.pow(Math.max(l.w, l.d) / 2 + 95, 2) });

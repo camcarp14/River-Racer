@@ -137,6 +137,17 @@
     const C = window.CHICAGO;
     const rng = U().mulberry(C.generic.seed);
 
+    // snapped bridge crossing points, so riverwalk dressing keeps clear of the decks
+    const bridgePts = C.bridges.map((b) => {
+      const p = RR.River.paths[b.branch];
+      const q = U().pathNearest(p, b.x, b.z);
+      return { x: q.x, z: q.z };
+    });
+    function nearBridge(x, z, r) {
+      for (const bp of bridgePts) if (U().dist2(x, z, bp.x, bp.z) < r * r) return true;
+      return false;
+    }
+
     // ---------- ground: bank aprons hugging every channel + a coarse cell grid with
     // water cells skipped (the river must stay open water — no slab over the channels) ----------
     const groundTex = U().canvasTexture(256, 256, (ctx, w, h) => {
@@ -418,6 +429,7 @@
           const px = p.x[i] - tz * off * s, pz = p.z[i] + tx * off * s;
           if (px > C.lake.openWaterX - 20) continue;
           if (landClearance(px, pz) < 1.2) continue;                     // never over the water
+          if (nearBridge(px, pz, 17)) continue;                          // clear of the bridge decks
           const kind = (Math.floor(i / 7) + (s > 0 ? 0 : 1)) % 4;
           if (kind === 0) lampAt(dressGeoms, px, pz);
           else if (kind === 1) treeAt(dressGeoms, px, pz, 1);
