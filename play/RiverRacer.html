@@ -1530,7 +1530,8 @@ window.CHICAGO = {
 /* ===== js/core/engine.js ===== */
 /* River Racer — renderer, scene, main loop, adaptive quality */
 (function () {
-  const E = {};
+  const E = { SKIP_REFLECT: 1, autoQuality: true };
+  E.setAutoQuality = function (on) { E.autoQuality = on; };
   let renderer, scene, camera;
   let updateFns = [];
   let last = 0, simTime = 0, running = false;
@@ -1552,6 +1553,7 @@ window.CHICAGO = {
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.5, 9000);
     camera.position.set(0, 40, 120);
+    camera.layers.enable(E.SKIP_REFLECT);   // main view shows everything; the reflection cam skips layer 1
 
     // golden-hour key light from the west (sun low over the river canyon)
     const sun = new THREE.DirectionalLight(0xffdcae, 1.55);
@@ -1563,11 +1565,13 @@ window.CHICAGO = {
     sun.shadow.camera.top = 320; sun.shadow.camera.bottom = -320;
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 2.0;
+    sun.layers.enable(E.SKIP_REFLECT);      // lights must reach layer-1 objects too (layers gate illumination)
     scene.add(sun);
     scene.add(sun.target);
     E.sun = sun;
 
     const hemi = new THREE.HemisphereLight(0xcfe3f0, 0x44505c, 0.68);
+    hemi.layers.enable(E.SKIP_REFLECT);
     scene.add(hemi);
     E.hemi = hemi;
 
@@ -1621,13 +1625,19 @@ window.CHICAGO = {
     tick._p = now;
     fpsEMA = fpsEMA * 0.95 + Math.min(120, inst) * 0.05;
 
-    // adaptive resolution: hold 60fps on modest GPUs, restore sharpness when idle headroom exists
+    // adaptive quality: hold ~60fps on modest GPUs, restore full quality when there's headroom.
+    // Degrades gently in order (resolution → reflections → bloom → shadows) and recovers with hysteresis.
     qualityTimer += dt;
     if (qualityTimer > 1.5) {
       qualityTimer = 0;
-      if (fpsEMA < 47 && pixelScale > 0.55) { pixelScale = Math.max(0.55, pixelScale - 0.15); onResize(); }
-      else if (fpsEMA > 57 && pixelScale < 1) { pixelScale = Math.min(1, pixelScale + 0.1); onResize(); }
-      if (fpsEMA < 35 && renderer.shadowMap.enabled) { renderer.shadowMap.enabled = false; E.sun.castShadow = false; }
+      if (E.autoQuality) {
+        if (fpsEMA < 47 && pixelScale > 0.55) { pixelScale = Math.max(0.55, pixelScale - 0.15); onResize(); }
+        else if (fpsEMA > 57 && pixelScale < 1) { pixelScale = Math.min(1, pixelScale + 0.1); onResize(); }
+        if (RR.Reflect) { if (fpsEMA < 40 && RR.Reflect.enabled) RR.Reflect.enabled = false; else if (fpsEMA > 54 && !RR.Reflect.enabled) RR.Reflect.enabled = true; }
+        if (RR.Post) { if (fpsEMA < 32 && RR.Post.enabled) RR.Post.enabled = false; else if (fpsEMA > 50 && !RR.Post.enabled) RR.Post.enabled = true; }
+        if (fpsEMA < 26 && renderer.shadowMap.enabled) { renderer.shadowMap.enabled = false; E.sun.castShadow = false; }
+        else if (fpsEMA > 52 && !renderer.shadowMap.enabled) { renderer.shadowMap.enabled = true; E.sun.castShadow = true; }
+      }
     }
 
     if (warpBank > 0) {
@@ -1665,7 +1675,8 @@ window.CHICAGO = {
   const target = new THREE.Vector3();
   const textureMatrix = new THREE.Matrix4();
 
-  function size() { return [Math.max(256, (window.innerWidth * 0.75) | 0), Math.max(256, (window.innerHeight * 0.75) | 0)]; }
+  // half-res is plenty — the reflection is rippled and blended, so the cost saving is invisible
+  function size() { return [Math.max(256, (window.innerWidth * 0.5) | 0), Math.max(256, (window.innerHeight * 0.5) | 0)]; }
 
   R.init = function () {
     const [w, h] = size();
@@ -2873,6 +2884,7 @@ window.CHICAGO = {
     for (let i = 0; i < dressGeoms.length; i += 700) {
       const mesh = new THREE.Mesh(mergeGeoms(dressGeoms.slice(i, i + 700)), CITY.flatMaterial());
       mesh.castShadow = true;
+      mesh.layers.set(1);              // street furniture skips the reflection pass
       scene.add(mesh);
     }
   };
@@ -3113,17 +3125,18 @@ window.CHICAGO = {
     const scene = RR.Engine.scene;
     const flatMat = RR.City.flatMaterial();
     const wallMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
-    const add = (arr, mat, cast) => {
+    const add = (arr, mat, cast, skipReflect) => {
       for (let i = 0; i < arr.length; i += 800) {
         const m = new THREE.Mesh(RR.City.mergeGeoms(arr.slice(i, i + 800)), mat);
         m.receiveShadow = true; if (cast) m.castShadow = true;
+        if (skipReflect) m.layers.set(1);
         scene.add(m);
       }
     };
     add(deck, flatMat, false);
     add(wall, wallMat, false);
     add(flat, flatMat, true);
-    add(bright, flatMat, true);
+    add(bright, flatMat, true, true);   // umbrellas/gardens skip the reflection pass
   };
 
   RR.Riverwalk = RW;
@@ -4179,12 +4192,15 @@ window.CHICAGO = {
       _m.compose(_p, _q, _s); people.setMatrixAt(idx, _m);
       people.setColorAt(idx, new THREE.Color(st.col));
     }
+    if (people.instanceColor) people.instanceColor.needsUpdate = true;   // colours are fixed — upload once
+    people.layers.set(1);
     scene.add(people);
 
     // cyclists get bikes (same transforms, updated together)
     bikes = new THREE.InstancedMesh(mergedBike(), new THREE.MeshLambertMaterial({ color: 0x2a2f36 }), Math.max(1, cyclists.length));
     bikes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     bikeData = cyclists;
+    bikes.layers.set(1);
     scene.add(bikes);
 
     // ---------- cars crossing every (non-raised) bridge ----------
@@ -4209,6 +4225,8 @@ window.CHICAGO = {
     cars.castShadow = true;
     carData = carList;
     for (let i = 0; i < carList.length; i++) cars.setColorAt(i, new THREE.Color(carList[i].col));
+    if (cars.instanceColor) cars.instanceColor.needsUpdate = true;
+    cars.layers.set(1);
     scene.add(cars);
 
     // ---------- live river traffic: taxis, a tour boat, kayakers you weave past ----------
@@ -4243,7 +4261,7 @@ window.CHICAGO = {
           cab.position.set(0, 2.1, -1); g.add(cab);
         }
       }
-      g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+      g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.layers.set(1); } });
       RR.Engine.scene.add(g);
       return g;
     }
@@ -4283,7 +4301,6 @@ window.CHICAGO = {
       _m.compose(_p, _q, _s); people.setMatrixAt(i, _m);
     }
     people.instanceMatrix.needsUpdate = true;
-    if (people.instanceColor) people.instanceColor.needsUpdate = true;
 
     // bikes ride under their cyclist
     for (let i = 0; i < bikeData.length; i++) {
@@ -4884,6 +4901,7 @@ window.CHICAGO = {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
     mesh.renderOrder = 2;
+    mesh.layers.set(1);              // skip in the reflection pass
     scene.add(mesh);
     return { mesh, geo, pts: [], mat };
   }
@@ -4938,6 +4956,7 @@ window.CHICAGO = {
     pPts = new THREE.Points(pGeo, mat);
     pPts.frustumCulled = false;
     pPts.renderOrder = 3;
+    pPts.layers.set(1);
     scene.add(pPts);
   }
 
@@ -4978,8 +4997,8 @@ window.CHICAGO = {
     for (let i = 0; i < 10; i++) {
       const g = new THREE.Group();
       const wingGeo = new THREE.PlaneGeometry(1.5, 0.4);
-      const L = new THREE.Mesh(wingGeo, mat); L.position.x = -0.7; g.add(L);
-      const Rw = new THREE.Mesh(wingGeo, mat); Rw.position.x = 0.7; g.add(Rw);
+      const L = new THREE.Mesh(wingGeo, mat); L.position.x = -0.7; L.layers.set(1); g.add(L);
+      const Rw = new THREE.Mesh(wingGeo, mat); Rw.position.x = 0.7; Rw.layers.set(1); g.add(Rw);
       const cx = RR.River.lakeWestX + 400 + Math.random() * 1200;
       const cz = RR.River.lakeShoreZTop + 200 + Math.random() * 800;
       gulls.push({ g, L, R: Rw, cx, cz, r: 30 + Math.random() * 60, h: 14 + Math.random() * 26, ph: Math.random() * 9, sp: 0.25 + Math.random() * 0.3 });
@@ -6842,6 +6861,7 @@ window.CHICAGO = {
   function update(dt, t) {
     if (RR.Life) RR.Life.update(dt, t);          // crowds + traffic animate in every scene
     if (mode === 'menu' || mode === 'results') {
+      if (RR.Water && RR.Water.material) RR.Water.material.uniforms.uNumBoats.value = 0;  // no stale foam
       // attract flythrough behind the menus
       const main = RR.River.paths.main;
       if (main) RR.Camera.flyover(dt, main);
@@ -6939,6 +6959,8 @@ window.CHICAGO = {
       window.RRTest._freecam = true;
     },
     clearCamera: () => { window.RRTest._freecam = false; },
+    // hold full quality (disable adaptive downgrade) — used by visual tests on the software renderer
+    pinQuality: () => { RR.Engine.setAutoQuality(false); if (RR.Reflect) RR.Reflect.enabled = true; if (RR.Post) RR.Post.enabled = true; },
     getState: () => ({
       scene: mode === 'menu' ? 'menu' : mode === 'results' ? 'results' : 'race',
       speed: player ? Math.hypot(player.vel.x, player.vel.z) : 0,

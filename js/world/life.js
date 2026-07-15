@@ -103,12 +103,15 @@
       _m.compose(_p, _q, _s); people.setMatrixAt(idx, _m);
       people.setColorAt(idx, new THREE.Color(st.col));
     }
+    if (people.instanceColor) people.instanceColor.needsUpdate = true;   // colours are fixed — upload once
+    people.layers.set(1);
     scene.add(people);
 
     // cyclists get bikes (same transforms, updated together)
     bikes = new THREE.InstancedMesh(mergedBike(), new THREE.MeshLambertMaterial({ color: 0x2a2f36 }), Math.max(1, cyclists.length));
     bikes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     bikeData = cyclists;
+    bikes.layers.set(1);
     scene.add(bikes);
 
     // ---------- cars crossing every (non-raised) bridge ----------
@@ -133,6 +136,8 @@
     cars.castShadow = true;
     carData = carList;
     for (let i = 0; i < carList.length; i++) cars.setColorAt(i, new THREE.Color(carList[i].col));
+    if (cars.instanceColor) cars.instanceColor.needsUpdate = true;
+    cars.layers.set(1);
     scene.add(cars);
 
     // ---------- live river traffic: taxis, a tour boat, kayakers you weave past ----------
@@ -167,7 +172,7 @@
           cab.position.set(0, 2.1, -1); g.add(cab);
         }
       }
-      g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+      g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.layers.set(1); } });
       RR.Engine.scene.add(g);
       return g;
     }
@@ -207,7 +212,6 @@
       _m.compose(_p, _q, _s); people.setMatrixAt(i, _m);
     }
     people.instanceMatrix.needsUpdate = true;
-    if (people.instanceColor) people.instanceColor.needsUpdate = true;
 
     // bikes ride under their cyclist
     for (let i = 0; i < bikeData.length; i++) {

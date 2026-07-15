@@ -38,6 +38,7 @@
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
     mesh.renderOrder = 2;
+    mesh.layers.set(1);              // skip in the reflection pass
     scene.add(mesh);
     return { mesh, geo, pts: [], mat };
   }
@@ -92,6 +93,7 @@
     pPts = new THREE.Points(pGeo, mat);
     pPts.frustumCulled = false;
     pPts.renderOrder = 3;
+    pPts.layers.set(1);
     scene.add(pPts);
   }
 
@@ -132,8 +134,8 @@
     for (let i = 0; i < 10; i++) {
       const g = new THREE.Group();
       const wingGeo = new THREE.PlaneGeometry(1.5, 0.4);
-      const L = new THREE.Mesh(wingGeo, mat); L.position.x = -0.7; g.add(L);
-      const Rw = new THREE.Mesh(wingGeo, mat); Rw.position.x = 0.7; g.add(Rw);
+      const L = new THREE.Mesh(wingGeo, mat); L.position.x = -0.7; L.layers.set(1); g.add(L);
+      const Rw = new THREE.Mesh(wingGeo, mat); Rw.position.x = 0.7; Rw.layers.set(1); g.add(Rw);
       const cx = RR.River.lakeWestX + 400 + Math.random() * 1200;
       const cz = RR.River.lakeShoreZTop + 200 + Math.random() * 800;
       gulls.push({ g, L, R: Rw, cx, cz, r: 30 + Math.random() * 60, h: 14 + Math.random() * 26, ph: Math.random() * 9, sp: 0.25 + Math.random() * 0.3 });

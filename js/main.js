@@ -148,6 +148,7 @@
   function update(dt, t) {
     if (RR.Life) RR.Life.update(dt, t);          // crowds + traffic animate in every scene
     if (mode === 'menu' || mode === 'results') {
+      if (RR.Water && RR.Water.material) RR.Water.material.uniforms.uNumBoats.value = 0;  // no stale foam
       // attract flythrough behind the menus
       const main = RR.River.paths.main;
       if (main) RR.Camera.flyover(dt, main);
@@ -245,6 +246,8 @@
       window.RRTest._freecam = true;
     },
     clearCamera: () => { window.RRTest._freecam = false; },
+    // hold full quality (disable adaptive downgrade) — used by visual tests on the software renderer
+    pinQuality: () => { RR.Engine.setAutoQuality(false); if (RR.Reflect) RR.Reflect.enabled = true; if (RR.Post) RR.Post.enabled = true; },
     getState: () => ({
       scene: mode === 'menu' ? 'menu' : mode === 'results' ? 'results' : 'race',
       speed: player ? Math.hypot(player.vel.x, player.vel.z) : 0,

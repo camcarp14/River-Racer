@@ -13,7 +13,8 @@
   const target = new THREE.Vector3();
   const textureMatrix = new THREE.Matrix4();
 
-  function size() { return [Math.max(256, (window.innerWidth * 0.75) | 0), Math.max(256, (window.innerHeight * 0.75) | 0)]; }
+  // half-res is plenty — the reflection is rippled and blended, so the cost saving is invisible
+  function size() { return [Math.max(256, (window.innerWidth * 0.5) | 0), Math.max(256, (window.innerHeight * 0.5) | 0)]; }
 
   R.init = function () {
     const [w, h] = size();

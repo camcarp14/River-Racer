@@ -228,17 +228,18 @@
     const scene = RR.Engine.scene;
     const flatMat = RR.City.flatMaterial();
     const wallMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
-    const add = (arr, mat, cast) => {
+    const add = (arr, mat, cast, skipReflect) => {
       for (let i = 0; i < arr.length; i += 800) {
         const m = new THREE.Mesh(RR.City.mergeGeoms(arr.slice(i, i + 800)), mat);
         m.receiveShadow = true; if (cast) m.castShadow = true;
+        if (skipReflect) m.layers.set(1);
         scene.add(m);
       }
     };
     add(deck, flatMat, false);
     add(wall, wallMat, false);
     add(flat, flatMat, true);
-    add(bright, flatMat, true);
+    add(bright, flatMat, true, true);   // umbrellas/gardens skip the reflection pass
   };
 
   RR.Riverwalk = RW;

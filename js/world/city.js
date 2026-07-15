@@ -447,6 +447,7 @@
     for (let i = 0; i < dressGeoms.length; i += 700) {
       const mesh = new THREE.Mesh(mergeGeoms(dressGeoms.slice(i, i + 700)), CITY.flatMaterial());
       mesh.castShadow = true;
+      mesh.layers.set(1);              // street furniture skips the reflection pass
       scene.add(mesh);
     }
   };

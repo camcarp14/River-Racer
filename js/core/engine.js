@@ -1,6 +1,7 @@
 /* River Racer — renderer, scene, main loop, adaptive quality */
 (function () {
-  const E = {};
+  const E = { SKIP_REFLECT: 1, autoQuality: true };
+  E.setAutoQuality = function (on) { E.autoQuality = on; };
   let renderer, scene, camera;
   let updateFns = [];
   let last = 0, simTime = 0, running = false;
@@ -22,6 +23,7 @@
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.5, 9000);
     camera.position.set(0, 40, 120);
+    camera.layers.enable(E.SKIP_REFLECT);   // main view shows everything; the reflection cam skips layer 1
 
     // golden-hour key light from the west (sun low over the river canyon)
     const sun = new THREE.DirectionalLight(0xffdcae, 1.55);
@@ -33,11 +35,13 @@
     sun.shadow.camera.top = 320; sun.shadow.camera.bottom = -320;
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 2.0;
+    sun.layers.enable(E.SKIP_REFLECT);      // lights must reach layer-1 objects too (layers gate illumination)
     scene.add(sun);
     scene.add(sun.target);
     E.sun = sun;
 
     const hemi = new THREE.HemisphereLight(0xcfe3f0, 0x44505c, 0.68);
+    hemi.layers.enable(E.SKIP_REFLECT);
     scene.add(hemi);
     E.hemi = hemi;
 
@@ -91,13 +95,19 @@
     tick._p = now;
     fpsEMA = fpsEMA * 0.95 + Math.min(120, inst) * 0.05;
 
-    // adaptive resolution: hold 60fps on modest GPUs, restore sharpness when idle headroom exists
+    // adaptive quality: hold ~60fps on modest GPUs, restore full quality when there's headroom.
+    // Degrades gently in order (resolution → reflections → bloom → shadows) and recovers with hysteresis.
     qualityTimer += dt;
     if (qualityTimer > 1.5) {
       qualityTimer = 0;
-      if (fpsEMA < 47 && pixelScale > 0.55) { pixelScale = Math.max(0.55, pixelScale - 0.15); onResize(); }
-      else if (fpsEMA > 57 && pixelScale < 1) { pixelScale = Math.min(1, pixelScale + 0.1); onResize(); }
-      if (fpsEMA < 35 && renderer.shadowMap.enabled) { renderer.shadowMap.enabled = false; E.sun.castShadow = false; }
+      if (E.autoQuality) {
+        if (fpsEMA < 47 && pixelScale > 0.55) { pixelScale = Math.max(0.55, pixelScale - 0.15); onResize(); }
+        else if (fpsEMA > 57 && pixelScale < 1) { pixelScale = Math.min(1, pixelScale + 0.1); onResize(); }
+        if (RR.Reflect) { if (fpsEMA < 40 && RR.Reflect.enabled) RR.Reflect.enabled = false; else if (fpsEMA > 54 && !RR.Reflect.enabled) RR.Reflect.enabled = true; }
+        if (RR.Post) { if (fpsEMA < 32 && RR.Post.enabled) RR.Post.enabled = false; else if (fpsEMA > 50 && !RR.Post.enabled) RR.Post.enabled = true; }
+        if (fpsEMA < 26 && renderer.shadowMap.enabled) { renderer.shadowMap.enabled = false; E.sun.castShadow = false; }
+        else if (fpsEMA > 52 && !renderer.shadowMap.enabled) { renderer.shadowMap.enabled = true; E.sun.castShadow = true; }
+      }
     }
 
     if (warpBank > 0) {
