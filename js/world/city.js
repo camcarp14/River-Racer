@@ -37,7 +37,8 @@
 
   const _c = new THREE.Color();
   function tintGeom(geo, hex, jitter, rng) {
-    _c.setHex(hex);
+    // vertex colors bypass three's sRGB handling — convert here or everything washes out pastel
+    _c.setHex(hex).convertSRGBToLinear();
     if (jitter) {
       const f = 1 + (rng() - 0.5) * jitter;
       _c.r = U().clamp(_c.r * f, 0, 1); _c.g = U().clamp(_c.g * f, 0, 1); _c.b = U().clamp(_c.b * f, 0, 1);
@@ -129,17 +130,17 @@
     const C = window.CHICAGO;
     const rng = U().mulberry(C.generic.seed);
 
-    // ---------- ground slab (city side, stops at the lakefront) ----------
+    // ---------- ground: bank aprons hugging every channel + a coarse cell grid with
+    // water cells skipped (the river must stay open water — no slab over the channels) ----------
     const groundTex = U().canvasTexture(256, 256, (ctx, w, h) => {
-      ctx.fillStyle = '#5b6066'; ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = '#565b61'; ctx.fillRect(0, 0, w, h);
       const g = U().mulberry(99);
       for (let i = 0; i < 900; i++) {
-        const v = 80 + g() * 30;
+        const v = 75 + g() * 28;
         ctx.fillStyle = `rgba(${v},${v + 4},${v + 8},0.5)`;
         ctx.fillRect(g() * w, g() * h, 2, 2);
       }
-      // street grid hint
-      ctx.strokeStyle = 'rgba(30,32,36,0.85)';
+      ctx.strokeStyle = 'rgba(28,30,34,0.85)';
       ctx.lineWidth = 6;
       for (let i = 0; i <= 2; i++) {
         ctx.beginPath(); ctx.moveTo(i * 128, 0); ctx.lineTo(i * 128, h); ctx.stroke();
@@ -147,15 +148,68 @@
       }
     });
     groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping;
-    groundTex.repeat.set(80, 80);
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(9000, 9000),
-      new THREE.MeshLambertMaterial({ map: groundTex, color: 0x9aa0a6 })
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.set(C.lake.openWaterX - 4500, GROUND_Y, 0);
-    ground.receiveShadow = true;
-    scene.add(ground);
+    const groundMat = new THREE.MeshLambertMaterial({ map: groundTex, color: 0x9aa0a6 });
+
+    // apron ribbons: from just behind the seawall out to ~52m, following each channel exactly
+    const apronGeoms = [];
+    for (const key in RR.River.paths) {
+      if (key.startsWith('lake')) continue;
+      const p = RR.River.paths[key];
+      for (const s of [-1, 1]) {
+        const verts = [], uvs = [], idx = [];
+        let vi = 0;
+        for (let i = 0; i < p.n; i += 3) {
+          const i0 = Math.max(0, i - 1), i1 = Math.min(p.n - 1, i + 1);
+          let tx = p.x[i1] - p.x[i0], tz = p.z[i1] - p.z[i0];
+          const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
+          const inner = p.w[i] + 0.6, outer = p.w[i] + 130;
+          const ix = p.x[i] - tz * inner * s, iz = p.z[i] + tx * inner * s;
+          const ox = p.x[i] - tz * outer * s, oz = p.z[i] + tx * outer * s;
+          verts.push(ix, GROUND_Y, iz, ox, GROUND_Y, oz);
+          uvs.push(ix / 32, iz / 32, ox / 32, oz / 32);
+          if (vi >= 2) {
+            if (s === 1) idx.push(vi - 2, vi - 1, vi, vi - 1, vi + 1, vi);
+            else idx.push(vi - 2, vi, vi - 1, vi - 1, vi, vi + 1);
+          }
+          vi += 2;
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+        g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvs), 2));
+        g.setIndex(idx);
+        g.computeVertexNormals();
+        apronGeoms.push(g);
+      }
+    }
+    for (const g of apronGeoms) {
+      const m = new THREE.Mesh(g, groundMat);
+      m.receiveShadow = true;
+      scene.add(m);
+    }
+
+    // cell grid: 64m tiles across the whole map, skipping any tile that touches water
+    {
+      const CELL = 64;
+      const cells = [];
+      const x0 = -4300, x1 = C.lake.openWaterX, z0 = -3600, z1 = 4200;
+      for (let x = x0; x < x1; x += CELL) {
+        for (let z = z0; z < z1; z += CELL) {
+          const cx = x + CELL / 2, cz = z + CELL / 2;
+          if (landClearance(cx, cz) < CELL * 0.95) continue;   // near/over water → apron territory
+          const g = new THREE.PlaneGeometry(CELL, CELL);
+          g.rotateX(-Math.PI / 2);
+          g.translate(cx, GROUND_Y - 0.04, cz);
+          const uv = g.attributes.uv;
+          for (let i = 0; i < uv.count; i++) uv.setXY(i, (cx + (uv.getX(i) - 0.5) * CELL) / 32, (cz + (uv.getY(i) - 0.5) * CELL) / 32);
+          cells.push(g);
+        }
+      }
+      for (let i = 0; i < cells.length; i += 900) {
+        const m = new THREE.Mesh(mergeGeoms(cells.slice(i, i + 900)), groundMat);
+        m.receiveShadow = true;
+        scene.add(m);
+      }
+    }
 
     // ---------- seawalls + riverwalk along every channel ----------
     const wallGeoms = [], deckGeoms = [];

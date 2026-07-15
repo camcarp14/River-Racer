@@ -204,7 +204,7 @@
   // ---------- automated-test API ----------
   window.RRTest = {
     ready: false,
-    startRace: (c, v) => { startRace(c || 0, v || 0, false); },
+    startRace: (c, v) => { RR.Menus.hide(); RR.Audio.setMusic(false); startRace(c || 0, v || 0, false); },
     warp: (sec) => {
       // during warp the AI takes the player's wheel so the sim actually progresses
       if (player && !window.RRTest._autopilot) {

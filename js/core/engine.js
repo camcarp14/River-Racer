@@ -14,7 +14,7 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.06;
+    renderer.toneMappingExposure = 0.95;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.shadowMap.autoUpdate = true;
@@ -24,7 +24,7 @@
     camera.position.set(0, 40, 120);
 
     // golden-hour key light from the west (sun low over the river canyon)
-    const sun = new THREE.DirectionalLight(0xffdcae, 2.4);
+    const sun = new THREE.DirectionalLight(0xffdcae, 1.55);
     sun.position.set(-0.72, 0.38, -0.16).multiplyScalar(1400);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -37,7 +37,7 @@
     scene.add(sun.target);
     E.sun = sun;
 
-    const hemi = new THREE.HemisphereLight(0xbfd9ea, 0x33424e, 0.75);
+    const hemi = new THREE.HemisphereLight(0xbfd9ea, 0x33424e, 0.55);
     scene.add(hemi);
     E.hemi = hemi;
 

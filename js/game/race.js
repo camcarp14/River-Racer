@@ -52,15 +52,16 @@
   // ---------- gate + buoy visuals ----------
   let gateGroup;
   function buoyMesh(color) {
+    const c = new THREE.Color(color).convertSRGBToLinear();
     const g = new THREE.Group();
     const body = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.75, 1.5, 8),
-      new THREE.MeshStandardMaterial({ color, roughness: 0.5 }));
+      new THREE.MeshStandardMaterial({ color: c, roughness: 0.5 }));
     body.position.y = 0.75; g.add(body);
     const top = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.1, 6),
       new THREE.MeshStandardMaterial({ color: 0x222831, roughness: 0.6 }));
     top.position.y = 1.9; g.add(top);
     const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: color, emissiveIntensity: 1.6 }));
+      new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: c, emissiveIntensity: 1.6 }));
     beacon.position.y = 2.5; g.add(beacon);
     return g;
   }

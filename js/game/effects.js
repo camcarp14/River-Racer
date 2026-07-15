@@ -31,7 +31,7 @@
         varying vec2 vP;
         void main() {
           float n = sin(vP.x * 3.1 + uTime * 2.0) * sin(vP.y * 2.7 - uTime * 1.7);
-          float a = vA * (0.55 + 0.2 * n);
+          float a = vA * (0.42 + 0.18 * n);
           gl_FragColor = vec4(0.88, 0.95, 0.97, a);
         }`,
     });
@@ -58,8 +58,8 @@
     for (let i = 0; i < WAKE_SEGS; i++) {
       const p = w.pts[Math.min(i, n - 1)] || { x: boat.pos.x, z: boat.pos.z, px: 1, pz: 0, born: t, str: 0 };
       const age = t - p.born;
-      const width = (0.8 + age * 2.6) * (0.65 + p.str * 0.7);
-      const fade = Math.max(0, p.str * (1 - age / 3.2));
+      const width = (0.7 + age * 1.35) * (0.65 + p.str * 0.7);
+      const fade = Math.max(0, p.str * 0.6 * (1 - age / 2.4));
       const y = U().waterHeight(p.x, p.z, t, RR.River.waveAmp(p.x, p.z)) + 0.06;
       const o = i * 6;
       verts[o] = p.x + p.px * width; verts[o + 1] = y; verts[o + 2] = p.z + p.pz * width;
