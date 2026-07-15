@@ -1130,7 +1130,7 @@ window.CHICAGO = {
    "h": 212,
    "w": 60,
    "d": 40,
-   "c": 2501427,
+   "c": 3554631,
    "dark": true,
    "gold": false
   },
@@ -1202,7 +1202,7 @@ window.CHICAGO = {
    "h": 197,
    "w": 50,
    "d": 50,
-   "c": 2567479,
+   "c": 3488838,
    "dark": false,
    "gold": false
   },
@@ -1286,7 +1286,7 @@ window.CHICAGO = {
    "h": 109,
    "w": 90,
    "d": 34,
-   "c": 4865072,
+   "c": 5917242,
    "dark": true,
    "gold": false
   },
@@ -1346,7 +1346,7 @@ window.CHICAGO = {
    "h": 442,
    "w": 68,
    "d": 68,
-   "c": 2106412,
+   "c": 3291202,
    "dark": false,
    "gold": false
   },
@@ -1567,7 +1567,7 @@ window.CHICAGO = {
     scene.add(sun.target);
     E.sun = sun;
 
-    const hemi = new THREE.HemisphereLight(0xbfd9ea, 0x33424e, 0.55);
+    const hemi = new THREE.HemisphereLight(0xcfe3f0, 0x44505c, 0.68);
     scene.add(hemi);
     E.hemi = hemi;
 
@@ -2309,18 +2309,25 @@ window.CHICAGO = {
   const GROUND_Y = 2.3;                       // street level above water
   CITY.GROUND_Y = GROUND_Y;
 
-  // keep-out check: near any channel? returns clearance to water edge (negative inside water)
+  // keep-out: signed clearance to the NEAREST water edge — channels AND the lake basin.
+  // >0 on dry land, <0 over water. Nothing but the bridges is ever built where this is <0.
   function landClearance(x, z) {
-    let best = -Infinity;
+    let best = Infinity;
     for (const key in RR.River.paths) {
-      if (key === 'lakeGuide' || key === 'lakeLoop') continue;
+      if (key.startsWith('lake')) continue;
       const p = RR.River.paths[key];
       const q = U().pathNearest(p, x, z);
-      const c = q.dist - q.w;                 // >0 on land
-      if (best === -Infinity || c < best) best = Math.min(best === -Infinity ? 1e9 : best, c);
+      const c = q.dist - q.w - 2.5;           // 2.5m past the seawall still counts as water
+      if (c < best) best = c;
+    }
+    const R = RR.River;
+    if (x > R.lakeWestX && x < R.lakeEastX && z > R.lakeShoreZTop && z < R.lakeShoreZBot) {
+      const depth = Math.min(x - R.lakeWestX, R.lakeEastX - x, z - R.lakeShoreZTop, R.lakeShoreZBot - z);
+      if (-depth < best) best = -depth;
     }
     return best;
   }
+  CITY.landClearance = landClearance;         // shared with scenery.js
 
   CITY.init = function () {
     const scene = RR.Engine.scene;
@@ -2448,19 +2455,83 @@ window.CHICAGO = {
       scene.add(decks);
     }
 
+    // shared dressing/greenery builders (flat vertex-colored geometry)
+    function treeAt(arr, px, pz, scale) {
+      const s = scale || 1;
+      const trunk = new THREE.CylinderGeometry(0.22 * s, 0.32 * s, 2.6 * s, 5);
+      trunk.translate(px, GROUND_Y + 1.3 * s, pz);
+      tintGeom(trunk, 0x4a3524, 0, rng); arr.push(trunk);
+      const crown = new THREE.SphereGeometry((2.1 + rng() * 1.5) * s, 7, 6);
+      crown.scale(1, 0.82, 1);
+      crown.translate(px, GROUND_Y + (4.0 + rng()) * s, pz);
+      tintGeom(crown, rng() > 0.5 ? 0x4d7a3a : 0x5d8a42, 0.22, rng); arr.push(crown);
+    }
+    function benchAt(arr, px, pz, tx, tz) {
+      const ang = Math.atan2(tx, tz), nx = -tz, nz = tx;
+      const seat = new THREE.BoxGeometry(2.0, 0.18, 0.6);
+      seat.rotateY(ang); seat.translate(px, GROUND_Y + 0.5, pz);
+      tintGeom(seat, 0x5a4a30, 0.12, rng); arr.push(seat);
+      const back = new THREE.BoxGeometry(2.0, 0.5, 0.12);
+      back.rotateY(ang); back.translate(px + nx * 0.24, GROUND_Y + 0.8, pz + nz * 0.24);
+      tintGeom(back, 0x5a4a30, 0.12, rng); arr.push(back);
+    }
+    function lampAt(arr, px, pz) {
+      const post = new THREE.CylinderGeometry(0.12, 0.17, 5.0, 5);
+      post.translate(px, GROUND_Y + 2.5, pz);
+      tintGeom(post, 0x2c2f33, 0, rng); arr.push(post);
+      const arm = new THREE.BoxGeometry(0.9, 0.12, 0.12);
+      arm.translate(px, GROUND_Y + 4.9, pz);
+      tintGeom(arm, 0x2c2f33, 0, rng); arr.push(arm);
+      const lamp = new THREE.SphereGeometry(0.3, 6, 5);
+      lamp.translate(px + 0.38, GROUND_Y + 4.8, pz);
+      tintGeom(lamp, 0xffe6b0, 0, rng); arr.push(lamp);
+    }
+    function planterAt(arr, px, pz) {
+      const box = new THREE.BoxGeometry(2.4, 0.9, 1.2);
+      box.translate(px, GROUND_Y + 0.45, pz);
+      tintGeom(box, 0x8f8672, 0.1, rng); arr.push(box);
+      const green = new THREE.BoxGeometry(2.2, 0.6, 1.0);
+      green.translate(px, GROUND_Y + 1.15, pz);
+      tintGeom(green, 0x4d7a3a, 0.2, rng); arr.push(green);
+    }
+
     // ---------- generic tower field on the street grid ----------
     const BLOCK = 96, STREET = 22;
-    const palettes = [0x8f9aa3, 0x76828c, 0xa39a8a, 0x5d666e, 0x8c8478, 0x9fa8b0, 0x6b7480, 0xb0a798];
-    const geoms = [];
+    const palettes = [0x8f9aa3, 0x76828c, 0xa39a8a, 0x5d666e, 0x8c8478, 0x9fa8b0, 0x6b7480, 0xb0a798, 0xc4b9a4, 0x7d8891, 0x9a8f7c];
+    const geoms = [];          // window-mapped tower shells
+    const detailGeoms = [];    // flat: rooftop clutter, park ground, plazas
+    const dressGeoms = [];     // flat: trees, lamps, benches, planters
     const lm = C.landmarks;
     const cx0 = C.generic.loopCenter.x, cz0 = C.generic.loopCenter.z;
+
+    function roofClutter(cx, cz, topY, w, d) {
+      if (rng() > 0.42) {
+        const pw = w * (0.26 + rng() * 0.34), pd = d * (0.26 + rng() * 0.34), ph = 2.5 + rng() * 6;
+        const g = new THREE.BoxGeometry(pw, ph, pd);
+        g.translate(cx + (rng() - 0.5) * w * 0.35, topY + ph / 2, cz + (rng() - 0.5) * d * 0.35);
+        tintGeom(g, 0x666c72, 0.12, rng); detailGeoms.push(g);
+      }
+      if (rng() > 0.6) {
+        const rad = 1.2 + rng() * 1.3, th = 2.4 + rng() * 3;
+        const tx = cx + (rng() - 0.5) * w * 0.4, tz = cz + (rng() - 0.5) * d * 0.4;
+        const g = new THREE.CylinderGeometry(rad, rad, th, 8);
+        g.translate(tx, topY + th / 2, tz);
+        tintGeom(g, 0x4a4034, 0.12, rng); detailGeoms.push(g);
+      }
+      if (rng() > 0.72) {
+        const ah = 4 + rng() * 12;
+        const g = new THREE.CylinderGeometry(0.1, 0.22, ah, 4);
+        g.translate(cx + (rng() - 0.5) * w * 0.25, topY + ah / 2, cz + (rng() - 0.5) * d * 0.25);
+        tintGeom(g, 0x2c2f33, 0, rng); detailGeoms.push(g);
+      }
+    }
+
     for (let gx = -22; gx <= 24; gx++) {
       for (let gz = -20; gz <= 22; gz++) {
         const bx = gx * (BLOCK + STREET), bz = gz * (BLOCK + STREET);
-        if (bx > C.lake.openWaterX - 120) continue;                      // lakefront park stays open
+        if (bx > C.lake.openWaterX - 90) continue;                       // lakefront park stays open
         const clear = landClearance(bx, bz);
-        if (clear < 26) continue;                                        // keep the banks buildable by hand
-        // skip blocks owned by landmark footprints
+        if (clear < 4) continue;                                         // block center basically in the water
         let owned = false;
         for (const l of lm) {
           if (Math.abs(l.x - bx) < (l.w / 2 + 60) && Math.abs(l.z - bz) < (l.d / 2 + 60)) { owned = true; break; }
@@ -2468,73 +2539,106 @@ window.CHICAGO = {
         if (owned) continue;
         const dLoop = Math.hypot(bx - cx0, bz - cz0);
         if (dLoop > 2600) continue;
-        // density + height falls off from the Loop
-        const density = U().clamp(1.25 - dLoop / 2200, 0.18, 1);
-        if (rng() > density + 0.15) continue;
-        const nBld = 1 + Math.floor(rng() * 2.2 * density + 0.4);
+
+        // some near-water blocks become riverfront parks instead of towers
+        if (clear < 60 && rng() < 0.22) {
+          const tile = new THREE.PlaneGeometry(BLOCK - 6, BLOCK - 6);
+          tile.rotateX(-Math.PI / 2); tile.translate(bx, GROUND_Y + 0.02, bz);
+          tintGeom(tile, 0x4f7a3e, 0.14, rng); detailGeoms.push(tile);
+          const nT = 4 + Math.floor(rng() * 6);
+          for (let t = 0; t < nT; t++) {
+            const tx = bx + (rng() - 0.5) * (BLOCK - 16), tz = bz + (rng() - 0.5) * (BLOCK - 16);
+            if (landClearance(tx, tz) > 3) treeAt(dressGeoms, tx, tz, 0.9 + rng() * 0.4);
+          }
+          continue;
+        }
+
+        const density = U().clamp(1.25 - dLoop / 2200, 0.2, 1);
+        if (rng() > density + 0.2) continue;
+        const nBld = 1 + Math.floor(rng() * 2.2 * density + 0.5);
         for (let b = 0; b < nBld; b++) {
-          const w = 24 + rng() * 42, d = 24 + rng() * 42;
+          const w = 22 + rng() * 44, d = 22 + rng() * 44;
           const ox = (rng() - 0.5) * (BLOCK - w), oz = (rng() - 0.5) * (BLOCK - d);
-          let h = (18 + rng() * rng() * 150) * U().clamp(1.35 - dLoop / 1900, 0.25, 1.15);
-          if (clear < 70) h = Math.min(h, 60 + rng() * 40);              // human scale right on the water
+          const bxx = bx + ox, bzz = bz + oz;
+          const halfDiag = Math.hypot(w, d) * 0.5;
+          // FOOTPRINT keep-out: the whole building, not just its center, must sit on dry land
+          if (landClearance(bxx, bzz) < halfDiag + 3) continue;
+          if (bxx > C.lake.openWaterX - halfDiag - 20) continue;
+          let h = (18 + rng() * rng() * 155) * U().clamp(1.35 - dLoop / 1900, 0.25, 1.15);
+          if (landClearance(bxx, bzz) < 80) h = Math.min(h, 55 + rng() * 55);   // step down toward the water
           h = Math.max(12, h);
-          const g = towerGeom(w, h, d, bx + ox, bz + oz, 0);
+          const g = towerGeom(w, h, d, bxx, bzz, 0);
           g.translate(0, GROUND_Y, 0);
           tintGeom(g, palettes[Math.floor(rng() * palettes.length)], 0.22, rng);
           geoms.push(g);
-          // simple setback crown on the taller ones
-          if (h > 90 && rng() > 0.4) {
-            const g2 = towerGeom(w * 0.62, h * 0.28, d * 0.62, bx + ox, bz + oz, 0);
+          if (h > 85 && rng() > 0.4) {                                   // setback crown
+            const g2 = towerGeom(w * 0.62, h * 0.28, d * 0.62, bxx, bzz, 0);
             g2.translate(0, GROUND_Y + h, 0);
             tintGeom(g2, palettes[Math.floor(rng() * palettes.length)], 0.22, rng);
             geoms.push(g2);
+            roofClutter(bxx, bzz, GROUND_Y + h + h * 0.28, w * 0.62, d * 0.62);
+          } else {
+            roofClutter(bxx, bzz, GROUND_Y + h, w, d);
           }
         }
       }
-    }
-    // chunk the merge so no single geometry gets silly
-    for (let i = 0; i < geoms.length; i += 400) {
-      const mesh = new THREE.Mesh(mergeGeoms(geoms.slice(i, i + 400)), CITY.material());
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      scene.add(mesh);
     }
 
-    // ---------- riverwalk dressing: railings, lamp posts, trees ----------
-    const dressGeoms = [];
-    const main = RR.River.paths.main;
-    if (main) {
-      for (let i = 8; i < main.n - 8; i += 10) {
-        let tx = main.x[i + 1] - main.x[i - 1], tz = main.z[i + 1] - main.z[i - 1];
+    // ---------- distant skyline: silhouette ring so the horizon reads as a full city ----------
+    {
+      const backGeoms = [];
+      const bRng = U().mulberry(7777);
+      for (let a = 0; a < Math.PI * 2; a += 0.04) {
+        const rad = 2750 + bRng() * 1000;
+        const bx = cx0 + Math.cos(a) * rad, bz = cz0 + Math.sin(a) * rad;
+        if (bx > C.lake.openWaterX + 150) continue;                      // leave the lake horizon open
+        const w = 30 + bRng() * 64, d = 30 + bRng() * 64;
+        const h = 44 + bRng() * bRng() * 250;
+        const g = new THREE.BoxGeometry(w, h, d);
+        g.translate(bx, h / 2, bz);
+        tintGeom(g, 0x8793a0, 0.14, bRng);
+        backGeoms.push(g);
+      }
+      const back = new THREE.Mesh(mergeGeoms(backGeoms), CITY.flatMaterial());
+      scene.add(back);
+    }
+
+    // ---------- riverwalk dressing on BOTH banks of every channel (keep-out checked) ----------
+    for (const key in RR.River.paths) {
+      if (key.startsWith('lake')) continue;
+      const p = RR.River.paths[key];
+      for (let i = 6; i < p.n - 6; i += 7) {
+        let tx = p.x[i + 1] - p.x[i - 1], tz = p.z[i + 1] - p.z[i - 1];
         const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
         for (const s of [-1, 1]) {
-          const px = main.x[i] - tz * (main.w[i] + 4.5) * s;
-          const pz = main.z[i] + tx * (main.w[i] + 4.5) * s;
-          if ((i / 10) % 2 === 0) {
-            const post = new THREE.CylinderGeometry(0.12, 0.16, 4.6, 5);
-            post.translate(px, GROUND_Y + 2.3, pz);
-            tintGeom(post, 0x2c2f33, 0, rng);
-            dressGeoms.push(post);
-            const lamp = new THREE.SphereGeometry(0.34, 6, 5);
-            lamp.translate(px, GROUND_Y + 4.7, pz);
-            tintGeom(lamp, 0xffe9b8, 0, rng);
-            dressGeoms.push(lamp);
-          } else {
-            const trunk = new THREE.CylinderGeometry(0.22, 0.3, 2.6, 5);
-            trunk.translate(px, GROUND_Y + 1.3, pz);
-            tintGeom(trunk, 0x4a3524, 0, rng);
-            dressGeoms.push(trunk);
-            const crown = new THREE.SphereGeometry(2.4 + rng() * 1.4, 7, 6);
-            crown.scale(1, 0.85, 1);
-            crown.translate(px, GROUND_Y + 4.4, pz);
-            tintGeom(crown, rng() > 0.5 ? 0x4d7a3a : 0x5d8a42, 0.2, rng);
-            dressGeoms.push(crown);
-          }
+          const off = p.w[i] + 4.5;
+          const px = p.x[i] - tz * off * s, pz = p.z[i] + tx * off * s;
+          if (px > C.lake.openWaterX - 20) continue;
+          if (landClearance(px, pz) < 1.2) continue;                     // never over the water
+          const kind = (Math.floor(i / 7) + (s > 0 ? 0 : 1)) % 4;
+          if (kind === 0) lampAt(dressGeoms, px, pz);
+          else if (kind === 1) treeAt(dressGeoms, px, pz, 1);
+          else if (kind === 2) { const bx2 = p.x[i] - tz * (off + 0.6) * s, bz2 = p.z[i] + tx * (off + 0.6) * s; benchAt(dressGeoms, bx2, bz2, tx, tz); }
+          else planterAt(dressGeoms, px, pz);
         }
       }
-      const dress = new THREE.Mesh(mergeGeoms(dressGeoms), CITY.flatMaterial());
-      dress.castShadow = true;
-      scene.add(dress);
+    }
+
+    // ---------- merge everything into a few draw calls ----------
+    for (let i = 0; i < geoms.length; i += 400) {
+      const mesh = new THREE.Mesh(mergeGeoms(geoms.slice(i, i + 400)), CITY.material());
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      scene.add(mesh);
+    }
+    for (let i = 0; i < detailGeoms.length; i += 700) {
+      const mesh = new THREE.Mesh(mergeGeoms(detailGeoms.slice(i, i + 700)), CITY.flatMaterial());
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      scene.add(mesh);
+    }
+    for (let i = 0; i < dressGeoms.length; i += 700) {
+      const mesh = new THREE.Mesh(mergeGeoms(dressGeoms.slice(i, i + 700)), CITY.flatMaterial());
+      mesh.castShadow = true;
+      scene.add(mesh);
     }
   };
 
@@ -2832,8 +2936,8 @@ window.CHICAGO = {
 </script>
 <script>
 /* ===== js/world/bridges.js ===== */
-/* River Racer — Chicago's movable bridges. Each entry snaps to its channel and
-   spans it perpendicular to the local tangent. Oxide-red steel, tender houses, piers. */
+/* River Racer — Chicago's movable bridges: bascule leaves, cream tender houses,
+   baluster railings, ornate lamps, sidewalks, and a readable name sign on each span. */
 (function () {
   const B = {};
   const U = () => RR.U;
@@ -2842,116 +2946,188 @@ window.CHICAGO = {
   const RED = 0x7a3428;          // Chicago bascule oxide
   const RED_DK = 0x5e2820;
   const CONC = 0x9a968c;
-  const BRICK = 0x8a5138;
+  const STONE = 0xd7ccae;        // limestone tender house
+  const STONE_DK = 0xb3a988;
+  const ROOF = 0x3f5a3a;         // verdigris green roof
+
+  // ---- readable street-name sign atlas (one texture for all bridges) ----
+  function displayName(n) {
+    if (n.indexOf('Michigan') >= 0) return 'MICHIGAN AVE';
+    return n.replace(/\s*\(.*\)\s*/g, '').replace(/–/g, '-').replace(/\//g, ' ')
+            .replace(/\s+/g, ' ').trim().toUpperCase();
+  }
+  function buildSignAtlas(bridges) {
+    const N = bridges.length, cols = 2, rows = Math.ceil(N / cols);
+    const cw = 512, ch = 128, cvW = cols * cw, cvH = rows * ch;
+    const tex = U().canvasTexture(cvW, cvH, (ctx) => {
+      ctx.clearRect(0, 0, cvW, cvH);
+      bridges.forEach((b, i) => {
+        const col = i % cols, row = (i / cols) | 0, x0 = col * cw, y0 = row * ch;
+        ctx.fillStyle = '#0e3a2c'; ctx.fillRect(x0 + 8, y0 + 16, cw - 16, ch - 32);
+        ctx.strokeStyle = '#eff4f1'; ctx.lineWidth = 5; ctx.strokeRect(x0 + 15, y0 + 23, cw - 30, ch - 46);
+        ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const name = displayName(b.name);
+        let fs = 60; ctx.font = 'bold ' + fs + 'px Arial, sans-serif';
+        while (ctx.measureText(name).width > cw - 64 && fs > 20) { fs -= 3; ctx.font = 'bold ' + fs + 'px Arial, sans-serif'; }
+        ctx.fillText(name, x0 + cw / 2, y0 + ch / 2 + 2);
+      });
+    });
+    tex.anisotropy = 8;
+    function cell(i) {
+      const col = i % cols, row = (i / cols) | 0, x0 = col * cw, y0 = row * ch;
+      return { u0: x0 / cvW, u1: (x0 + cw) / cvW, vTop: 1 - y0 / cvH, vBot: 1 - (y0 + ch) / cvH };
+    }
+    return { tex, cell };
+  }
+
+  function signQuad(S, cx, y, cz, nx, nz, w, h, c) {
+    const rx = nz, rz = -nx, hw = w / 2, hh = h / 2, base = S.sv.length / 3;
+    const corners = [
+      [cx - rx * hw, y + hh, cz - rz * hw], [cx + rx * hw, y + hh, cz + rz * hw],
+      [cx + rx * hw, y - hh, cz + rz * hw], [cx - rx * hw, y - hh, cz - rz * hw],
+    ];
+    for (const p of corners) S.sv.push(p[0], p[1], p[2]);
+    S.suv.push(c.u0, c.vTop, c.u1, c.vTop, c.u1, c.vBot, c.u0, c.vBot);
+    S.sidx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
 
   function addPierObstacles(cx, cz, tx, tz, half) {
-    // bank piers sit just outside the channel — boats hit the abutments, not phantom walls
     RR.River.addObstacle(cx - tz * (half + 2.2), cz + tx * (half + 2.2), 3.4);
     RR.River.addObstacle(cx + tz * (half + 2.2), cz - tx * (half + 2.2), 3.4);
   }
 
-  function build(bridge, geoms) {
+  function build(bridge, idx, S) {
     const path = RR.River.paths[bridge.branch];
     if (!path) return;
     const q = U().pathNearest(path, bridge.x, bridge.z);
     const cx = q.x, cz = q.z, tx = q.tx, tz = q.tz;
     const half = q.w;
-    // rotateY(ang) maps the box x-axis (its length) onto (-tz, 0, tx) — straight across the channel
-    const ang = Math.atan2(-tx, -tz);
+    const ang = Math.atan2(-tx, -tz);        // box x-axis spans the channel
     const span = half * 2 + 14;
     const cl = bridge.clearance;
-    const GY = RR.City.GROUND_Y;
+    const geoms = S.geoms;
+    const cellUV = S.atlas.cell(idx);
 
-    function cross(w, h, len, ox, oy, c) {
-      // box laid across the channel; ox = offset along channel direction, oy = height of box center
+    function cross(w, h, len, ox, oy, c, jit) {
       const g = new THREE.BoxGeometry(len, h, w);
-      g.rotateY(ang);
-      g.translate(cx + tx * ox, oy, cz + tz * ox);
-      RR.City.tintGeom(g, c, 0.06, rng);
-      geoms.push(g);
+      g.rotateY(ang); g.translate(cx + tx * ox, oy, cz + tz * ox);
+      RR.City.tintGeom(g, c, jit == null ? 0.06 : jit, rng); geoms.push(g);
     }
-    function post(r, h, alongOff, acrossOff, c, seg) {
-      const g = new THREE.CylinderGeometry(r, r * 1.15, h, seg || 6);
-      g.translate(cx + tx * alongOff - tz * acrossOff, h / 2, cz + tz * alongOff + tx * acrossOff);
-      RR.City.tintGeom(g, c, 0, rng);
-      geoms.push(g);
+    // place a box at an arbitrary (along, across) offset from the bridge center
+    function at(w, h, d, alongOff, acrossOff, oy, c, rotToSpan) {
+      const g = new THREE.BoxGeometry(w, h, d);
+      if (rotToSpan) g.rotateY(ang);
+      g.translate(cx + tx * alongOff - tz * acrossOff, oy, cz + tz * alongOff + tx * acrossOff);
+      RR.City.tintGeom(g, c, 0.05, rng); geoms.push(g);
     }
-    function house(alongOff, acrossOff) {
-      const hx = cx + tx * alongOff - tz * acrossOff;
-      const hz = cz + tz * alongOff + tx * acrossOff;
-      const g = new THREE.BoxGeometry(5, 6, 5);
-      g.rotateY(ang);
-      g.translate(hx, cl + 3, hz);
-      RR.City.tintGeom(g, BRICK, 0.1, rng);
-      geoms.push(g);
-      const roof = new THREE.ConeGeometry(4.2, 2.6, 4);
+    function cylAt(r, h, alongOff, acrossOff, oy, c, seg) {
+      const g = new THREE.CylinderGeometry(r, r * 1.12, h, seg || 6);
+      g.translate(cx + tx * alongOff - tz * acrossOff, oy, cz + tz * alongOff + tx * acrossOff);
+      RR.City.tintGeom(g, c, 0, rng); geoms.push(g);
+    }
+    function tenderHouse(alongOff, acrossOff) {
+      const oy = cl + 0.4;
+      at(5.2, 1.2, 5.2, alongOff, acrossOff, oy + 0.6, STONE_DK, true);   // stone base
+      at(4.6, 5.2, 4.6, alongOff, acrossOff, oy + 3.8, STONE, true);      // limestone body
+      // window bands (darker inset)
+      at(4.7, 1.4, 0.2, alongOff, acrossOff - 2.35, oy + 4.2, 0x394049, true);
+      at(0.2, 1.4, 4.7, alongOff - 2.35, acrossOff, oy + 4.2, 0x394049, true);
+      // green pyramidal roof + finial
+      const roof = new THREE.ConeGeometry(3.7, 2.8, 4);
       roof.rotateY(ang + Math.PI / 4);
-      roof.translate(hx, cl + 7.3, hz);
-      RR.City.tintGeom(roof, 0x4b5320, 0, rng);
-      geoms.push(roof);
+      roof.translate(cx + tx * alongOff - tz * acrossOff, oy + 7.8, cz + tz * alongOff + tx * acrossOff);
+      RR.City.tintGeom(roof, ROOF, 0, rng); geoms.push(roof);
+      cylAt(0.12, 1.4, alongOff, acrossOff, oy + 9.6, 0xd9c98a, 6);
+    }
+    function bridgeLamp(alongOff, acrossOff) {
+      cylAt(0.16, 4.2, alongOff, acrossOff, cl + 2.0 + 2.1, 0x20242a, 6);
+      for (const d of [-1, 1]) {
+        const gx = cx + tx * alongOff - tz * acrossOff;
+        const gz = cz + tz * alongOff + tx * acrossOff;
+        const globe = new THREE.SphereGeometry(0.34, 6, 5);
+        globe.translate(gx + tx * d * 0.55, cl + 5.6, gz + tz * d * 0.55);
+        RR.City.tintGeom(globe, 0xffe6b0, 0, rng); geoms.push(globe);
+      }
+    }
+    function addSigns(y) {
+      const w = Math.min(2 * half * 0.62, 13), h = w / 5.2;
+      signQuad(S, cx - tx * 7.2, y, cz - tz * 7.2, -tx, -tz, w, h, cellUV);   // faces upstream
+      signQuad(S, cx + tx * 7.2, y, cz + tz * 7.2, tx, tz, w, h, cellUV);     // faces downstream
+    }
+
+    // abutment piers on both banks (all bridge kinds)
+    for (const s of [-1, 1]) {
+      const px = cx - tz * (half + 2.2) * s, pz = cz + tx * (half + 2.2) * s;
+      const g = new THREE.BoxGeometry(9, cl + 2.5, 8);
+      g.rotateY(ang); g.translate(px, (cl + 2.5) / 2 - 0.5, pz);
+      RR.City.tintGeom(g, CONC, 0.08, rng); geoms.push(g);
     }
 
     if (bridge.kind === 'railraised') {
-      // the Kinzie St rail bridge: single leaf permanently pointing at the sky
       const leafLen = half * 2 + 6;
       const leaf = new THREE.BoxGeometry(6, 2.2, leafLen);
-      leaf.translate(0, 0, leafLen / 2);            // hinge at origin
-      leaf.rotateX(-1.25);                          // ~72° up
-      leaf.rotateY(Math.atan2(tz, -tx));            // horizontal component aims back over the channel
+      leaf.translate(0, 0, leafLen / 2);
+      leaf.rotateX(-1.25);
+      leaf.rotateY(Math.atan2(tz, -tx));
       const hx = cx - tz * (half + 2), hz = cz + tx * (half + 2);
       leaf.translate(hx, 3, hz);
-      RR.City.tintGeom(leaf, 0x555a5e, 0.08, rng);
-      geoms.push(leaf);
-      // counterweight tower behind the hinge
-      post(2.6, 22, 0, half + 5, 0x555a5e, 4);
+      RR.City.tintGeom(leaf, 0x555a5e, 0.08, rng); geoms.push(leaf);
+      cylAt(2.6, 22, 0, half + 5, 11, 0x555a5e, 4);       // counterweight tower
+      at(7, 4, 7, 0, half + 5, 24, 0x4a4e52, true);
+      addSigns(cl > 50 ? 12 : cl + 3.0);
       addPierObstacles(cx, cz, tx, tz, half);
       return;
     }
 
-    // deck
-    cross(bridge.kind === 'deck' ? 22 : 13, 1.6, span, 0, cl + 0.8, bridge.kind === 'deck' ? CONC : RED);
+    // ---- roadway deck + sidewalks ----
+    const deckW = bridge.kind === 'deck' ? 22 : 13;
+    cross(deckW, 1.6, span, 0, cl + 0.8, bridge.kind === 'deck' ? CONC : RED);
+    for (const s of [-1, 1]) {                            // raised sidewalks
+      cross(2.2, 0.4, span, s * (deckW / 2 - 1.1), cl + 1.8, 0x8a8880, 0.05);
+    }
     // side girders
-    for (const s of [-1, 1]) {
-      cross(1.1, 2.6, span, s * (bridge.kind === 'deck' ? 10 : 6), cl + 1.6, RED_DK);
+    for (const s of [-1, 1]) cross(1.1, 2.6, span, s * (deckW / 2 - 0.4), cl + 1.5, RED_DK);
+    // counterweights hanging under the leading edges at each pier
+    if (bridge.kind !== 'deck') {
+      for (const s of [-1, 1]) at(5, 3, 8, 0, s * (half + 1.5), cl - 1.2, RED_DK, true);
     }
-    // railings
-    for (const s of [-1, 1]) {
-      cross(0.4, 1.1, span, s * (bridge.kind === 'deck' ? 11 : 6.6), cl + 3.0, RED);
-    }
-    // bascule center joint hump
-    if (bridge.kind !== 'deck') cross(13.5, 1.2, 6, 0, cl + 2.2, RED_DK);
 
-    // abutment piers on both banks
+    // ---- balustrade railing: low wall + top rail + sparse posts ----
     for (const s of [-1, 1]) {
-      const px = cx - tz * (half + 2.2) * s, pz = cz + tx * (half + 2.2) * s;
-      const g = new THREE.BoxGeometry(9, cl + 2.5, 8);
-      g.rotateY(ang);
-      g.translate(px, (cl + 2.5) / 2 - 0.5, pz);
-      RR.City.tintGeom(g, CONC, 0.08, rng);
-      geoms.push(g);
+      const acr = deckW / 2 + 0.1;
+      cross(0.3, 0.95, span, s * acr, cl + 2.4, RED);         // low wall
+      cross(0.45, 0.18, span, s * acr, cl + 3.0, 0xcbb59a);   // pale top rail
+      for (let k = -half - 4; k <= half + 4; k += 4.5) {      // balusters
+        cylAt(0.13, 1.05, k, acr * s, cl + 2.4, RED_DK, 4);
+      }
     }
+
+    // bascule center seam hump
+    if (bridge.kind !== 'deck') cross(deckW + 0.5, 1.2, 6, 0, cl + 2.2, RED_DK);
+
+    // corner lamps
+    for (const so of [-1, 1]) for (const ao of [-1, 1]) bridgeLamp(ao * (half + 1.5), so * (deckW / 2 + 0.6));
 
     if (bridge.kind === 'l') {
-      // double-deck: L tracks overhead with truss sides
+      // Wells/Lake double-deck: L rapid-transit truss overhead
       cross(11, 1.4, span, 0, cl + 7.6, 0x4a4e52);
       for (const s of [-1, 1]) {
         cross(0.9, 6.0, span, s * 5.4, cl + 4.6, RED_DK);
-        for (let k = -half; k <= half; k += 9) {
-          post(0.35, cl + 7.6, s * 5.4, k, RED_DK);
-        }
+        for (let k = -half; k <= half; k += 6) cylAt(0.3, 6.0, k, s * 5.4, cl + 4.6, RED_DK, 4);
+        cross(0.5, 0.5, span, s * 5.4, cl + 7.5, 0x3a3f45);
       }
-    }
-
-    if (bridge.kind === 'bascule' || bridge.kind === 'bascule2') {
-      const houses = bridge.kind === 'bascule2' ? [[-1, -1], [-1, 1], [1, -1], [1, 1]] : [[-1, -1], [1, 1]];
-      for (const [a, b2] of houses) house(a * 8.5, b2 * (half + 3.5));
-    }
-    if (bridge.kind === 'deck') {
-      // Lake Shore Drive: steel through-truss profile above the deck
-      for (const s of [-1, 1]) {
-        cross(1.2, 7, span, s * 9.5, cl + 5.4, 0x6a7076);
-      }
+      addSigns(cl + 3.4);
+    } else if (bridge.kind === 'deck') {
+      // Lake Shore Drive: steel through-truss
+      for (const s of [-1, 1]) cross(1.2, 7, span, s * 9.5, cl + 5.4, 0x6a7076);
       cross(20, 1.2, 8, 0, cl + 9.2, 0x6a7076);
+      for (let k = -half; k <= half; k += 8) for (const s of [-1, 1]) cylAt(0.35, 7, k, s * 9.5, cl + 5.4, 0x5a6066, 4);
+      addSigns(cl + 3.6);
+    } else {
+      // bascule tender houses
+      const houses = bridge.kind === 'bascule2' ? [[-1, -1], [-1, 1], [1, -1], [1, 1]] : [[-1, -1], [1, 1]];
+      for (const [a, b2] of houses) tenderHouse(a * 8.5, b2 * (half + 3.6));
+      addSigns(cl + 3.3);
     }
 
     addPierObstacles(cx, cz, tx, tz, half);
@@ -2959,12 +3135,24 @@ window.CHICAGO = {
 
   B.init = function () {
     rng = U().mulberry(4242);
-    const geoms = [];
-    for (const b of window.CHICAGO.bridges) build(b, geoms);
-    const mesh = new THREE.Mesh(RR.City.mergeGeoms(geoms), RR.City.flatMaterial());
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    const bridges = window.CHICAGO.bridges;
+    const S = { geoms: [], sv: [], suv: [], sidx: [], atlas: buildSignAtlas(bridges) };
+    bridges.forEach((b, i) => build(b, i, S));
+
+    const mesh = new THREE.Mesh(RR.City.mergeGeoms(S.geoms), RR.City.flatMaterial());
+    mesh.castShadow = true; mesh.receiveShadow = true;
     RR.Engine.scene.add(mesh);
+
+    if (S.sv.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(S.sv), 3));
+      g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(S.suv), 2));
+      g.setIndex(S.sidx);
+      g.computeVertexNormals();
+      const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: S.atlas.tex, side: THREE.DoubleSide }));
+      m.renderOrder = 1;
+      RR.Engine.scene.add(m);
+    }
   };
 
   RR.Bridges = B;
@@ -3163,6 +3351,172 @@ window.CHICAGO = {
   };
 
   RR.Lake = LK;
+})();
+
+</script>
+<script>
+/* ===== js/world/scenery.js ===== */
+/* River Racer — lakefront life: marina + moored boats, sailboats under way, a lake
+   freighter, harbor buoys, and low distant shorelines so Lake Michigan isn't empty. */
+(function () {
+  const SC = {};
+  const U = () => RR.U;
+  let rng, bobbers = [];
+
+  function tint(geo, hex, jit) { RR.City.tintGeom(geo, hex, jit || 0, rng); return geo; }
+
+  // ---- a small sailboat as its own group (bobs on the waves) ----
+  function makeSailboat(scale, hull, withSail) {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(2.4 * scale, 1.1 * scale, 7 * scale),
+      new THREE.MeshLambertMaterial({ color: hull }));
+    const p = body.geometry.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const z = p.getZ(i); if (Math.abs(z) > 2.5 * scale) p.setX(i, p.getX(i) * 0.35);
+    }
+    body.geometry.computeVertexNormals();
+    body.position.y = 0.4 * scale; g.add(body);
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(1.7 * scale, 0.5 * scale, 3 * scale),
+      new THREE.MeshLambertMaterial({ color: 0xeef0f2 }));
+    deck.position.set(0, 1.0 * scale, -0.5 * scale); g.add(deck);
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.09 * scale, 0.11 * scale, 11 * scale, 5),
+      new THREE.MeshLambertMaterial({ color: 0xcfcabc }));
+    mast.position.y = 6 * scale; g.add(mast);
+    if (withSail) {
+      const sailMat = new THREE.MeshLambertMaterial({ color: 0xf4f2ea, side: THREE.DoubleSide });
+      const main = new THREE.Mesh(new THREE.PlaneGeometry(4.2 * scale, 8.2 * scale), sailMat);
+      main.position.set(0, 5.6 * scale, -1.9 * scale);
+      main.rotation.y = Math.PI / 2; main.scale.x = 0.5; g.add(main);
+      // give the mainsail a triangular silhouette
+      const sp = main.geometry.attributes.position;
+      for (let i = 0; i < sp.count; i++) { const y = sp.getY(i); if (y > 0) sp.setX(i, sp.getX(i) * (1 - y / (8.2 * scale))); }
+      main.geometry.computeVertexNormals();
+      const jib = new THREE.Mesh(new THREE.PlaneGeometry(3 * scale, 6.5 * scale, 1, 1), sailMat);
+      jib.position.set(0, 4.8 * scale, 1.7 * scale); jib.rotation.y = Math.PI / 2; jib.scale.x = 0.5; g.add(jib);
+    }
+    g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    return g;
+  }
+
+  function addBobber(group, x, z, headingJitter) {
+    group.position.set(x, 0, z);
+    group.rotation.y = rng() * Math.PI * 2;
+    RR.Engine.scene.add(group);
+    bobbers.push({ g: group, x, z, ph: rng() * 9, drift: (headingJitter || 0) });
+  }
+
+  SC.init = function () {
+    rng = U().mulberry(20260715);
+    const scene = RR.Engine.scene;
+    const C = window.CHICAGO;
+    const R = RR.River;
+    const flat = []; // static merged geometry (docks, freighter, shorelines)
+
+    // ---------- DuSable-style marina south of the river mouth ----------
+    // moored hulls + masts are baked straight into the static mesh (they barely move at a dock)
+    const mx = 2080, mz = 430;
+    const hullCols = [0x2b4a6b, 0x6b2b2b, 0x3a3a3a, 0xdfe0e2];
+    for (let d = 0; d < 3; d++) {
+      const dz = mz + d * 46;
+      const dock = new THREE.BoxGeometry(150, 0.6, 4);
+      dock.translate(mx + 40, 0.5, dz);
+      flat.push(tint(dock, 0x8a7c62, 0.08));
+      for (let k = 0; k < 8; k++) {
+        const bx = mx - 30 + k * 18, side = (k % 2) ? 1 : -1, bz = dz + side * 5;
+        const sc = 0.8 + rng() * 0.3;
+        const hull = new THREE.BoxGeometry(6.5 * sc, 1.1 * sc, 2.3 * sc);
+        const hp = hull.attributes.position;
+        for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getX(i)) > 2.4 * sc) hp.setZ(i, hp.getZ(i) * 0.35); }
+        hull.computeVertexNormals();
+        hull.translate(bx, 0.55 * sc, bz); flat.push(tint(hull, hullCols[k % 4], 0.05));
+        const mast = new THREE.CylinderGeometry(0.1 * sc, 0.12 * sc, 10 * sc, 5);
+        mast.translate(bx, 5.5 * sc, bz); flat.push(tint(mast, 0xcfcabc, 0));
+      }
+    }
+    const spine = new THREE.BoxGeometry(4, 0.6, 150);
+    spine.translate(mx - 34, 0.5, mz + 46);
+    flat.push(tint(spine, 0x8a7c62, 0.08));
+
+    // ---------- sailboats under way, scattered across the open basin ----------
+    const spots = [
+      [2500, 620, 1], [2850, 300, 1.1], [3050, 780, 0.9], [3350, 250, 1.2],
+      [2650, 950, 1], [3200, -150, 1.1], [3550, 500, 1], [2950, 1120, 0.95],
+      [3700, -250, 1.15], [2400, 1250, 0.9],
+    ];
+    for (const [x, z, sc] of spots) addBobber(makeSailboat(sc, [0xdfe6ea, 0x9fb8c8, 0xe8d9b0][((x + z) | 0) % 3], true), x, z, 0.15 + rng() * 0.2);
+
+    // ---------- harbor nav buoys (bob, tiny beacon) ----------
+    for (const [x, z, red] of [[2160, -30, 1], [2160, 120, 0], [3260, -70, 1], [3180, 40, 0], [2760, 700, 1]]) {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.85, 1.7, 8),
+        new THREE.MeshLambertMaterial({ color: red ? 0xd23b2c : 0x2ea043 }));
+      body.position.y = 0.85; g.add(body);
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.3, 5),
+        new THREE.MeshLambertMaterial({ color: 0x2a2f36 }));
+      mast.position.y = 2.1; g.add(mast);
+      g.traverse((o) => { if (o.isMesh) o.castShadow = false; });   // tiny — skip shadow pass
+      addBobber(g, x, z, 0);
+    }
+
+    // ---------- lake freighter far out to the ESE ----------
+    {
+      const fx = 4150, fz = 640, fg = new THREE.Group();
+      const hull = new THREE.BoxGeometry(26, 9, 130);
+      const hp = hull.attributes.position;
+      for (let i = 0; i < hp.count; i++) { const z = hp.getZ(i); if (z < -55) hp.setX(i, hp.getX(i) * 0.4); }
+      hull.computeVertexNormals();
+      hull.translate(0, 2.5, 0); tint(hull, 0x3b2f2a, 0.05);
+      const house = new THREE.BoxGeometry(22, 14, 24); house.translate(0, 14, -46); tint(house, 0xdad6cc, 0.05);
+      const funnel = new THREE.CylinderGeometry(3, 3.4, 9, 8); funnel.translate(0, 24, -50); tint(funnel, 0x8a3b2c, 0);
+      const deck = new THREE.BoxGeometry(24, 1.5, 96); deck.translate(0, 7.4, 8); tint(deck, 0x5a5048, 0.05);
+      for (const g of [hull, house, funnel, deck]) { g.rotateY(0.5); g.translate(fx, 0, fz); flat.push(g); }
+      R.addObstacle(fx, fz, 60);
+    }
+
+    // ---------- low distant shorelines (north Gold Coast, south Museum Campus) ----------
+    function shoreStrip(z0, depth, sign, count, hMin, hMax, domed) {
+      // thin land pad so the far buildings don't float over the void
+      const pad = new THREE.BoxGeometry(2200, 2, depth);
+      pad.translate((R.lakeWestX + 3400) / 2 + 300, 0.4, z0 + sign * depth / 2);
+      flat.push(tint(pad, 0x6f7466, 0.06));
+      for (let i = 0; i < count; i++) {
+        const bx = R.lakeWestX + 120 + rng() * 2600;
+        const bz = z0 + sign * (18 + rng() * (depth - 40));
+        const w = 26 + rng() * 40, d = 22 + rng() * 34, h = hMin + rng() * (hMax - hMin);
+        const g = new THREE.BoxGeometry(w, h, d); g.translate(bx, h / 2, bz);
+        tint(g, [0x8793a0, 0x9a9382, 0x76828c, 0xb0a798][(i) % 4], 0.14);
+        flat.push(g);
+      }
+      if (domed) {                                   // Adler Planetarium silhouette
+        const base = new THREE.CylinderGeometry(14, 16, 10, 12);
+        base.translate(R.lakeWestX + 300, 5, z0 + sign * 30); flat.push(tint(base, 0xb9b09a, 0));
+        const dome = new THREE.SphereGeometry(13, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+        dome.translate(R.lakeWestX + 300, 10, z0 + sign * 30); flat.push(tint(dome, 0x7f8a86, 0));
+      }
+    }
+    shoreStrip(R.lakeShoreZTop + 20, 90, -1, 34, 40, 190, false);  // north: Gold Coast highrises
+    shoreStrip(R.lakeShoreZBot - 20, 90, 1, 18, 16, 70, true);     // south: Museum Campus + dome
+
+    // merge the static scenery
+    for (let i = 0; i < flat.length; i += 500) {
+      const m = new THREE.Mesh(RR.City.mergeGeoms(flat.slice(i, i + 500)), RR.City.flatMaterial());
+      m.castShadow = true; m.receiveShadow = true;
+      scene.add(m);
+    }
+
+    RR.Engine.onUpdate((dt, t) => {
+      for (const b of bobbers) {
+        const amp = R.waveAmp(b.x, b.z);
+        const h = U().waterHeight(b.x, b.z, t, amp);
+        b.g.position.y = h;
+        b.g.rotation.z = Math.sin(t * 0.9 + b.ph) * 0.06 * amp;
+        b.g.rotation.x = Math.cos(t * 0.7 + b.ph) * 0.05 * amp;
+        if (b.drift) b.g.rotation.y += Math.sin(t * 0.2 + b.ph) * 0.0015;
+      }
+    });
+  };
+
+  RR.Scenery = SC;
 })();
 
 </script>
@@ -5548,6 +5902,7 @@ window.CHICAGO = {
     ['DRESSING THE LANDMARKS…', () => { landmarkTags = RR.Landmarks.init(); }],
     ['LOWERING THE BRIDGES…', () => { RR.Bridges.init(); }],
     ['OPENING THE LOCK…', () => { RR.Lake.init(); }],
+    ['RIGGING THE SAILBOATS…', () => { RR.Scenery.init(); }],
     ['FUELING THE BOATS…', () => { RR.FX.init(); RR.HUD.init(); RR.Minimap.init(); }],
   ];
 

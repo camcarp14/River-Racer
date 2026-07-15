@@ -18,6 +18,7 @@
     ['DRESSING THE LANDMARKS…', () => { landmarkTags = RR.Landmarks.init(); }],
     ['LOWERING THE BRIDGES…', () => { RR.Bridges.init(); }],
     ['OPENING THE LOCK…', () => { RR.Lake.init(); }],
+    ['RIGGING THE SAILBOATS…', () => { RR.Scenery.init(); }],
     ['FUELING THE BOATS…', () => { RR.FX.init(); RR.HUD.init(); RR.Minimap.init(); }],
   ];
 

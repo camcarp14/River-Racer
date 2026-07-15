@@ -112,18 +112,25 @@
   const GROUND_Y = 2.3;                       // street level above water
   CITY.GROUND_Y = GROUND_Y;
 
-  // keep-out check: near any channel? returns clearance to water edge (negative inside water)
+  // keep-out: signed clearance to the NEAREST water edge — channels AND the lake basin.
+  // >0 on dry land, <0 over water. Nothing but the bridges is ever built where this is <0.
   function landClearance(x, z) {
-    let best = -Infinity;
+    let best = Infinity;
     for (const key in RR.River.paths) {
-      if (key === 'lakeGuide' || key === 'lakeLoop') continue;
+      if (key.startsWith('lake')) continue;
       const p = RR.River.paths[key];
       const q = U().pathNearest(p, x, z);
-      const c = q.dist - q.w;                 // >0 on land
-      if (best === -Infinity || c < best) best = Math.min(best === -Infinity ? 1e9 : best, c);
+      const c = q.dist - q.w - 2.5;           // 2.5m past the seawall still counts as water
+      if (c < best) best = c;
+    }
+    const R = RR.River;
+    if (x > R.lakeWestX && x < R.lakeEastX && z > R.lakeShoreZTop && z < R.lakeShoreZBot) {
+      const depth = Math.min(x - R.lakeWestX, R.lakeEastX - x, z - R.lakeShoreZTop, R.lakeShoreZBot - z);
+      if (-depth < best) best = -depth;
     }
     return best;
   }
+  CITY.landClearance = landClearance;         // shared with scenery.js
 
   CITY.init = function () {
     const scene = RR.Engine.scene;
@@ -251,19 +258,83 @@
       scene.add(decks);
     }
 
+    // shared dressing/greenery builders (flat vertex-colored geometry)
+    function treeAt(arr, px, pz, scale) {
+      const s = scale || 1;
+      const trunk = new THREE.CylinderGeometry(0.22 * s, 0.32 * s, 2.6 * s, 5);
+      trunk.translate(px, GROUND_Y + 1.3 * s, pz);
+      tintGeom(trunk, 0x4a3524, 0, rng); arr.push(trunk);
+      const crown = new THREE.SphereGeometry((2.1 + rng() * 1.5) * s, 7, 6);
+      crown.scale(1, 0.82, 1);
+      crown.translate(px, GROUND_Y + (4.0 + rng()) * s, pz);
+      tintGeom(crown, rng() > 0.5 ? 0x4d7a3a : 0x5d8a42, 0.22, rng); arr.push(crown);
+    }
+    function benchAt(arr, px, pz, tx, tz) {
+      const ang = Math.atan2(tx, tz), nx = -tz, nz = tx;
+      const seat = new THREE.BoxGeometry(2.0, 0.18, 0.6);
+      seat.rotateY(ang); seat.translate(px, GROUND_Y + 0.5, pz);
+      tintGeom(seat, 0x5a4a30, 0.12, rng); arr.push(seat);
+      const back = new THREE.BoxGeometry(2.0, 0.5, 0.12);
+      back.rotateY(ang); back.translate(px + nx * 0.24, GROUND_Y + 0.8, pz + nz * 0.24);
+      tintGeom(back, 0x5a4a30, 0.12, rng); arr.push(back);
+    }
+    function lampAt(arr, px, pz) {
+      const post = new THREE.CylinderGeometry(0.12, 0.17, 5.0, 5);
+      post.translate(px, GROUND_Y + 2.5, pz);
+      tintGeom(post, 0x2c2f33, 0, rng); arr.push(post);
+      const arm = new THREE.BoxGeometry(0.9, 0.12, 0.12);
+      arm.translate(px, GROUND_Y + 4.9, pz);
+      tintGeom(arm, 0x2c2f33, 0, rng); arr.push(arm);
+      const lamp = new THREE.SphereGeometry(0.3, 6, 5);
+      lamp.translate(px + 0.38, GROUND_Y + 4.8, pz);
+      tintGeom(lamp, 0xffe6b0, 0, rng); arr.push(lamp);
+    }
+    function planterAt(arr, px, pz) {
+      const box = new THREE.BoxGeometry(2.4, 0.9, 1.2);
+      box.translate(px, GROUND_Y + 0.45, pz);
+      tintGeom(box, 0x8f8672, 0.1, rng); arr.push(box);
+      const green = new THREE.BoxGeometry(2.2, 0.6, 1.0);
+      green.translate(px, GROUND_Y + 1.15, pz);
+      tintGeom(green, 0x4d7a3a, 0.2, rng); arr.push(green);
+    }
+
     // ---------- generic tower field on the street grid ----------
     const BLOCK = 96, STREET = 22;
-    const palettes = [0x8f9aa3, 0x76828c, 0xa39a8a, 0x5d666e, 0x8c8478, 0x9fa8b0, 0x6b7480, 0xb0a798];
-    const geoms = [];
+    const palettes = [0x8f9aa3, 0x76828c, 0xa39a8a, 0x5d666e, 0x8c8478, 0x9fa8b0, 0x6b7480, 0xb0a798, 0xc4b9a4, 0x7d8891, 0x9a8f7c];
+    const geoms = [];          // window-mapped tower shells
+    const detailGeoms = [];    // flat: rooftop clutter, park ground, plazas
+    const dressGeoms = [];     // flat: trees, lamps, benches, planters
     const lm = C.landmarks;
     const cx0 = C.generic.loopCenter.x, cz0 = C.generic.loopCenter.z;
+
+    function roofClutter(cx, cz, topY, w, d) {
+      if (rng() > 0.42) {
+        const pw = w * (0.26 + rng() * 0.34), pd = d * (0.26 + rng() * 0.34), ph = 2.5 + rng() * 6;
+        const g = new THREE.BoxGeometry(pw, ph, pd);
+        g.translate(cx + (rng() - 0.5) * w * 0.35, topY + ph / 2, cz + (rng() - 0.5) * d * 0.35);
+        tintGeom(g, 0x666c72, 0.12, rng); detailGeoms.push(g);
+      }
+      if (rng() > 0.6) {
+        const rad = 1.2 + rng() * 1.3, th = 2.4 + rng() * 3;
+        const tx = cx + (rng() - 0.5) * w * 0.4, tz = cz + (rng() - 0.5) * d * 0.4;
+        const g = new THREE.CylinderGeometry(rad, rad, th, 8);
+        g.translate(tx, topY + th / 2, tz);
+        tintGeom(g, 0x4a4034, 0.12, rng); detailGeoms.push(g);
+      }
+      if (rng() > 0.72) {
+        const ah = 4 + rng() * 12;
+        const g = new THREE.CylinderGeometry(0.1, 0.22, ah, 4);
+        g.translate(cx + (rng() - 0.5) * w * 0.25, topY + ah / 2, cz + (rng() - 0.5) * d * 0.25);
+        tintGeom(g, 0x2c2f33, 0, rng); detailGeoms.push(g);
+      }
+    }
+
     for (let gx = -22; gx <= 24; gx++) {
       for (let gz = -20; gz <= 22; gz++) {
         const bx = gx * (BLOCK + STREET), bz = gz * (BLOCK + STREET);
-        if (bx > C.lake.openWaterX - 120) continue;                      // lakefront park stays open
+        if (bx > C.lake.openWaterX - 90) continue;                       // lakefront park stays open
         const clear = landClearance(bx, bz);
-        if (clear < 26) continue;                                        // keep the banks buildable by hand
-        // skip blocks owned by landmark footprints
+        if (clear < 4) continue;                                         // block center basically in the water
         let owned = false;
         for (const l of lm) {
           if (Math.abs(l.x - bx) < (l.w / 2 + 60) && Math.abs(l.z - bz) < (l.d / 2 + 60)) { owned = true; break; }
@@ -271,73 +342,106 @@
         if (owned) continue;
         const dLoop = Math.hypot(bx - cx0, bz - cz0);
         if (dLoop > 2600) continue;
-        // density + height falls off from the Loop
-        const density = U().clamp(1.25 - dLoop / 2200, 0.18, 1);
-        if (rng() > density + 0.15) continue;
-        const nBld = 1 + Math.floor(rng() * 2.2 * density + 0.4);
+
+        // some near-water blocks become riverfront parks instead of towers
+        if (clear < 60 && rng() < 0.22) {
+          const tile = new THREE.PlaneGeometry(BLOCK - 6, BLOCK - 6);
+          tile.rotateX(-Math.PI / 2); tile.translate(bx, GROUND_Y + 0.02, bz);
+          tintGeom(tile, 0x4f7a3e, 0.14, rng); detailGeoms.push(tile);
+          const nT = 4 + Math.floor(rng() * 6);
+          for (let t = 0; t < nT; t++) {
+            const tx = bx + (rng() - 0.5) * (BLOCK - 16), tz = bz + (rng() - 0.5) * (BLOCK - 16);
+            if (landClearance(tx, tz) > 3) treeAt(dressGeoms, tx, tz, 0.9 + rng() * 0.4);
+          }
+          continue;
+        }
+
+        const density = U().clamp(1.25 - dLoop / 2200, 0.2, 1);
+        if (rng() > density + 0.2) continue;
+        const nBld = 1 + Math.floor(rng() * 2.2 * density + 0.5);
         for (let b = 0; b < nBld; b++) {
-          const w = 24 + rng() * 42, d = 24 + rng() * 42;
+          const w = 22 + rng() * 44, d = 22 + rng() * 44;
           const ox = (rng() - 0.5) * (BLOCK - w), oz = (rng() - 0.5) * (BLOCK - d);
-          let h = (18 + rng() * rng() * 150) * U().clamp(1.35 - dLoop / 1900, 0.25, 1.15);
-          if (clear < 70) h = Math.min(h, 60 + rng() * 40);              // human scale right on the water
+          const bxx = bx + ox, bzz = bz + oz;
+          const halfDiag = Math.hypot(w, d) * 0.5;
+          // FOOTPRINT keep-out: the whole building, not just its center, must sit on dry land
+          if (landClearance(bxx, bzz) < halfDiag + 3) continue;
+          if (bxx > C.lake.openWaterX - halfDiag - 20) continue;
+          let h = (18 + rng() * rng() * 155) * U().clamp(1.35 - dLoop / 1900, 0.25, 1.15);
+          if (landClearance(bxx, bzz) < 80) h = Math.min(h, 55 + rng() * 55);   // step down toward the water
           h = Math.max(12, h);
-          const g = towerGeom(w, h, d, bx + ox, bz + oz, 0);
+          const g = towerGeom(w, h, d, bxx, bzz, 0);
           g.translate(0, GROUND_Y, 0);
           tintGeom(g, palettes[Math.floor(rng() * palettes.length)], 0.22, rng);
           geoms.push(g);
-          // simple setback crown on the taller ones
-          if (h > 90 && rng() > 0.4) {
-            const g2 = towerGeom(w * 0.62, h * 0.28, d * 0.62, bx + ox, bz + oz, 0);
+          if (h > 85 && rng() > 0.4) {                                   // setback crown
+            const g2 = towerGeom(w * 0.62, h * 0.28, d * 0.62, bxx, bzz, 0);
             g2.translate(0, GROUND_Y + h, 0);
             tintGeom(g2, palettes[Math.floor(rng() * palettes.length)], 0.22, rng);
             geoms.push(g2);
+            roofClutter(bxx, bzz, GROUND_Y + h + h * 0.28, w * 0.62, d * 0.62);
+          } else {
+            roofClutter(bxx, bzz, GROUND_Y + h, w, d);
           }
         }
       }
-    }
-    // chunk the merge so no single geometry gets silly
-    for (let i = 0; i < geoms.length; i += 400) {
-      const mesh = new THREE.Mesh(mergeGeoms(geoms.slice(i, i + 400)), CITY.material());
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      scene.add(mesh);
     }
 
-    // ---------- riverwalk dressing: railings, lamp posts, trees ----------
-    const dressGeoms = [];
-    const main = RR.River.paths.main;
-    if (main) {
-      for (let i = 8; i < main.n - 8; i += 10) {
-        let tx = main.x[i + 1] - main.x[i - 1], tz = main.z[i + 1] - main.z[i - 1];
+    // ---------- distant skyline: silhouette ring so the horizon reads as a full city ----------
+    {
+      const backGeoms = [];
+      const bRng = U().mulberry(7777);
+      for (let a = 0; a < Math.PI * 2; a += 0.04) {
+        const rad = 2750 + bRng() * 1000;
+        const bx = cx0 + Math.cos(a) * rad, bz = cz0 + Math.sin(a) * rad;
+        if (bx > C.lake.openWaterX + 150) continue;                      // leave the lake horizon open
+        const w = 30 + bRng() * 64, d = 30 + bRng() * 64;
+        const h = 44 + bRng() * bRng() * 250;
+        const g = new THREE.BoxGeometry(w, h, d);
+        g.translate(bx, h / 2, bz);
+        tintGeom(g, 0x8793a0, 0.14, bRng);
+        backGeoms.push(g);
+      }
+      const back = new THREE.Mesh(mergeGeoms(backGeoms), CITY.flatMaterial());
+      scene.add(back);
+    }
+
+    // ---------- riverwalk dressing on BOTH banks of every channel (keep-out checked) ----------
+    for (const key in RR.River.paths) {
+      if (key.startsWith('lake')) continue;
+      const p = RR.River.paths[key];
+      for (let i = 6; i < p.n - 6; i += 7) {
+        let tx = p.x[i + 1] - p.x[i - 1], tz = p.z[i + 1] - p.z[i - 1];
         const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
         for (const s of [-1, 1]) {
-          const px = main.x[i] - tz * (main.w[i] + 4.5) * s;
-          const pz = main.z[i] + tx * (main.w[i] + 4.5) * s;
-          if ((i / 10) % 2 === 0) {
-            const post = new THREE.CylinderGeometry(0.12, 0.16, 4.6, 5);
-            post.translate(px, GROUND_Y + 2.3, pz);
-            tintGeom(post, 0x2c2f33, 0, rng);
-            dressGeoms.push(post);
-            const lamp = new THREE.SphereGeometry(0.34, 6, 5);
-            lamp.translate(px, GROUND_Y + 4.7, pz);
-            tintGeom(lamp, 0xffe9b8, 0, rng);
-            dressGeoms.push(lamp);
-          } else {
-            const trunk = new THREE.CylinderGeometry(0.22, 0.3, 2.6, 5);
-            trunk.translate(px, GROUND_Y + 1.3, pz);
-            tintGeom(trunk, 0x4a3524, 0, rng);
-            dressGeoms.push(trunk);
-            const crown = new THREE.SphereGeometry(2.4 + rng() * 1.4, 7, 6);
-            crown.scale(1, 0.85, 1);
-            crown.translate(px, GROUND_Y + 4.4, pz);
-            tintGeom(crown, rng() > 0.5 ? 0x4d7a3a : 0x5d8a42, 0.2, rng);
-            dressGeoms.push(crown);
-          }
+          const off = p.w[i] + 4.5;
+          const px = p.x[i] - tz * off * s, pz = p.z[i] + tx * off * s;
+          if (px > C.lake.openWaterX - 20) continue;
+          if (landClearance(px, pz) < 1.2) continue;                     // never over the water
+          const kind = (Math.floor(i / 7) + (s > 0 ? 0 : 1)) % 4;
+          if (kind === 0) lampAt(dressGeoms, px, pz);
+          else if (kind === 1) treeAt(dressGeoms, px, pz, 1);
+          else if (kind === 2) { const bx2 = p.x[i] - tz * (off + 0.6) * s, bz2 = p.z[i] + tx * (off + 0.6) * s; benchAt(dressGeoms, bx2, bz2, tx, tz); }
+          else planterAt(dressGeoms, px, pz);
         }
       }
-      const dress = new THREE.Mesh(mergeGeoms(dressGeoms), CITY.flatMaterial());
-      dress.castShadow = true;
-      scene.add(dress);
+    }
+
+    // ---------- merge everything into a few draw calls ----------
+    for (let i = 0; i < geoms.length; i += 400) {
+      const mesh = new THREE.Mesh(mergeGeoms(geoms.slice(i, i + 400)), CITY.material());
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      scene.add(mesh);
+    }
+    for (let i = 0; i < detailGeoms.length; i += 700) {
+      const mesh = new THREE.Mesh(mergeGeoms(detailGeoms.slice(i, i + 700)), CITY.flatMaterial());
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      scene.add(mesh);
+    }
+    for (let i = 0; i < dressGeoms.length; i += 700) {
+      const mesh = new THREE.Mesh(mergeGeoms(dressGeoms.slice(i, i + 700)), CITY.flatMaterial());
+      mesh.castShadow = true;
+      scene.add(mesh);
     }
   };
 

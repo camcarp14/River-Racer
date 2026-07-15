@@ -37,7 +37,7 @@
     scene.add(sun.target);
     E.sun = sun;
 
-    const hemi = new THREE.HemisphereLight(0xbfd9ea, 0x33424e, 0.55);
+    const hemi = new THREE.HemisphereLight(0xcfe3f0, 0x44505c, 0.68);
     scene.add(hemi);
     E.hemi = hemi;
 

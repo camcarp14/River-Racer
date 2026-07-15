@@ -865,7 +865,7 @@ window.CHICAGO = {
    "h": 212,
    "w": 60,
    "d": 40,
-   "c": 2501427,
+   "c": 3554631,
    "dark": true,
    "gold": false
   },
@@ -937,7 +937,7 @@ window.CHICAGO = {
    "h": 197,
    "w": 50,
    "d": 50,
-   "c": 2567479,
+   "c": 3488838,
    "dark": false,
    "gold": false
   },
@@ -1021,7 +1021,7 @@ window.CHICAGO = {
    "h": 109,
    "w": 90,
    "d": 34,
-   "c": 4865072,
+   "c": 5917242,
    "dark": true,
    "gold": false
   },
@@ -1081,7 +1081,7 @@ window.CHICAGO = {
    "h": 442,
    "w": 68,
    "d": 68,
-   "c": 2106412,
+   "c": 3291202,
    "dark": false,
    "gold": false
   },

@@ -19,8 +19,9 @@ The river isn't game-designer squiggle — the three channels are **medial-axis 
 Along the banks, modeled from their actual footprints and heights:
 
 - **Marina City** corncobs, **Willis Tower**'s nine stepped tubes, **Trump Tower**, the **Wrigley Building** clock tower, **Tribune Tower**'s gothic crown, **Merchandise Mart**, **333 W Wacker**'s curved green glass at the bend, **St. Regis**, **Aqua**, the **Jewelers Building** cupolas, **Civic Opera House**, **150 N Riverside** on its impossible base, **River Point**, **Lake Point Tower**, and more — plus landmark callouts as you pass.
-- **28 bridges** in their real order: the bascule spans of the Loop, Wells and Lake St double-deckers carrying the L, the DuSable/Michigan Ave bridge with four tender houses, and the **Kinzie St rail bridge permanently saluting the sky**.
-- The **Chicago Harbor Lock** (real 24 m chamber — a genuine pinch at speed), **Navy Pier** with a turning **Centennial Wheel**, the **Chicago Harbor Lighthouse**, breakwaters, and open-lake chop that will put your hull in the air.
+- **28 bridges** in their real order, each with its **street-name sign** (WELLS ST, WABASH AVE, LAKE SHORE DR…), cream-limestone tender houses with verdigris roofs, baluster railings and lamp posts: the bascule spans of the Loop, Wells and Lake St double-deckers carrying the L, the DuSable/Michigan Ave bridge with four tender houses, and the **Kinzie St rail bridge permanently saluting the sky**.
+- A **populated riverwalk** on every bank — lamp posts, benches, planters, street trees and pocket parks — with strict keep-out so nothing but the bridges ever crosses the water.
+- The **Chicago Harbor Lock** (real 24 m chamber — a genuine pinch at speed), **Navy Pier** with a turning **Centennial Wheel**, the **Chicago Harbor Lighthouse**, and a **living harbor**: a marina of moored sailboats, yachts under sail, nav buoys, a lake freighter, and the Gold Coast and Museum Campus skylines low on the far shore.
 
 ## Courses
 
