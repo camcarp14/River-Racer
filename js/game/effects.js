@@ -197,6 +197,16 @@
     wakes.set(boat, createWake(FX._scene));
   };
 
+  // called between races — wake meshes are per-boat and must not outlive their boat
+  FX.clearBoats = function () {
+    wakes.forEach((w) => {
+      FX._scene.remove(w.mesh);
+      w.geo.dispose();
+      w.mat.dispose();
+    });
+    wakes.clear();
+  };
+
   FX.update = function (boats, dt, t) {
     for (const b of boats) {
       const w = wakes.get(b);

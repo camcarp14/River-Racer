@@ -1,3 +1,5 @@
 node_modules/
 shots/*.png
 shots/report.json
+!shots/hero.png
+!shots/title.png

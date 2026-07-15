@@ -47,7 +47,7 @@
       for (let i = 0; i < 3; i++) {
         for (let j = 0; j < 3; j++) {
           const h = l.h * tubeH[i][j];
-          glass.push(box(t - 1.5, h, t - 1.5, l.x + (i - 1) * t, GY(), l.z + (j - 1) * t, 0x181a20));
+          glass.push(box(t - 1.5, h, t - 1.5, l.x + (i - 1) * t, GY(), l.z + (j - 1) * t, l.c));
         }
       }
       for (const s of [-6, 6]) {

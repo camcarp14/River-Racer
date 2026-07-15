@@ -865,7 +865,7 @@ window.CHICAGO = {
    "h": 212,
    "w": 60,
    "d": 40,
-   "c": 1316378,
+   "c": 2501427,
    "dark": true,
    "gold": false
   },
@@ -937,7 +937,7 @@ window.CHICAGO = {
    "h": 197,
    "w": 50,
    "d": 50,
-   "c": 1909291,
+   "c": 2567479,
    "dark": false,
    "gold": false
   },
@@ -1081,7 +1081,7 @@ window.CHICAGO = {
    "h": 442,
    "w": 68,
    "d": 68,
-   "c": 1316122,
+   "c": 2106412,
    "dark": false,
    "gold": false
   },

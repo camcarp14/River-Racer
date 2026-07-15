@@ -50,6 +50,7 @@
   // ---------- race lifecycle ----------
   function clearBoats() {
     for (const b of boats) RR.Engine.scene.remove(b.mesh);
+    RR.FX.clearBoats();
     boats = []; pilots = []; player = null;
   }
 
