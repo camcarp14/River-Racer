@@ -180,7 +180,7 @@
           const i0 = Math.max(0, i - 1), i1 = Math.min(p.n - 1, i + 1);
           let tx = p.x[i1] - p.x[i0], tz = p.z[i1] - p.z[i0];
           const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
-          const inner = p.w[i] + 0.6, outer = p.w[i] + 130;
+          const inner = p.w[i] + 9, outer = p.w[i] + 130;   // upper street sits behind the lower promenade
           const ix = p.x[i] - tz * inner * s, iz = p.z[i] + tx * inner * s;
           const ox = p.x[i] - tz * outer * s, oz = p.z[i] + tx * outer * s;
           verts.push(ix, GROUND_Y, iz, ox, GROUND_Y, oz);
@@ -229,45 +229,7 @@
       }
     }
 
-    // ---------- seawalls + riverwalk along every channel ----------
-    const wallGeoms = [], deckGeoms = [];
-    for (const key in RR.River.paths) {
-      if (key === 'lakeGuide' || key === 'lakeLoop') continue;
-      const p = RR.River.paths[key];
-      for (let i = 0; i < p.n - 1; i += 4) {
-        const i1 = Math.min(p.n - 1, i + 4);
-        const mx = (p.x[i] + p.x[i1]) / 2, mz = (p.z[i] + p.z[i1]) / 2;
-        let tx = p.x[i1] - p.x[i], tz = p.z[i1] - p.z[i];
-        const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
-        const ang = Math.atan2(tx, tz);
-        const wHalf = (p.w[i] + p.w[i1]) / 2;
-        for (const s of [-1, 1]) {
-          const wx = mx - tz * (wHalf + 1.4) * s;
-          const wz = mz + tx * (wHalf + 1.4) * s;
-          const wall = new THREE.BoxGeometry(3.2, GROUND_Y + 0.6, tl + 0.8);
-          wall.rotateY(ang);
-          wall.translate(wx, (GROUND_Y + 0.6) / 2 - 0.3, wz);
-          tintGeom(wall, 0x8d8f8a, 0.12, rng);
-          wallGeoms.push(wall);
-          // riverwalk deck strip behind the wall on the main stem
-          if (key === 'main') {
-            const deck = new THREE.BoxGeometry(6.5, 0.5, tl + 0.8);
-            deck.rotateY(ang);
-            deck.translate(mx - tz * (wHalf + 6.2) * s, GROUND_Y - 1.05, mz + tx * (wHalf + 6.2) * s);
-            tintGeom(deck, 0xb9b3a4, 0.1, rng);
-            deckGeoms.push(deck);
-          }
-        }
-      }
-    }
-    const walls = new THREE.Mesh(mergeGeoms(wallGeoms), CITY.flatMaterial());
-    walls.receiveShadow = true;
-    scene.add(walls);
-    if (deckGeoms.length) {
-      const decks = new THREE.Mesh(mergeGeoms(deckGeoms), CITY.flatMaterial());
-      decks.receiveShadow = true;
-      scene.add(decks);
-    }
+    // (the water's-edge retaining wall + lower promenade are built by RR.Riverwalk)
 
     // shared dressing/greenery builders (flat vertex-colored geometry)
     function treeAt(arr, px, pz, scale) {
@@ -421,18 +383,18 @@
     for (const key in RR.River.paths) {
       if (key.startsWith('lake')) continue;
       const p = RR.River.paths[key];
-      for (let i = 6; i < p.n - 6; i += 7) {
+      for (let i = 4; i < p.n - 4; i += 4) {
         let tx = p.x[i + 1] - p.x[i - 1], tz = p.z[i + 1] - p.z[i - 1];
         const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
         for (const s of [-1, 1]) {
-          const off = p.w[i] + 4.5;
+          const off = p.w[i] + 11.5;                                     // upper street level, just past the rail
           const px = p.x[i] - tz * off * s, pz = p.z[i] + tx * off * s;
           if (px > C.lake.openWaterX - 20) continue;
           if (landClearance(px, pz) < 1.2) continue;                     // never over the water
-          if (nearBridge(px, pz, 17)) continue;                          // clear of the bridge decks
-          const kind = (Math.floor(i / 7) + (s > 0 ? 0 : 1)) % 4;
-          if (kind === 0) lampAt(dressGeoms, px, pz);
-          else if (kind === 1) treeAt(dressGeoms, px, pz, 1);
+          if (nearBridge(px, pz, 15)) continue;                          // clear of the bridge decks
+          const kind = (Math.floor(i / 4) + (s > 0 ? 0 : 1)) % 5;
+          if (kind === 0 || kind === 3) treeAt(dressGeoms, px, pz, 1);
+          else if (kind === 1) lampAt(dressGeoms, px, pz);
           else if (kind === 2) { const bx2 = p.x[i] - tz * (off + 0.6) * s, bz2 = p.z[i] + tx * (off + 0.6) * s; benchAt(dressGeoms, bx2, bz2, tx, tz); }
           else planterAt(dressGeoms, px, pz);
         }

@@ -17,8 +17,10 @@
     ['RAISING THE SKYLINE…', () => { RR.City.init(); }],
     ['DRESSING THE LANDMARKS…', () => { landmarkTags = RR.Landmarks.init(); }],
     ['LOWERING THE BRIDGES…', () => { RR.Bridges.init(); }],
+    ['LAYING THE RIVERWALK…', () => { RR.Riverwalk.init(); }],
     ['OPENING THE LOCK…', () => { RR.Lake.init(); }],
     ['RIGGING THE SAILBOATS…', () => { RR.Scenery.init(); }],
+    ['FILLING THE STREETS…', () => { RR.Life.init(); }],
     ['FUELING THE BOATS…', () => { RR.FX.init(); RR.HUD.init(); RR.Minimap.init(); }],
   ];
 
@@ -144,6 +146,7 @@
   let tagCooldown = 0;
 
   function update(dt, t) {
+    if (RR.Life) RR.Life.update(dt, t);          // crowds + traffic animate in every scene
     if (mode === 'menu' || mode === 'results') {
       // attract flythrough behind the menus
       const main = RR.River.paths.main;

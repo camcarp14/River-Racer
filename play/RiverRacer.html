@@ -2377,7 +2377,7 @@ window.CHICAGO = {
           const i0 = Math.max(0, i - 1), i1 = Math.min(p.n - 1, i + 1);
           let tx = p.x[i1] - p.x[i0], tz = p.z[i1] - p.z[i0];
           const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
-          const inner = p.w[i] + 0.6, outer = p.w[i] + 130;
+          const inner = p.w[i] + 9, outer = p.w[i] + 130;   // upper street sits behind the lower promenade
           const ix = p.x[i] - tz * inner * s, iz = p.z[i] + tx * inner * s;
           const ox = p.x[i] - tz * outer * s, oz = p.z[i] + tx * outer * s;
           verts.push(ix, GROUND_Y, iz, ox, GROUND_Y, oz);
@@ -2426,45 +2426,7 @@ window.CHICAGO = {
       }
     }
 
-    // ---------- seawalls + riverwalk along every channel ----------
-    const wallGeoms = [], deckGeoms = [];
-    for (const key in RR.River.paths) {
-      if (key === 'lakeGuide' || key === 'lakeLoop') continue;
-      const p = RR.River.paths[key];
-      for (let i = 0; i < p.n - 1; i += 4) {
-        const i1 = Math.min(p.n - 1, i + 4);
-        const mx = (p.x[i] + p.x[i1]) / 2, mz = (p.z[i] + p.z[i1]) / 2;
-        let tx = p.x[i1] - p.x[i], tz = p.z[i1] - p.z[i];
-        const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
-        const ang = Math.atan2(tx, tz);
-        const wHalf = (p.w[i] + p.w[i1]) / 2;
-        for (const s of [-1, 1]) {
-          const wx = mx - tz * (wHalf + 1.4) * s;
-          const wz = mz + tx * (wHalf + 1.4) * s;
-          const wall = new THREE.BoxGeometry(3.2, GROUND_Y + 0.6, tl + 0.8);
-          wall.rotateY(ang);
-          wall.translate(wx, (GROUND_Y + 0.6) / 2 - 0.3, wz);
-          tintGeom(wall, 0x8d8f8a, 0.12, rng);
-          wallGeoms.push(wall);
-          // riverwalk deck strip behind the wall on the main stem
-          if (key === 'main') {
-            const deck = new THREE.BoxGeometry(6.5, 0.5, tl + 0.8);
-            deck.rotateY(ang);
-            deck.translate(mx - tz * (wHalf + 6.2) * s, GROUND_Y - 1.05, mz + tx * (wHalf + 6.2) * s);
-            tintGeom(deck, 0xb9b3a4, 0.1, rng);
-            deckGeoms.push(deck);
-          }
-        }
-      }
-    }
-    const walls = new THREE.Mesh(mergeGeoms(wallGeoms), CITY.flatMaterial());
-    walls.receiveShadow = true;
-    scene.add(walls);
-    if (deckGeoms.length) {
-      const decks = new THREE.Mesh(mergeGeoms(deckGeoms), CITY.flatMaterial());
-      decks.receiveShadow = true;
-      scene.add(decks);
-    }
+    // (the water's-edge retaining wall + lower promenade are built by RR.Riverwalk)
 
     // shared dressing/greenery builders (flat vertex-colored geometry)
     function treeAt(arr, px, pz, scale) {
@@ -2618,18 +2580,18 @@ window.CHICAGO = {
     for (const key in RR.River.paths) {
       if (key.startsWith('lake')) continue;
       const p = RR.River.paths[key];
-      for (let i = 6; i < p.n - 6; i += 7) {
+      for (let i = 4; i < p.n - 4; i += 4) {
         let tx = p.x[i + 1] - p.x[i - 1], tz = p.z[i + 1] - p.z[i - 1];
         const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
         for (const s of [-1, 1]) {
-          const off = p.w[i] + 4.5;
+          const off = p.w[i] + 11.5;                                     // upper street level, just past the rail
           const px = p.x[i] - tz * off * s, pz = p.z[i] + tx * off * s;
           if (px > C.lake.openWaterX - 20) continue;
           if (landClearance(px, pz) < 1.2) continue;                     // never over the water
-          if (nearBridge(px, pz, 17)) continue;                          // clear of the bridge decks
-          const kind = (Math.floor(i / 7) + (s > 0 ? 0 : 1)) % 4;
-          if (kind === 0) lampAt(dressGeoms, px, pz);
-          else if (kind === 1) treeAt(dressGeoms, px, pz, 1);
+          if (nearBridge(px, pz, 15)) continue;                          // clear of the bridge decks
+          const kind = (Math.floor(i / 4) + (s > 0 ? 0 : 1)) % 5;
+          if (kind === 0 || kind === 3) treeAt(dressGeoms, px, pz, 1);
+          else if (kind === 1) lampAt(dressGeoms, px, pz);
           else if (kind === 2) { const bx2 = p.x[i] - tz * (off + 0.6) * s, bz2 = p.z[i] + tx * (off + 0.6) * s; benchAt(dressGeoms, bx2, bz2, tx, tz); }
           else planterAt(dressGeoms, px, pz);
         }
@@ -2655,6 +2617,255 @@ window.CHICAGO = {
   };
 
   RR.City = CITY;
+})();
+
+</script>
+<script>
+/* ===== js/world/riverwalk.js ===== */
+/* River Racer — the Chicago Riverwalk: a multi-level promenade (quay wall, lower
+   walkway, retaining wall, railings) on every downtown bank, plus the Main Stem's
+   themed "rooms" — café pavilions, umbrella plazas, the stepped River Theater,
+   floating gardens, kayak docks — and docked architecture-tour boats.
+   Every piece is per-segment keep-out checked so nothing sits over the water. */
+(function () {
+  const RW = {};
+  const U = () => RR.U;
+  let rng;
+  const GY = () => RR.City.GROUND_Y;   // upper street level (2.3)
+  const PY = 1.0;                       // lower promenade height above the water
+  const PROM = 9;                       // promenade reaches w .. w+9
+
+  let deck = [], flat = [], wall = [], bright = [];   // geometry buckets
+  function tint(g, hex, jit) { RR.City.tintGeom(g, hex, jit || 0, rng); return g; }
+
+  // is (x,z) over some OTHER channel's water? (keeps a bank's walkway off its neighbour)
+  function overOther(x, z, selfKey, margin) {
+    for (const key in RR.River.paths) {
+      if (key.startsWith('lake') || key === selfKey) continue;
+      const q = U().pathNearest(RR.River.paths[key], x, z);
+      if (q.dist < q.w + (margin || 0)) return true;
+    }
+    return false;
+  }
+
+  // one quad (a,b,c,d in order) into an array, winding for an upward/outward face
+  function quad(arr, ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, hex, jit) {
+    const g = new THREE.BufferGeometry();
+    const v = new Float32Array([ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz]);
+    g.setAttribute('position', new THREE.BufferAttribute(v, 3));
+    g.setIndex([0, 1, 2, 0, 2, 3]);
+    g.computeVertexNormals();
+    arr.push(tint(g, hex, jit));
+  }
+
+  function bankBasis(p, i) {
+    const i0 = Math.max(0, i - 1), i1 = Math.min(p.n - 1, i + 1);
+    let tx = p.x[i1] - p.x[i0], tz = p.z[i1] - p.z[i0];
+    const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
+    return { tx, tz, nx: -tz, nz: tx, w: p.w[i], x: p.x[i], z: p.z[i] };
+  }
+
+  // ---------- the promenade ribbon (per-segment, so we can skip bad spots) ----------
+  function buildPromenade(key, p, openX) {
+    for (const s of [-1, 1]) {
+      for (let i = 0; i < p.n - 1; i++) {
+        const A = bankBasis(p, i), B = bankBasis(p, i + 1);
+        // offset points: e = edge (w+0.3), o = outer (w+PROM)
+        const eAx = A.x + A.nx * (A.w + 0.3) * s, eAz = A.z + A.nz * (A.w + 0.3) * s;
+        const eBx = B.x + B.nx * (B.w + 0.3) * s, eBz = B.z + B.nz * (B.w + 0.3) * s;
+        const oAx = A.x + A.nx * (A.w + PROM) * s, oAz = A.z + A.nz * (A.w + PROM) * s;
+        const oBx = B.x + B.nx * (B.w + PROM) * s, oBz = B.z + B.nz * (B.w + PROM) * s;
+        // keep-out: skip the whole segment if either bank end sits over another channel / the lake
+        const midOx = (oAx + oBx) / 2, midOz = (oAz + oBz) / 2;
+        const midEx = (eAx + eBx) / 2, midEz = (eAz + eBz) / 2;
+        if (midOx > openX - 6 || midEx > openX - 6) continue;
+        if (overOther(midOx, midOz, key, 2) || overOther(midEx, midEz, key, 2)) continue;
+
+        // lower promenade deck (alternating wood / concrete bands)
+        const woodBand = (i % 6) < 3;
+        const dcol = woodBand ? 0x9c7245 : 0xb7b1a2;
+        if (s > 0) quad(deck, eAx, PY, eAz, oAx, PY, oAz, oBx, PY, oBz, eBx, PY, eBz, dcol, 0.08);
+        else quad(deck, eAx, PY, eAz, eBx, PY, eBz, oBx, PY, oBz, oAx, PY, oAz, dcol, 0.08);
+
+        // quay wall (water → promenade) at the edge, facing the channel
+        quad(wall, eAx, -0.7, eAz, eBx, -0.7, eBz, eBx, PY, eBz, eAx, PY, eAz, 0x8f8c82, 0.06);
+        // retaining wall (promenade → street) at the outer edge
+        quad(wall, oAx, PY, oAz, oBx, PY, oBz, oBx, GY(), oBz, oAx, GY(), oAz, 0x8a8f92, 0.06);
+        // water-edge railing: a thin top rail floating just inside the edge
+        const rEAx = A.x + A.nx * (A.w + 0.5) * s, rEAz = A.z + A.nz * (A.w + 0.5) * s;
+        const rEBx = B.x + B.nx * (B.w + 0.5) * s, rEBz = B.z + B.nz * (B.w + 0.5) * s;
+        quad(wall, rEAx, PY + 1.05, rEAz, rEBx, PY + 1.05, rEBz, rEBx, PY + 0.95, rEBz, rEAx, PY + 0.95, rEAz, 0x565b60, 0);
+        // sparse railing posts
+        if (i % 3 === 0) {
+          const post = new THREE.CylinderGeometry(0.06, 0.06, 1.05, 4);
+          post.translate(rEAx, PY + 0.52, rEAz); tint(post, 0x44494e, 0); flat.push(post);
+        }
+      }
+    }
+  }
+
+  // ---------- room furniture ----------
+  function boxAt(arr, w, h, d, x, y, z, ang, hex, jit) {
+    const g = new THREE.BoxGeometry(w, h, d);
+    if (ang) g.rotateY(ang);
+    g.translate(x, y, z); tint(g, hex, jit || 0); arr.push(g);
+  }
+  function cylAt(arr, r, h, x, y, z, hex, seg) {
+    const g = new THREE.CylinderGeometry(r, r, h, seg || 8);
+    g.translate(x, y, z); tint(g, hex, 0); arr.push(g);
+  }
+  const UMB = [0xd8412f, 0xf0a92b, 0x2f7dd8, 0x36a852, 0xe8e4da, 0xd85a9e];
+
+  function umbrellaTable(x, z, col) {
+    cylAt(flat, 0.09, 2.4, x, PY + 1.2, z, 0x6a6f74, 6);          // pole
+    const top = new THREE.ConeGeometry(1.6, 0.7, 8);
+    top.translate(x, PY + 2.5, z); tint(top, col, 0); bright.push(top);
+    cylAt(flat, 0.55, 0.08, x, PY + 0.75, z, 0xdad6cc, 8);        // table
+    cylAt(flat, 0.06, 0.75, x, PY + 0.38, z, 0x9a9a9a, 5);
+    for (let a = 0; a < 4; a++) {                                  // chairs
+      const cx = x + Math.cos(a * 1.57) * 1.0, cz = z + Math.sin(a * 1.57) * 1.0;
+      boxAt(flat, 0.4, 0.45, 0.4, cx, PY + 0.25, cz, 0, 0x51565b);
+    }
+  }
+  function pavilion(cx, cz, ang) {
+    const c = Math.cos(ang), s = Math.sin(ang);
+    for (const [ox, oz] of [[-3, -2.2], [3, -2.2], [-3, 2.2], [3, 2.2]]) {
+      const px = cx + c * ox - s * oz, pz = cz + s * ox + c * oz;
+      cylAt(flat, 0.14, 3.2, px, PY + 1.6, pz, 0x3d4247, 6);       // steel post
+    }
+    boxAt(flat, 7.4, 0.3, 5.2, cx, PY + 3.3, cz, ang, 0x2b3036);   // canopy roof
+    boxAt(bright, 7.0, 0.06, 4.8, cx, PY + 3.15, cz, ang, 0xbfe0e8);// glass underside
+    umbrellaTable(cx + c * 0, cz + s * 0, 0xe8e4da);
+    boxAt(flat, 4.5, 1.0, 1.0, cx - s * 2.2, PY + 0.5, cz + c * 2.2, ang, 0x6a5233); // counter
+  }
+  function umbrellaPlaza(cx, cz, ang) {
+    const c = Math.cos(ang), s = Math.sin(ang);
+    let k = 0;
+    for (const [ox, oz] of [[-2.5, -1.5], [2.5, -1.5], [0, 1.8], [-2.5, 2.5], [2.5, 2.5]]) {
+      const px = cx + c * ox - s * oz, pz = cz + s * ox + c * oz;
+      umbrellaTable(px, pz, UMB[k++ % UMB.length]);
+    }
+  }
+  function floatingGarden(cx, cz, ang, s, w) {
+    // a planted island just off the quay, at the water's edge
+    boxAt(flat, 8, 0.4, 3.2, cx, 0.45, cz, ang, 0x6a5a3a);          // planter hull
+    boxAt(bright, 7.4, 0.7, 2.7, cx, 0.9, cz, ang, 0x4e8b3a);       // foliage
+    for (let t = -1; t <= 1; t++) {
+      const gx = cx + Math.cos(ang) * t * 2.2, gz = cz + Math.sin(ang) * t * 2.2;
+      const bush = new THREE.SphereGeometry(0.9 + rng() * 0.5, 6, 5);
+      bush.scale(1, 0.8, 1); bush.translate(gx, 1.5, gz);
+      tint(bush, rng() > 0.5 ? 0x5d9a44 : 0x77a84e, 0.15); bright.push(bush);
+    }
+  }
+  function kayakDock(cx, cz, ang) {
+    const c = Math.cos(ang), s = Math.sin(ang);
+    boxAt(flat, 3, 0.25, 8, cx, PY - 0.15, cz, ang, 0x7a6242);      // low dock
+    for (let n = -1; n <= 1; n++) {
+      const kx = cx - s * n * 2.2, kz = cz + c * n * 2.2;
+      const kayak = new THREE.CylinderGeometry(0.35, 0.2, 4.2, 6);
+      kayak.rotateZ(Math.PI / 2); kayak.rotateY(ang);
+      kayak.translate(kx + c * 3, 0.35, kz + s * 3);
+      tint(kayak, UMB[(n + 1) % UMB.length], 0); bright.push(kayak);
+    }
+  }
+  // the River Theater: wide steps from the street down to the promenade
+  function riverTheater(p, dMid, s) {
+    const steps = 6;
+    for (let st = 0; st < steps; st++) {
+      const off = p.wAt + 8.5 - st * 1.2;
+      const y = GY() - (GY() - PY) * (st / (steps - 1));
+      const segs = 5;
+      for (let j = -segs; j <= segs; j++) {
+        const a = U().pathAt(p.path, dMid + j * 2.2, {});
+        const x = a.x + (-a.tz) * (a.w + off) * s, z = a.z + a.tx * (a.w + off) * s;
+        boxAt(flat, 2.4, 0.35, 2.6, x, y, z, Math.atan2(a.tx, a.tz), st % 2 ? 0xbdb7a8 : 0xa9a394);
+      }
+    }
+  }
+
+  // ---------- docked architecture-tour boat ----------
+  function tourBoat(cx, cz, ang, taxi) {
+    const c = Math.cos(ang), s = Math.sin(ang);
+    const L = taxi ? 12 : 26, W = taxi ? 4.2 : 6;
+    const hull = new THREE.BoxGeometry(W, 1.8, L);
+    const hp = hull.attributes.position;
+    for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getZ(i)) > L * 0.4) hp.setX(i, hp.getX(i) * 0.4); }
+    hull.computeVertexNormals();
+    hull.rotateY(ang); hull.translate(cx, 0.5, cz);
+    tint(hull, taxi ? 0xf0c020 : 0x22508a, 0.04); flat.push(hull);
+    // open upper deck + canopy
+    boxAt(flat, W - 0.6, 0.2, L - 3, cx, 1.5, cz, ang, 0xe8e6de);
+    if (!taxi) {
+      boxAt(bright, W - 0.4, 0.16, L - 6, cx, 3.4, cz, ang, 0xcf3b2f);   // striped canopy
+      for (const zz of [-1, 1]) for (const xx of [-1, 1]) {
+        cylAt(flat, 0.08, 2.0, cx + c * xx * (W / 2 - 0.5) - s * zz * (L / 2 - 3), 2.4, cz + s * xx * (W / 2 - 0.5) + c * zz * (L / 2 - 3), 0x8a8f94, 5);
+      }
+      // rows of bench seats
+      for (let r = -3; r <= 3; r++) boxAt(flat, W - 1.2, 0.4, 0.5, cx - s * r * 2.4, 1.85, cz + c * r * 2.4, ang, 0x3a4048);
+    }
+    RR.River.addObstacle(cx, cz, taxi ? 3 : 4.5);
+  }
+
+  RW.init = function () {
+    rng = U().mulberry(6161);
+    deck = []; flat = []; wall = []; bright = [];
+    const C = window.CHICAGO;
+    const openX = C.lake.openWaterX;
+
+    // promenade on every downtown channel
+    for (const key in RR.River.paths) {
+      if (key.startsWith('lake')) continue;
+      buildPromenade(key, RR.River.paths[key], openX);
+    }
+
+    // Main-Stem "rooms" between consecutive bridges
+    const main = RR.River.paths.main;
+    const bd = [];
+    for (const b of C.bridges) if (b.branch === 'main') bd.push(U().pathNearest(main, b.x, b.z).d);
+    bd.sort((a, b) => a - b);
+    const bounds = [8, ...bd, main.len - 8];
+    let roomIdx = 0, boatCount = 0;
+    for (let k = 0; k < bounds.length - 1; k++) {
+      if (bounds[k + 1] - bounds[k] < 46) continue;
+      const dMid = (bounds[k] + bounds[k + 1]) / 2;
+      const a = U().pathAt(main, dMid, {});
+      for (const s of [-1, 1]) {
+        const off = a.w + 4.6;
+        const cx = a.x + (-a.tz) * off * s, cz = a.z + a.tx * off * s;
+        if (cx > openX - 12 || overOther(cx, cz, 'main', 3)) continue;
+        const ang = Math.atan2(a.tx, a.tz);
+        const type = (roomIdx++) % 6;
+        if (type === 0) pavilion(cx, cz, ang);
+        else if (type === 1) umbrellaPlaza(cx, cz, ang);
+        else if (type === 2) riverTheater({ path: main, wAt: a.w }, dMid, s);
+        else if (type === 3) { const gx = a.x + (-a.tz) * (a.w + 1.6) * s, gz = a.z + a.tx * (a.w + 1.6) * s; floatingGarden(gx, gz, ang, s, a.w); }
+        else if (type === 4) kayakDock(cx, cz, ang);
+        else umbrellaPlaza(cx, cz, ang);
+        // dock a tour boat at some rooms, tight against the wall
+        if ((type === 0 || type === 4) && boatCount < 5) {
+          const bx = a.x + (-a.tz) * (a.w - 3) * s, bz = a.z + a.tx * (a.w - 3) * s;
+          if (!overOther(bx, bz, 'main', 0)) { tourBoat(bx, bz, ang, boatCount % 2 === 1); boatCount++; }
+        }
+      }
+    }
+
+    const scene = RR.Engine.scene;
+    const flatMat = RR.City.flatMaterial();
+    const wallMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    const add = (arr, mat, cast) => {
+      for (let i = 0; i < arr.length; i += 800) {
+        const m = new THREE.Mesh(RR.City.mergeGeoms(arr.slice(i, i + 800)), mat);
+        m.receiveShadow = true; if (cast) m.castShadow = true;
+        scene.add(m);
+      }
+    };
+    add(deck, flatMat, false);
+    add(wall, wallMat, false);
+    add(flat, flatMat, true);
+    add(bright, flatMat, true);
+  };
+
+  RR.Riverwalk = RW;
 })();
 
 </script>
@@ -3555,6 +3766,197 @@ window.CHICAGO = {
   };
 
   RR.Scenery = SC;
+})();
+
+</script>
+<script>
+/* ===== js/world/life.js ===== */
+/* River Racer — a living city: instanced pedestrians & cyclists strolling the
+   riverwalk promenades, and cars crossing the bridges. All GPU-instanced. */
+(function () {
+  const LIFE = {};
+  const U = () => RR.U;
+  const PY = 1.0;                 // promenade height (matches riverwalk.js)
+
+  let people, peopleData = [], nWalk = 0;
+  let bikes, bikeData = [];
+  let cars, carData = [];
+  const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1);
+  const _up = new THREE.Vector3(0, 1, 0);
+
+  function mergedFigure() {
+    const parts = [];
+    const legs = new THREE.BoxGeometry(0.5, 0.9, 0.34); legs.translate(0, 0.45, 0);
+    const torso = new THREE.BoxGeometry(0.56, 0.8, 0.36); torso.translate(0, 1.28, 0);
+    const head = new THREE.SphereGeometry(0.2, 6, 5); head.translate(0, 1.85, 0);
+    parts.push(legs, torso, head);
+    return RR.City.mergeGeoms(parts);
+  }
+  function mergedBike() {
+    const parts = [];
+    for (const z of [-0.5, 0.5]) { const wgeo = new THREE.TorusGeometry(0.33, 0.06, 5, 10); wgeo.rotateY(Math.PI / 2); wgeo.translate(0, 0.33, z); parts.push(wgeo); }
+    const frame = new THREE.BoxGeometry(0.1, 0.1, 1.0); frame.translate(0, 0.5, 0); parts.push(frame);
+    const bar = new THREE.BoxGeometry(0.1, 0.4, 0.1); bar.translate(0, 0.7, 0.45); parts.push(bar);
+    return RR.City.mergeGeoms(parts);
+  }
+  function mergedCar() {
+    const parts = [];
+    const body = new THREE.BoxGeometry(1.9, 0.9, 4.2); body.translate(0, 0.75, 0); parts.push(body);
+    const cabin = new THREE.BoxGeometry(1.7, 0.7, 2.2); cabin.translate(0, 1.45, -0.1); parts.push(cabin);
+    for (const sx of [-1, 1]) for (const sz of [-1.3, 1.3]) { const w = new THREE.CylinderGeometry(0.34, 0.34, 0.2, 6); w.rotateZ(Math.PI / 2); w.translate(sx * 0.95, 0.34, sz); parts.push(w); }
+    return RR.City.mergeGeoms(parts);
+  }
+
+  const SHIRTS = [0xcf4436, 0x3f6fb0, 0x4a8a52, 0xdedad0, 0x8a5a9c, 0xe0a53a, 0x37474f, 0xd06a9a, 0x2f8f8f, 0xb0483a];
+  const CARS = [0xd8d8dc, 0x2b2f36, 0xb0342a, 0x2f5aa0, 0xe0c030, 0x5a6068, 0x9aa0a6, 0x8a2f2f];
+
+  LIFE.init = function () {
+    const scene = RR.Engine.scene;
+    const C = window.CHICAGO;
+    const rng = U().mulberry(24601);
+    const openX = C.lake.openWaterX;
+
+    function overOther(x, z, selfKey) {
+      for (const key in RR.River.paths) {
+        if (key.startsWith('lake') || key === selfKey) continue;
+        const q = U().pathNearest(RR.River.paths[key], x, z);
+        if (q.dist < q.w) return true;
+      }
+      return false;
+    }
+
+    // ---------- distribute walkers + cyclists along the promenades ----------
+    const walkers = [], statics = [], cyclists = [];
+    for (const key in RR.River.paths) {
+      if (key.startsWith('lake')) continue;
+      const p = RR.River.paths[key];
+      const density = key === 'main' ? 3.0 : 1.4;                 // people per ~40m of bank
+      const count = Math.floor((p.len / 40) * density);
+      for (let i = 0; i < count; i++) {
+        for (const s of [-1, 1]) {
+          const d = rng() * p.len;
+          const off = 2 + rng() * 6.2;                            // across the promenade
+          const a = U().pathAt(p, d, {});
+          const x = a.x + (-a.tz) * (a.w + off) * s, z = a.z + a.tx * (a.w + off) * s;
+          if (x > openX - 8 || overOther(x, z, key)) continue;
+          const isBike = rng() < 0.14;
+          const w = { p, key, s, d, off, dir: rng() < 0.5 ? 1 : -1, spd: isBike ? 5 + rng() * 3 : 1.1 + rng() * 0.8,
+                      col: SHIRTS[(rng() * SHIRTS.length) | 0], ph: rng() * 9, bike: isBike };
+          (isBike ? cyclists : walkers).push(w);
+        }
+      }
+    }
+    // static knots of people at a few main-stem spots (near the rooms)
+    const main = RR.River.paths.main;
+    for (let d = 40; d < main.len - 40; d += 70) {
+      for (const s of [-1, 1]) {
+        const a = U().pathAt(main, d, {});
+        for (let k = 0; k < 4 + (rng() * 5 | 0); k++) {
+          const off = 2.5 + rng() * 5, dd = d + (rng() - 0.5) * 20;
+          const b = U().pathAt(main, dd, {});
+          const x = b.x + (-b.tz) * (b.w + off) * s, z = b.z + b.tx * (b.w + off) * s;
+          if (x > openX - 8 || overOther(x, z, 'main')) continue;
+          statics.push({ x, z, yaw: rng() * 6.28, col: SHIRTS[(rng() * SHIRTS.length) | 0] });
+        }
+      }
+    }
+
+    nWalk = walkers.length + cyclists.length;
+    const total = nWalk + statics.length;
+    people = new THREE.InstancedMesh(mergedFigure(), new THREE.MeshLambertMaterial({}), total);
+    people.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    people.castShadow = true;
+    peopleData = walkers.concat(cyclists);
+    // seed walker matrices + colors
+    for (let i = 0; i < peopleData.length; i++) people.setColorAt(i, new THREE.Color(peopleData[i].col));
+    for (let i = 0; i < statics.length; i++) {
+      const st = statics[i], idx = nWalk + i;
+      _q.setFromAxisAngle(_up, st.yaw); _p.set(st.x, PY, st.z);
+      _m.compose(_p, _q, _s); people.setMatrixAt(idx, _m);
+      people.setColorAt(idx, new THREE.Color(st.col));
+    }
+    scene.add(people);
+
+    // cyclists get bikes (same transforms, updated together)
+    bikes = new THREE.InstancedMesh(mergedBike(), new THREE.MeshLambertMaterial({ color: 0x2a2f36 }), Math.max(1, cyclists.length));
+    bikes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    bikeData = cyclists;
+    scene.add(bikes);
+
+    // ---------- cars crossing every (non-raised) bridge ----------
+    const carList = [];
+    for (const b of C.bridges) {
+      if (b.kind === 'railraised') continue;
+      const p = RR.River.paths[b.branch];
+      const q = U().pathNearest(p, b.x, b.z);
+      const ax = -q.tz, az = q.tx;                                // across-channel axis
+      const half = q.w;
+      for (let lane = 0; lane < 2; lane++) {
+        for (let n = 0; n < 2; n++) {
+          carList.push({ cx: q.x, cz: q.z, ax, az, tx: q.tx, tz: q.tz, half,
+            lane: lane === 0 ? 2.4 : -2.4, dir: lane === 0 ? 1 : -1,
+            u: (rng() * 2 - 1) * half, y: b.clearance + 2.15, spd: 7 + rng() * 5,
+            col: CARS[(rng() * CARS.length) | 0] });
+        }
+      }
+    }
+    cars = new THREE.InstancedMesh(mergedCar(), new THREE.MeshLambertMaterial({}), Math.max(1, carList.length));
+    cars.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    cars.castShadow = true;
+    carData = carList;
+    for (let i = 0; i < carList.length; i++) cars.setColorAt(i, new THREE.Color(carList[i].col));
+    scene.add(cars);
+
+    LIFE._ready = true;
+  };
+
+  LIFE.update = function (dt, t) {
+    if (!LIFE._ready) return;
+    const bp = {};
+    // pedestrians + cyclists
+    for (let i = 0; i < peopleData.length; i++) {
+      const w = peopleData[i];
+      w.d += w.spd * w.dir * dt;
+      if (w.d > w.p.len) { w.d = w.p.len; w.dir = -1; }
+      else if (w.d < 0) { w.d = 0; w.dir = 1; }
+      const a = U().pathAt(w.p, w.d, bp);
+      const nx = -a.tz, nz = a.tx;
+      const x = a.x + nx * (a.w + w.off) * w.s, z = a.z + nz * (a.w + w.off) * w.s;
+      const yaw = Math.atan2(a.tx * w.dir, a.tz * w.dir);
+      const bob = w.bike ? 0 : Math.abs(Math.sin(t * 6 + w.ph)) * 0.06;
+      _q.setFromAxisAngle(_up, yaw); _p.set(x, PY + bob, z);
+      _m.compose(_p, _q, _s); people.setMatrixAt(i, _m);
+    }
+    people.instanceMatrix.needsUpdate = true;
+    if (people.instanceColor) people.instanceColor.needsUpdate = true;
+
+    // bikes ride under their cyclist
+    for (let i = 0; i < bikeData.length; i++) {
+      const w = bikeData[i];
+      const a = U().pathAt(w.p, w.d, bp);
+      const nx = -a.tz, nz = a.tx;
+      const x = a.x + nx * (a.w + w.off) * w.s, z = a.z + nz * (a.w + w.off) * w.s;
+      const yaw = Math.atan2(a.tx * w.dir, a.tz * w.dir);
+      _q.setFromAxisAngle(_up, yaw); _p.set(x, PY, z);
+      _m.compose(_p, _q, _s); bikes.setMatrixAt(i, _m);
+    }
+    bikes.instanceMatrix.needsUpdate = true;
+
+    // cars
+    for (let i = 0; i < carData.length; i++) {
+      const c = carData[i];
+      c.u += c.spd * c.dir * dt;
+      if (c.u > c.half + 8) c.u = -(c.half + 8);
+      else if (c.u < -(c.half + 8)) c.u = c.half + 8;
+      const x = c.cx + c.ax * c.u + c.tx * c.lane, z = c.cz + c.az * c.u + c.tz * c.lane;
+      const yaw = Math.atan2(c.ax * c.dir, c.az * c.dir);
+      _q.setFromAxisAngle(_up, yaw); _p.set(x, c.y, z);
+      _m.compose(_p, _q, _s); cars.setMatrixAt(i, _m);
+    }
+    cars.instanceMatrix.needsUpdate = true;
+  };
+
+  RR.Life = LIFE;
 })();
 
 </script>
@@ -5939,8 +6341,10 @@ window.CHICAGO = {
     ['RAISING THE SKYLINE…', () => { RR.City.init(); }],
     ['DRESSING THE LANDMARKS…', () => { landmarkTags = RR.Landmarks.init(); }],
     ['LOWERING THE BRIDGES…', () => { RR.Bridges.init(); }],
+    ['LAYING THE RIVERWALK…', () => { RR.Riverwalk.init(); }],
     ['OPENING THE LOCK…', () => { RR.Lake.init(); }],
     ['RIGGING THE SAILBOATS…', () => { RR.Scenery.init(); }],
+    ['FILLING THE STREETS…', () => { RR.Life.init(); }],
     ['FUELING THE BOATS…', () => { RR.FX.init(); RR.HUD.init(); RR.Minimap.init(); }],
   ];
 
@@ -6066,6 +6470,7 @@ window.CHICAGO = {
   let tagCooldown = 0;
 
   function update(dt, t) {
+    if (RR.Life) RR.Life.update(dt, t);          // crowds + traffic animate in every scene
     if (mode === 'menu' || mode === 'results') {
       // attract flythrough behind the menus
       const main = RR.River.paths.main;
