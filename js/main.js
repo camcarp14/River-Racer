@@ -19,7 +19,7 @@
     ['LOWERING THE BRIDGES…', () => { RR.Bridges.init(); RR.Ramps.init(); }],
     ['LAYING THE RIVERWALK…', () => { RR.Riverwalk.init(); }],
     ['OPENING THE LOCK…', () => { RR.Lake.init(); }],
-    ['RIGGING THE SAILBOATS…', () => { RR.Scenery.init(); }],
+    ['RIGGING THE SAILBOATS…', () => { RR.Scenery.init(); if (RR.Eggs) { RR.Eggs.init(); if (RR.Eggs.tags) landmarkTags = landmarkTags.concat(RR.Eggs.tags); } }],
     ['FILLING THE STREETS…', () => { RR.Life.init(); RR.Fireworks.init(); }],
     ['FUELING THE BOATS…', () => { RR.FX.init(); RR.HUD.init(); RR.Minimap.init(); }],
   ];
@@ -39,10 +39,22 @@
     })();
   }
 
+  // showroom: the vehicle-select boat idles live on the lake, skyline behind it
+  const SHOW = { x: 2150, z: 620 };
+  let showBoat = null, showIdx = -1;
+
   function finishBoot() {
     setLoad(1, 'READY');
     if (RR.Theme) { RR.Theme.buildLamps(); RR.Theme.apply('day'); }
     RR.Menus.init(startRace);
+    RR.Menus.onVehicleFocus = (i) => {
+      if (showIdx === i && showBoat) return;
+      if (showBoat) RR.Engine.scene.remove(showBoat);
+      showBoat = RR.Boats.build(RR.Boats.CATALOG[i]);
+      showBoat.position.set(SHOW.x, 0.3, SHOW.z);
+      RR.Engine.scene.add(showBoat);
+      showIdx = i;
+    };
     RR.Menus.onResume = () => { mode = 'race'; };
     RR.Menus.onQuit = quitToTitle;
     RR.Engine.onUpdate(update);
@@ -112,11 +124,13 @@
       mode = 'results';
       RR.HUD.show(false);
       RR.Audio.stopEngine();
+      if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(false);
       RR.Menus.showResults(results, raceState.course.id);
     };
 
     RR.Audio.init();
     RR.Audio.startEngine(player.spec.kind);
+    if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(true);
     RR.HUD.show(true);
     RR.Camera.setMode(0);
     RR.Camera.snapTo(player);
@@ -127,6 +141,7 @@
     mode = 'menu';
     RR.HUD.show(false);
     RR.Audio.stopEngine();
+    if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(false);
     clearBoats();
     raceState = null;
   }
@@ -178,12 +193,27 @@
     if (RR.Fireworks) RR.Fireworks.update(dt);
     if (mode === 'menu' || mode === 'results') {
       if (RR.Water && RR.Water.material) RR.Water.material.uniforms.uNumBoats.value = 0;  // no stale foam
+      if (RR.Menus.screen() === 'vehicle' && showBoat) {
+        // showroom: slow orbit around the boat bobbing on the lake chop
+        const amp = RR.River.waveAmp(SHOW.x, SHOW.z);
+        showBoat.position.y = RR.U.waterHeight(SHOW.x, SHOW.z, t, amp) + 0.18;
+        showBoat.rotation.set(Math.sin(t * 0.7) * 0.035, t * 0.4, Math.sin(t * 0.55) * 0.045);
+        const cam = RR.Engine.camera;
+        const oa = t * 0.14, r = 10.5;
+        cam.position.set(SHOW.x + Math.sin(oa) * r, 3.4 + Math.sin(t * 0.3) * 0.5, SHOW.z + Math.cos(oa) * r);
+        cam.up.set(0, 1, 0);
+        cam.lookAt(SHOW.x, showBoat.position.y + 0.9, SHOW.z);
+        if (cam.fov !== 50) { cam.fov = 50; cam.updateProjectionMatrix(); }
+        return;
+      }
+      if (showBoat && RR.Menus.screen() !== 'vehicle') { RR.Engine.scene.remove(showBoat); showBoat = null; showIdx = -1; }
       // attract flythrough behind the menus
       const main = RR.River.paths.main;
       if (main) RR.Camera.flyover(dt, main);
       RR.Race.animateGates && raceState && RR.Race.animateGates(t);
       return;
     }
+    if (showBoat) { RR.Engine.scene.remove(showBoat); showBoat = null; showIdx = -1; }   // never leak into a race
     if (mode === 'photo') {
       if (!player) return;
       photoAngle += dt * 0.25;                       // slow orbit; world keeps shimmering (Life/Fireworks/water run above)

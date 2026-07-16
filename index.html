@@ -73,6 +73,19 @@
   .card .tag { font-size: 10px; letter-spacing: 2px; color: var(--gold); font-weight: 700; }
   .card canvas { width: 100%; height: 110px; border-radius: 8px; background: rgba(11,30,45,.6); margin: 8px 0; }
   .card .desc { font-size: 11.5px; color: #a8cbdc; line-height: 1.5; min-height: 50px; }
+  /* showroom (vehicle select): boat renders live in 3D center-screen; UI docks to the edges */
+  #menu.showroom { justify-content: flex-start; }
+  #menu.showroom #select-title { position: absolute; top: 26px; left: 0; right: 0; text-align: center; }
+  #menu.showroom #select-sub { position: absolute; top: 76px; left: 0; right: 0; text-align: center; }
+  #ride-panel { position: absolute; left: 34px; top: 50%; transform: translateY(-50%); width: 315px; background: rgba(6,20,32,.72); border: 1px solid rgba(126,200,227,.25); border-radius: 14px; padding: 20px; }
+  #ride-panel h3 { font-size: 27px; font-style: italic; color: #fff; letter-spacing: 1px; margin: 4px 0 10px; }
+  #ride-panel .desc { min-height: 64px; font-size: 12.5px; }
+  #ride-panel .statbar { margin-top: 7px; }
+  #cards.dock { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); flex-wrap: nowrap; }
+  #cards.dock .card { width: 132px; padding: 8px 10px; }
+  #cards.dock .card canvas { height: 56px; }
+  #cards.dock .card .desc, #cards.dock .card .statbar { display: none; }
+  #cards.dock .card h3 { font-size: 12px; min-height: 28px; }
   .statbar { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 10px; letter-spacing: 1px; color: #9fc9dd; }
   .statbar .track { flex: 1; height: 4px; background: rgba(255,255,255,.12); border-radius: 2px; }
   .statbar .fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--chi-blue), var(--gold)); }
@@ -125,6 +138,7 @@
 <script src="js/world/landmarks.js"></script>
 <script src="js/world/bridges.js"></script>
 <script src="js/world/ramps.js"></script>
+<script src="js/world/eggs.js"></script>
 <script src="js/world/lake.js"></script>
 <script src="js/world/scenery.js"></script>
 <script src="js/world/life.js"></script>

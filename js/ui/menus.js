@@ -16,7 +16,7 @@
   MENU.screen = () => screen;
   MENU.selection = () => ({ vehicleIdx, courseIdx });
 
-  function html(s) { root.innerHTML = s; root.classList.remove('off'); }
+  function html(s) { root.innerHTML = s; root.classList.remove('off'); root.classList.toggle('showroom', screen === 'vehicle'); }
   MENU.hide = function () { root.classList.add('off'); screen = 'none'; };
 
   // ---------- title ----------
@@ -55,7 +55,7 @@
     bindClicks([showTitle]);
   }
 
-  // ---------- vehicle select ----------
+  // ---------- vehicle select: live 3D showroom — the boat idles on the lake mid-screen ----------
   let timeTrial = false;
   function showVehicles(tt) {
     screen = 'vehicle'; sel = vehicleIdx; timeTrial = tt;
@@ -64,17 +64,35 @@
         <div class="tag">${v.kind.toUpperCase()}</div>
         <h3>${v.name}</h3>
         <canvas width="220" height="110" id="vcard-${i}"></canvas>
-        <div class="desc">${v.desc}</div>
-        ${stat('SPEED', v.top / 46)}${stat('ACCEL', v.accel / 15.5)}${stat('AGILITY', v.turn / 2.35)}
       </div>`).join('');
     html(`
       <div id="select-title">PICK YOUR RIDE</div>
       <div id="select-sub">${timeTrial ? 'TIME TRIAL' : 'RACE'} · ←→ SELECT · ENTER CONFIRM · BKSP BACK</div>
-      <div id="cards">${cards}</div>
+      <div id="ride-panel">
+        <div class="tag" id="ride-kind"></div>
+        <h3 id="ride-name"></h3>
+        <div class="desc" id="ride-desc"></div>
+        <div id="ride-stats"></div>
+      </div>
+      <div id="cards" class="dock">${cards}</div>
     `);
     bindCards(RR.Boats.CATALOG.length, (i) => { vehicleIdx = i; showCourses(); });
     drawVehicleCards();
     paintSel();
+  }
+
+  function updateRidePanel(i) {
+    const v = RR.Boats.CATALOG[i];
+    const kind = $('ride-kind');
+    if (!v || !kind) return;
+    kind.textContent = v.kind.toUpperCase();
+    $('ride-name').textContent = v.name;
+    $('ride-desc').textContent = v.desc;
+    const control = (v.turn / 2.5) * 0.5 + (v.grip / 3.7) * 0.5;
+    $('ride-stats').innerHTML =
+      stat('SPEED', v.top / 46) + stat('ACCEL', v.accel / 15.5) +
+      stat('CONTROL', control) + stat('BOOST', (v.boost - 1) / 0.3);
+    if (MENU.onVehicleFocus) MENU.onVehicleFocus(i);
   }
 
   function stat(label, f) {
@@ -287,6 +305,7 @@
     });
     const dd = $('diff-desc');
     if (dd && screen === 'difficulty' && DIFFS[sel]) dd.textContent = DIFFS[sel].desc;
+    if (screen === 'vehicle') updateRidePanel(sel);
   }
 
   window.addEventListener('keydown', (e) => {

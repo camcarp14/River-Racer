@@ -7,25 +7,25 @@
     {
       id: 'jetski', name: 'RX BLACKHAWK', kind: 'jetski',
       desc: 'Sport jet ski. Whips around bridge piers like a startled duck. Fragile top end, absurd agility.',
-      top: 33, accel: 15.5, turn: 2.35, grip: 3.4, lean: 0.55, boost: 1.22, mass: 0.7,
+      top: 33, accel: 15.5, turn: 2.5, grip: 3.6, lean: 0.55, boost: 1.22, mass: 0.7,
       hull: 0x1b1e26, deck: 0xff3b30, accent: 0xffc857, seat: 0x22262e,
     },
     {
       id: 'speedboat', name: 'FORMULA 350 GT', kind: 'speedboat',
-      desc: 'Offshore V-hull muscle. Monster straight-line pace, needs the whole channel to turn.',
-      top: 40, accel: 11.5, turn: 1.35, grip: 2.1, lean: 0.34, boost: 1.18, mass: 1.45,
+      desc: 'Offshore V-hull muscle. Monster straight-line pace — but it needs the whole channel to turn.',
+      top: 41, accel: 11.5, turn: 1.3, grip: 1.9, lean: 0.34, boost: 1.16, mass: 1.45,
       hull: 0x10315e, deck: 0xf2f4f6, accent: 0xff3b30, seat: 0x1a1d22,
     },
     {
       id: 'f1', name: 'F1H2O PROTOTYPE', kind: 'f1',
       desc: 'Tunnel-hull race cat. The fastest thing on the river — if you can keep it pointed straight.',
-      top: 46, accel: 14.0, turn: 1.75, grip: 2.9, lean: 0.22, boost: 1.25, mass: 0.9,
+      top: 46, accel: 14.0, turn: 1.6, grip: 2.2, lean: 0.22, boost: 1.14, mass: 0.9,
       hull: 0xffc857, deck: 0x14161c, accent: 0x0f8bd0, seat: 0x14161c,
     },
     {
       id: 'runabout', name: 'LAKESIDE QUEEN ’47', kind: 'runabout',
-      desc: 'Varnished mahogany classic. Slowest in class, biggest heart. Style points are a currency.',
-      top: 29, accel: 9.0, turn: 1.55, grip: 2.5, lean: 0.30, boost: 1.15, mass: 1.2,
+      desc: 'Varnished mahogany classic. Slowest in class — but glued to the water, with the strongest boost aboard.',
+      top: 30, accel: 10.0, turn: 2.1, grip: 3.7, lean: 0.30, boost: 1.3, mass: 1.2,
       hull: 0x6e3b1c, deck: 0x8a5224, accent: 0xe8e2d0, seat: 0x7a1f16,
     },
     {
