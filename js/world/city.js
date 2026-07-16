@@ -389,6 +389,7 @@
     for (let gx = -24; gx <= 26; gx++) {
       for (let gz = -22; gz <= 24; gz++) {
         const bx = gx * (BLOCK + STREET), bz = gz * (BLOCK + STREET);
+        if (bz < -680 && bx > 250) continue;                             // Streeterville/Gold Coast: built by RR.Streeterville
         if (bx > C.lake.openWaterX - 90) continue;                       // lakefront park stays open
         const clear = landClearance(bx, bz);
         if (clear < 4) continue;                                         // block center basically in the water

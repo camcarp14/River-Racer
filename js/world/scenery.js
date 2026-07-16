@@ -136,7 +136,7 @@
         dome.translate(R.lakeWestX + 300, 10, z0 + sign * 30); flat.push(tint(dome, 0x7f8a86, 0));
       }
     }
-    shoreStrip(R.lakeShoreZTop + 20, 90, -1, 34, 40, 190, false);  // north: Gold Coast highrises
+    // (the north Gold Coast strip is now the full RR.Northshore district)
     shoreStrip(R.lakeShoreZBot - 20, 90, 1, 18, 16, 70, true);     // south: Museum Campus + dome
 
     // merge the static scenery

@@ -19,6 +19,13 @@
     ['LOWERING THE BRIDGES…', () => { RR.Bridges.init(); RR.Ramps.init(); }],
     ['LAYING THE RIVERWALK…', () => { RR.Riverwalk.init(); }],
     ['OPENING THE LOCK…', () => { RR.Lake.init(); }],
+    ['RAISING THE GOLD COAST…', () => {
+      for (const D of [RR.Northshore, RR.Streeterville]) {
+        if (!D) continue;
+        D.init();
+        if (D.tags) landmarkTags = landmarkTags.concat(D.tags);
+      }
+    }],
     ['RIGGING THE SAILBOATS…', () => { RR.Scenery.init(); if (RR.Eggs) { RR.Eggs.init(); if (RR.Eggs.tags) landmarkTags = landmarkTags.concat(RR.Eggs.tags); } }],
     ['FILLING THE STREETS…', () => { RR.Life.init(); RR.Fireworks.init(); }],
     ['FUELING THE BOATS…', () => { RR.FX.init(); RR.HUD.init(); RR.Minimap.init(); }],
