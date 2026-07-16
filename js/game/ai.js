@@ -47,6 +47,33 @@
     let err = U().wrapAngle(desired - b.heading);
     pilot.ctl.steer = U().clamp(err * (1.9 + pilot.diff * 0.5), -1, 1);
 
+    // shoulder-check: a rival running alongside gets leaned on. Aggression (which scales
+    // with difficulty) sets how often; a long cooldown keeps it racing, not bumper cars.
+    pilot.shoveT = Math.max(0, (pilot.shoveT || 0) - dt);
+    if (pilot.shoveT <= 0 && speed > b.spec.top * 0.55) {
+      const S = RR.Race.state && RR.Race.state();
+      if (S && S.phase === 'racing') {
+        const fx = Math.sin(b.heading), fz = Math.cos(b.heading);
+        for (const o of S.boats) {
+          if (o === b) continue;
+          const dx = o.pos.x - b.pos.x, dz = o.pos.z - b.pos.z;
+          if (dx * dx + dz * dz > 81) continue;                      // within 9m
+          const along = dx * fx + dz * fz, lat = dx * fz - dz * fx;
+          if (Math.abs(along) > 7 || Math.abs(lat) < 1.2) continue;  // alongside, not nose-to-tail
+          if (Math.random() < pilot.aggression * 0.9) {
+            pilot.shoveDir = Math.sign(lat);
+            pilot.shoveHold = 0.45 + pilot.aggression * 0.4;
+          }
+          pilot.shoveT = 3.5 + Math.random() * 4;                    // cooldown, hit or not
+          break;
+        }
+      }
+    }
+    if (pilot.shoveHold > 0) {
+      pilot.shoveHold -= dt;
+      pilot.ctl.steer = U().clamp(pilot.ctl.steer + pilot.shoveDir * 0.5, -1, 1);
+    }
+
     // throttle: full unless a bend looms; brake hard only for hairpins
     let th = 1;
     if (bend > 0.35) th = U().lerp(1, 0.45, U().smoothstep(0.35, 1.1, bend));

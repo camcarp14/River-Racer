@@ -183,7 +183,7 @@
         const a = boats[i], b = boats[j];
         if (Math.abs(a.pos.y - b.pos.y) > 3) continue;       // a boat sailing overhead clears the one below
         const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
-        const rr = (a.radius + b.radius) * 1.02;             // contact registers as the hulls visually touch
+        const rr = (a.radius + b.radius) * 1.06;             // contact registers as the hulls visually touch
         const d2 = dx * dx + dz * dz;
         if (d2 < rr * rr && d2 > 1e-6) {
           const d = Math.sqrt(d2);
@@ -196,16 +196,16 @@
           const rvx = b.vel.x - a.vel.x, rvz = b.vel.z - a.vel.z;
           const vn = rvx * nx + rvz * nz;
           if (vn < 0) {
-            const e = 0.35;                                  // restitution: give the shove some pop
+            const e = 0.42;                                  // restitution: give the shove some pop
             const jimp = -(1 + e) * vn * ma * mb * inv;
             a.vel.x -= nx * jimp / ma; a.vel.z -= nz * jimp / ma;
             b.vel.x += nx * jimp / mb; b.vel.z += nz * jimp / mb;
             // lateral shove knocks a rival off their racing line on glancing hits
-            const tx = -nz, tz = nx, shove = (rvx * tx + rvz * tz) * 0.22;
+            const tx = -nz, tz = nx, shove = (rvx * tx + rvz * tz) * 0.3;
             a.vel.x -= tx * shove * (mb * inv); a.vel.z -= tz * shove * (mb * inv);
             b.vel.x += tx * shove * (ma * inv); b.vel.z += tz * shove * (ma * inv);
             // small yaw kick so a solid hit visibly spins them
-            const yaw = U().clamp(-vn * 0.015, 0, 0.4);
+            const yaw = U().clamp(-vn * 0.02, 0, 0.45);
             a.angVel -= yaw * (mb * inv); b.angVel += yaw * (ma * inv);
             const sev = Math.min(1, -vn / 11);
             if (sev > 0.1) {
