@@ -73,6 +73,19 @@
   .card .tag { font-size: 10px; letter-spacing: 2px; color: var(--gold); font-weight: 700; }
   .card canvas { width: 100%; height: 110px; border-radius: 8px; background: rgba(11,30,45,.6); margin: 8px 0; }
   .card .desc { font-size: 11.5px; color: #a8cbdc; line-height: 1.5; min-height: 50px; }
+  /* showroom (vehicle select): boat renders live in 3D center-screen; UI docks to the edges */
+  #menu.showroom { justify-content: flex-start; }
+  #menu.showroom #select-title { position: absolute; top: 26px; left: 0; right: 0; text-align: center; }
+  #menu.showroom #select-sub { position: absolute; top: 76px; left: 0; right: 0; text-align: center; }
+  #ride-panel { position: absolute; left: 34px; top: 50%; transform: translateY(-50%); width: 315px; background: rgba(6,20,32,.72); border: 1px solid rgba(126,200,227,.25); border-radius: 14px; padding: 20px; }
+  #ride-panel h3 { font-size: 27px; font-style: italic; color: #fff; letter-spacing: 1px; margin: 4px 0 10px; }
+  #ride-panel .desc { min-height: 64px; font-size: 12.5px; }
+  #ride-panel .statbar { margin-top: 7px; }
+  #cards.dock { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); flex-wrap: nowrap; }
+  #cards.dock .card { width: 132px; padding: 8px 10px; }
+  #cards.dock .card canvas { height: 56px; }
+  #cards.dock .card .desc, #cards.dock .card .statbar { display: none; }
+  #cards.dock .card h3 { font-size: 12px; min-height: 28px; }
   .statbar { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 10px; letter-spacing: 1px; color: #9fc9dd; }
   .statbar .track { flex: 1; height: 4px; background: rgba(255,255,255,.12); border-radius: 2px; }
   .statbar .fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--chi-blue), var(--gold)); }
@@ -1476,6 +1489,42 @@ window.CHICAGO = {
    "c": 15886876,
    "dark": false,
    "gold": false
+  },
+  {
+   "name": "Cloud Gate (The Bean)",
+   "x": 555.2,
+   "z": 589,
+   "kind": "bean",
+   "h": 10,
+   "w": 20,
+   "d": 13,
+   "c": 14080992,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "Buckingham Fountain",
+   "x": 919.9,
+   "z": 1355.8,
+   "kind": "fountain",
+   "h": 8,
+   "w": 40,
+   "d": 40,
+   "c": 13212298,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "Chicago Theatre",
+   "x": 182.3,
+   "z": 266.7,
+   "kind": "marquee",
+   "h": 30,
+   "w": 22,
+   "d": 18,
+   "c": 12892322,
+   "dark": false,
+   "gold": false
   }
  ],
  "generic": {
@@ -2267,11 +2316,17 @@ window.CHICAGO = {
         varying vec3 vDir;
         void main() {
           float h = clamp(vDir.y, 0.0, 1.0);
-          vec3 col = mix(cHorizon, cMid, smoothstep(0.0, 0.28, h));
-          col = mix(col, cZenith, smoothstep(0.22, 0.75, h));
+          // smoother multi-band gradient: horizon -> mid -> mid/zenith blend -> zenith
+          vec3 col = mix(cHorizon, cMid, smoothstep(0.0, 0.30, h));
+          col = mix(col, mix(cMid, cZenith, 0.55), smoothstep(0.18, 0.46, h));
+          col = mix(col, cZenith, smoothstep(0.40, 0.82, h));
           float sd = max(dot(normalize(vDir), sunDir), 0.0);
           float sunAmt = pow(sd, 4.0);
-          col = mix(col, cWest, sunAmt * (1.0 - h * 0.55));
+          // richer west tint hugging the horizon around the sun
+          col = mix(col, cWest, sunAmt * (1.0 - h * 0.6));
+          col = mix(col, cWest * vec3(1.06, 0.92, 0.80), pow(sd, 2.0) * pow(1.0 - h, 3.0) * 0.45);
+          // soft warm glow lobe where the sun sits low
+          col += vec3(1.0, 0.62, 0.30) * pow(sd, 3.5) * pow(1.0 - h, 2.5) * 0.35;
           // warm horizon band that glows into the golden hour
           col = mix(col, vec3(1.0, 0.78, 0.5), pow(1.0 - h, 6.0) * 0.35 * (0.4 + 0.6 * sunAmt));
           float disc = smoothstep(0.99900, 0.99955, sd);
@@ -2286,6 +2341,9 @@ window.CHICAGO = {
             vec3 nsky = mix(nHorizon, nMid, smoothstep(0.0, 0.34, h));
             nsky = mix(nsky, nZenith, smoothstep(0.14, 0.72, h));
             nsky = mix(nsky, vec3(0.32, 0.22, 0.14), pow(1.0 - h, 9.0) * 0.7);   // sodium-lit horizon haze
+            // faint diagonal Milky-Way band across the upper sky
+            float mwd = dot(normalize(vDir), normalize(vec3(0.62, 0.16, -0.55)));
+            nsky += vec3(0.085, 0.10, 0.145) * exp(-mwd * mwd * 55.0) * smoothstep(0.06, 0.42, h);
             float moon = smoothstep(0.99920, 0.99965, sd);
             nsky += vec3(0.95, 0.96, 1.0) * moon * 2.6;
             nsky += vec3(0.5, 0.58, 0.82) * pow(sd, 60.0) * 0.4;
@@ -2312,8 +2370,24 @@ window.CHICAGO = {
         ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
       }
     });
+    // wide soft stratus sheets — fewer, flatter, fainter lobes
+    const stratusTex = RR.U.canvasTexture(256, 96, (ctx, w, h) => {
+      ctx.clearRect(0, 0, w, h);
+      for (let i = 0; i < 12; i++) {
+        const cx = w * (0.12 + rng() * 0.76), cy = h * (0.38 + rng() * 0.24), r = 26 + rng() * 42;
+        ctx.save();
+        ctx.translate(cx, cy); ctx.scale(2.6, 1);
+        const g = ctx.createRadialGradient(0, 0, 2, 0, 0, r);
+        g.addColorStop(0, 'rgba(255,244,232,0.30)');
+        g.addColorStop(1, 'rgba(255,244,232,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fill();
+        ctx.restore();
+      }
+    });
     const cGeo = new THREE.PlaneGeometry(1, 1);
     const cMat = new THREE.MeshBasicMaterial({ map: cloudTex, transparent: true, depthWrite: false, fog: false, opacity: 0.9 });
+    const stMat = new THREE.MeshBasicMaterial({ map: stratusTex, transparent: true, depthWrite: false, fog: false, opacity: 0.75 });
     S.clouds = [];
     for (let i = 0; i < 14; i++) {
       const m = new THREE.Mesh(cGeo, cMat);
@@ -2325,9 +2399,20 @@ window.CHICAGO = {
       scene.add(m);
       S.clouds.push(m);
     }
+    // a handful of big soft stratus puffs at varied heights (same hide-at-night path)
+    for (let i = 0; i < 6; i++) {
+      const m = new THREE.Mesh(cGeo, stMat);
+      const ang = rng() * Math.PI * 2, dist = 2600 + rng() * 1500;
+      m.position.set(Math.cos(ang) * dist, 220 + rng() * 620, Math.sin(ang) * dist);
+      const s = 1100 + rng() * 1300;
+      m.scale.set(s, s * (0.18 + rng() * 0.12), 1);
+      m.renderOrder = -9;
+      scene.add(m);
+      S.clouds.push(m);
+    }
 
     // ---------- stars (hidden by day) ----------
-    const starN = 900, sPos = new Float32Array(starN * 3), sSize = new Float32Array(starN);
+    const starN = 1400, sPos = new Float32Array(starN * 3), sCol = new Float32Array(starN * 3);
     for (let i = 0; i < starN; i++) {
       // upper hemisphere of the dome
       const u = rng(), v = rng() * 0.9 + 0.06;
@@ -2336,17 +2421,22 @@ window.CHICAGO = {
       sPos[i * 3] = r * Math.sin(ph) * Math.cos(th);
       sPos[i * 3 + 1] = r * Math.cos(ph);
       sPos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
-      sSize[i] = 6 + rng() * 18;
+      // varied brightness: mostly dim, a few bright, slight blue/warm cast
+      const b = (rng() < 0.12 ? 0.75 + rng() * 0.25 : 0.25 + rng() * 0.45);
+      const w = rng() * 0.12;
+      sCol[i * 3] = b * (1.0 - w * 0.3);
+      sCol[i * 3 + 1] = b;
+      sCol[i * 3 + 2] = b * (1.0 + w) > 1 ? 1 : b * (1.0 + w);
     }
     const starGeo = new THREE.BufferGeometry();
     starGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
-    starGeo.setAttribute('size', new THREE.BufferAttribute(sSize, 1));
+    starGeo.setAttribute('color', new THREE.BufferAttribute(sCol, 3));
     const starTex = RR.U.canvasTexture(32, 32, (ctx) => {
       const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
       g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.4, 'rgba(230,235,255,0.6)'); g.addColorStop(1, 'rgba(255,255,255,0)');
       ctx.fillStyle = g; ctx.fillRect(0, 0, 32, 32);
     });
-    const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ size: 14, map: starTex, transparent: true, depthWrite: false, fog: false, sizeAttenuation: true, opacity: 0.95 }));
+    const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ size: 14, map: starTex, transparent: true, depthWrite: false, fog: false, sizeAttenuation: true, opacity: 0.95, vertexColors: true }));
     stars.renderOrder = -8; stars.visible = false; stars.frustumCulled = false;
     scene.add(stars);
     S.stars = stars;
@@ -2422,6 +2512,7 @@ window.CHICAGO = {
         varying float vShore;
         varying float vLake;
         varying float vAmp;
+        varying float vH;
         varying vec4 vReflectCoord;
         float wh(vec2 p, float t, float amp) {
           return amp * (
@@ -2432,7 +2523,9 @@ window.CHICAGO = {
         }
         void main() {
           vec4 wp = modelMatrix * vec4(position, 1.0);
-          wp.y += wh(wp.xz, uTime, aAmp);
+          float hh = wh(wp.xz, uTime, aAmp);
+          wp.y += hh;
+          vH = hh;
           vWorld = wp.xyz;
           vShore = aShore;
           vLake = aLake;
@@ -2455,26 +2548,32 @@ window.CHICAGO = {
         varying float vShore;
         varying float vLake;
         varying float vAmp;
+        varying float vH;
         varying vec4 vReflectCoord;
         void main() {
-          // ripple normal from two scrolling noise layers + analytic swell
+          // ripple normal from three scrolling noise octaves + analytic swell
           vec2 uv1 = vWorld.xz * 0.055 + vec2(uTime * 0.028, uTime * 0.021);
           vec2 uv2 = vWorld.xz * 0.11 - vec2(uTime * 0.031, -uTime * 0.017);
+          vec2 uv3 = vWorld.xz * 0.27 + vec2(uTime * 0.071, -uTime * 0.058);
           float n1 = texture2D(uNoise, uv1).r;
           float n2 = texture2D(uNoise, uv2).r;
-          float bump = (n1 + n2 - 1.0);
+          float n3 = texture2D(uNoise, uv3).r;   // fine octave: close-up sparkle detail
+          float bump = (n1 + n2 - 1.0) + (n3 - 0.5) * 0.4;
           float sx = cos(vWorld.x * 0.11 + uTime * 1.35) * 0.0061 * vAmp + bump * 0.10;
-          float sz = cos(vWorld.z * 0.13 - uTime * 1.02) * 0.0059 * vAmp + (n2 - 0.5) * 0.12;
+          float sz = cos(vWorld.z * 0.13 - uTime * 1.02) * 0.0059 * vAmp + (n2 - 0.5) * 0.12 + (n3 - 0.5) * 0.05;
           vec3 N = normalize(vec3(-sx * 2.4, 1.0, -sz * 2.4));
 
           vec3 V = normalize(uCamPos - vWorld);
-          float fresnel = 0.04 + 0.96 * pow(1.0 - max(dot(N, V), 0.0), 4.2);
+          float grazing = pow(1.0 - max(dot(N, V), 0.0), 4.8);
+          float fresnel = 0.04 + 0.96 * grazing;
 
           vec3 deep = mix(uDeepRiver, uDeepLake, vLake);
           vec3 shallow = mix(uShallowRiver, uShallowLake, vLake);
           vec3 base = mix(deep, shallow, clamp(0.35 + bump * 0.5, 0.0, 1.0));
           // shallower, lighter, greener water near the banks
           base = mix(base, base * 1.12 + vec3(0.03, 0.06, 0.04), smoothstep(0.55, 1.0, vShore) * 0.5 * (1.0 - vLake));
+          // brighten swell crests a touch, darken body at glancing angles (glossier read)
+          base *= (1.0 + max(vH, 0.0) * 0.45) * (1.0 - grazing * 0.22);
 
           // sky reflection tint: warmer when looking toward the low western sun
           float westness = clamp(dot(normalize(vec3(V.x, 0.0, V.z)), vec3(0.72, 0.0, 0.16)), 0.0, 1.0);
@@ -2493,15 +2592,19 @@ window.CHICAGO = {
 
           vec3 col = mix(base, refl, fresnel * 0.9);
 
-          // sun glitter
+          // sun glitter: tight warm spec, sparkle twinkles with the fast fine octave
           vec3 H = normalize(uSunDir + V);
-          float spec = pow(max(dot(N, H), 0.0), 220.0) * 2.6;
-          float sparkle = pow(max(dot(N, H), 0.0), 900.0) * 5.0 * step(0.62, n2);
-          col += vec3(1.0, 0.83, 0.58) * (spec + sparkle);
+          float ndh = max(dot(N, H), 0.0);
+          float spec = pow(ndh, 360.0) * 3.0;
+          float sparkle = pow(ndh, 1100.0) * 6.0 * smoothstep(0.56, 0.72, n3) * (0.6 + 0.8 * n2);
+          col += vec3(1.0, 0.80, 0.50) * (spec + sparkle);
+
+          // foam grain: break flat white up with the mid noise octave
+          float foamGrain = 0.6 + 0.8 * n2;
 
           // bank foam: soft lapping line at the seawalls
           float foamBand = smoothstep(0.78, 0.97, vShore + bump * 0.14 + 0.05 * sin(uTime * 1.7 + vWorld.x * 0.5 + vWorld.z * 0.4));
-          col = mix(col, vec3(0.86, 0.92, 0.92), foamBand * 0.5 * (1.0 - vLake * 0.55));
+          col = mix(col, vec3(0.90, 0.91, 0.87), clamp(foamBand * foamGrain, 0.0, 1.0) * 0.5 * (1.0 - vLake * 0.55));
 
           // bow-wave foam churned up around each moving boat
           float boatFoam = 0.0;
@@ -2514,8 +2617,8 @@ window.CHICAGO = {
             float f = dot(d, fwd);
             boatFoam += smoothstep(6.0, 1.2, dist) * (0.35 + 0.65 * smoothstep(-1.5, 3.5, f)) * b.z;
           }
-          boatFoam = clamp(boatFoam, 0.0, 1.0);
-          col = mix(col, vec3(0.93, 0.96, 0.97), boatFoam * 0.55);
+          boatFoam = clamp(boatFoam * foamGrain, 0.0, 1.0);
+          col = mix(col, vec3(0.95, 0.95, 0.91), boatFoam * 0.55);
 
           float fog = smoothstep(uFogNear, uFogFar, distance(uCamPos, vWorld));
           col = mix(col, uFogColor, fog);
@@ -3661,6 +3764,52 @@ window.CHICAGO = {
       glass.push(box(l.w, l.h, l.d, l.x, GY(), l.z, l.c));
       flat.push(box(l.w * 1.04, 2.5, l.d * 1.04, l.x, GY() + l.h, l.z, 0x8f8672));
     },
+
+    // Cloud Gate: mirror-steel blob arching between two ground lobes on a granite plaza disc
+    bean(l, glass, flat) {
+      const ST = 0xd6dbe0;                                    // pale steel — reads as brushed mirror
+      flat.push(cyl(15, 15.6, 0.6, 22, l.x, GY() - 0.3, l.z, 0xd8d2c4));   // plaza disc
+      const body = new THREE.SphereGeometry(1, 20, 14);
+      body.scale(7.6, 4.3, 4.4);                              // ~15m long × 10m tall squashed blob
+      flat.push(solid(body, l.x, GY() + 5.6, l.z, ST));
+      for (const s of [-1, 1]) {                              // lobes touch down → the walk-under arch
+        const lobe = new THREE.SphereGeometry(1, 14, 10);
+        lobe.scale(3.3, 3.2, 4.1);
+        flat.push(solid(lobe, l.x + s * 4.6, GY() + 2.1, l.z, ST));
+      }
+    },
+
+    // Buckingham Fountain: three stacked pink-granite basins + patina seahorses in the pool
+    fountain(l, glass, flat) {
+      const PG = 0xc99a8a;
+      flat.push(cyl(20, 20.6, 2.0, 22, l.x, GY(), l.z, PG));  // great basin wall
+      flat.push(solid(new THREE.CylinderGeometry(18.6, 18.6, 0.3, 22), l.x, GY() + 1.65, l.z, 0x2f7d84)); // pool
+      flat.push(cyl(2.2, 3.0, 2.6, 10, l.x, GY() + 1.8, l.z, PG));         // pedestal
+      flat.push(cyl(8.6, 6.8, 1.5, 16, l.x, GY() + 3.6, l.z, PG));         // lower bowl (flared)
+      flat.push(cyl(1.6, 2.2, 1.6, 8, l.x, GY() + 5.1, l.z, PG));
+      flat.push(cyl(5.2, 4.0, 1.2, 12, l.x, GY() + 5.9, l.z, PG));         // middle bowl
+      flat.push(cyl(2.6, 1.9, 1.0, 10, l.x, GY() + 7.0, l.z, PG));         // top bowl
+      for (let k = 0; k < 4; k++) {                           // four seahorse groups, verdigris bronze
+        const a = Math.PI / 4 + k * Math.PI / 2;
+        const sx = l.x + Math.cos(a) * 13.5, sz = l.z + Math.sin(a) * 13.5;
+        flat.push(box(1.3, 2.4, 2.6, sx, GY() + 1.6, sz, 0x5f8a76, a));
+        flat.push(solid(new THREE.SphereGeometry(0.7, 6, 5), sx, GY() + 4.3, sz, 0x5f8a76));
+      }
+    },
+
+    // Chicago Theatre: stone hall + the giant vertical C-H-I-C-A-G-O sign facing State St (west)
+    marquee(l, glass, flat) {
+      const RED = 0xc0231d;
+      glass.push(box(l.w, l.h, l.d, l.x, GY(), l.z, l.c));                 // theatre mass
+      glass.push(box(l.w * 0.8, l.h * 1.15, l.d * 0.55, l.x + l.w * 0.08, GY(), l.z, l.c)); // stage house
+      const wx = l.x - l.w / 2;                               // west face
+      flat.push(box(3.2, 2.6, 15, wx - 1.6, GY() + 6.5, l.z, RED));        // marquee canopy
+      flat.push(box(3.4, 0.5, 15.4, wx - 1.6, GY() + 9.1, l.z, 0xf3e2b0)); // lit canopy rim
+      flat.push(box(1.5, 22, 4.4, wx - 0.75, GY() + 7, l.z, RED));         // vertical sign blade
+      for (let k = 0; k < 7; k++) {                           // letter blocks, hoisted C→O
+        flat.push(box(0.5, 2.3, 2.7, wx - 1.55, GY() + 25.8 - k * 2.9, l.z, 0xfff3d4));
+      }
+    },
   };
 
   // Nudge a landmark landward until its whole footprint clears every channel.
@@ -4113,6 +4262,195 @@ window.CHICAGO = {
   };
 
   RR.Ramps = RAMPS;
+})();
+
+</script>
+<script>
+/* ===== js/world/eggs.js ===== */
+/* River Racer — Chicago easter eggs: waving city flags, the famous Rat Hole sidewalk
+   imprint, and Buckingham Fountain's animated water jets. Static bits merge into one
+   draw call; only the flags and jets are live meshes (all on layer 1, skipped by the
+   planar-reflection pass). */
+(function () {
+  const E = { tags: [] };
+  const U = () => RR.U;
+  let rng;
+  let flagMesh = null, flagMeta = [], flagBase = null, flagU = null;
+  let mainJet = null;
+
+  function tint(geo, hex, jit) { RR.City.tintGeom(geo, hex, jit || 0, rng); return geo; }
+
+  // the real Chicago flag: white field, two light-blue stripes, four red six-pointed stars
+  function flagTexture() {
+    return U().canvasTexture(192, 128, (ctx, w, h) => {
+      ctx.fillStyle = '#f6f7f5'; ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = '#b3ddf2';
+      ctx.fillRect(0, h / 6, w, h / 6);            // top stripe (2nd sixth)
+      ctx.fillRect(0, h * 4 / 6, w, h / 6);        // bottom stripe (5th sixth)
+      ctx.fillStyle = '#e4002b';
+      const R = h * 0.115, r = R * 0.42;           // sharp six-pointed municipal stars
+      for (let s = 0; s < 4; s++) {
+        const cx = w * (0.5 + (s - 1.5) * 0.19), cy = h / 2;
+        ctx.beginPath();
+        for (let i = 0; i < 12; i++) {
+          const a = -Math.PI / 2 + (i * Math.PI) / 6, rad = i % 2 ? r : R;
+          ctx[i ? 'lineTo' : 'moveTo'](cx + Math.cos(a) * rad, cy + Math.sin(a) * rad);
+        }
+        ctx.fill();
+      }
+    });
+  }
+
+  E.init = function () {
+    rng = U().mulberry(60606);
+    const scene = RR.Engine.scene;
+    const C = window.CHICAGO;
+    const GY = RR.City.GROUND_Y;
+    const flat = [];                               // static merged geometry
+    const bf = C.landmarks.find((l) => l.name.indexOf('Buckingham') >= 0);
+
+    // ---------- Chicago flags: pole spots (landClearance-checked unless on the pier deck) ----------
+    const np = C.lake.navyPier;
+    const spots = [
+      { x: np.root.x + 4, z: np.root.z + 40, y: 3.2, deck: true },   // Navy Pier root plaza
+      { x: np.tip.x + 8, z: np.tip.z, y: 3.2, deck: true },          // Navy Pier tip
+      { x: 1750, z: 40, y: GY },                                     // river mouth harbor front
+    ];
+    if (bf) for (const [dx, dz] of [[-28, -28], [28, -28], [-28, 28], [28, 28]]) {
+      spots.push({ x: bf.x + dx, z: bf.z + dz, y: GY });             // fountain plaza corners
+    }
+    const main = RR.River.paths.main;
+    for (const f of [0.22, 0.42, 0.62]) {                            // riverwalk spots, south bank
+      const q = U().pathAt(main, main.len * f, {});
+      for (let off = q.w + 11; off < q.w + 32; off += 4) {
+        const px = q.x - q.tz * off, pz = q.z + q.tx * off;
+        if (RR.City.landClearance(px, pz) > 2) { spots.push({ x: px, z: pz, y: GY }); break; }
+      }
+    }
+
+    // one shared plane, cloned into a single merged mesh; vertices wave in the update hook
+    const proto = new THREE.PlaneGeometry(4.2, 2.8, 6, 1);
+    proto.translate(2.1, 0, 0);                                      // hoist edge at the pole
+    const nV = proto.attributes.position.count;
+    flagU = new Float32Array(nV);                                    // 0 at hoist → 1 at fly end
+    for (let i = 0; i < nV; i++) flagU[i] = proto.attributes.position.getX(i) / 4.2;
+    const flagGeoms = [];
+    for (const s of spots) {
+      if (!s.deck && RR.City.landClearance(s.x, s.z) <= 2) continue; // every ground pole stays on dry land
+      const pole = new THREE.CylinderGeometry(0.09, 0.14, 8.5, 6);
+      pole.translate(s.x, s.y + 4.25, s.z);
+      flat.push(tint(pole, 0x9aa0a6, 0.05));
+      const ball = new THREE.SphereGeometry(0.2, 6, 5);
+      ball.translate(s.x, s.y + 8.6, s.z);
+      flat.push(tint(ball, 0xc9a227, 0));
+      const a = 0.4 + (rng() - 0.5) * 0.7;                           // wind out of the WSW, jittered
+      const g = proto.clone();
+      g.rotateY(a);
+      g.translate(s.x, s.y + 6.8, s.z);
+      flagGeoms.push(g);
+      flagMeta.push({ i0: flagGeoms.length - 1, px: Math.sin(a), pz: Math.cos(a), ph: rng() * 9 });
+    }
+    if (flagGeoms.length) {
+      const merged = RR.City.mergeGeoms(flagGeoms);
+      flagBase = merged.attributes.position.array.slice();           // rest pose, waved every frame
+      for (const m of flagMeta) m.i0 *= nV;
+      flagMesh = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({
+        map: flagTexture(), side: THREE.DoubleSide, vertexColors: true,
+      }));
+      flagMesh.layers.set(1);
+      scene.add(flagMesh);
+    }
+
+    // ---------- THE RAT HOLE: rat-shaped imprint in a sidewalk slab on the Main Stem's north bank ----------
+    {
+      const q = U().pathAt(main, main.len * 0.55, {});
+      const nx = q.tz, nz = -q.tx;                                   // left of downstream = north bank
+      let rx = 0, rz = 0, ok = false;
+      for (let off = q.w + 9; off < q.w + 42; off += 3) {
+        rx = q.x + nx * off; rz = q.z + nz * off;
+        if (RR.City.landClearance(rx, rz) > 2) { ok = true; break; }
+      }
+      if (ok) {
+        const ang = Math.atan2(q.tx, q.tz), ratY = GY + 0.15, DK = 0x37342f;
+        const parts = [];
+        const slab = new THREE.BoxGeometry(2, 0.15, 2.6);
+        slab.translate(0, GY + 0.075, 0);
+        parts.push(tint(slab, 0xcfccc2, 0.04));
+        const body = new THREE.SphereGeometry(1, 8, 6);              // splayed rat, sunk into the concrete
+        body.scale(0.42, 0.1, 0.85); body.translate(0, ratY - 0.03, 0.15);
+        parts.push(tint(body, DK, 0));
+        for (const s of [-1, 1]) {
+          const ear = new THREE.SphereGeometry(1, 5, 4);
+          ear.scale(0.16, 0.07, 0.16); ear.translate(s * 0.24, ratY - 0.02, 0.78);
+          parts.push(tint(ear, DK, 0));
+          for (const pzz of [0.5, -0.3]) {                           // splayed paws
+            const paw = new THREE.BoxGeometry(0.45, 0.08, 0.14);
+            paw.rotateY(s * 0.7); paw.translate(s * 0.45, ratY - 0.04, pzz);
+            parts.push(tint(paw, DK, 0));
+          }
+        }
+        const tail = new THREE.BoxGeometry(0.09, 0.1, 0.8);
+        tail.translate(0.06, ratY - 0.04, -0.85);
+        parts.push(tint(tail, DK, 0));
+        for (const g of parts) { g.rotateY(ang); g.translate(rx, 0, rz); flat.push(g); }
+        E.tags.push({ name: 'THE RAT HOLE', x: rx, z: rz, r2: 60 * 60 });
+      }
+    }
+
+    // ---------- Buckingham Fountain jets: pulsing center plume + constant side jets ----------
+    if (bf) {
+      const jetMat = new THREE.MeshBasicMaterial({
+        color: 0xcfeaff, transparent: true, opacity: 0.5,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const jetGeo = new THREE.CylinderGeometry(0.35, 0.95, 1, 8, 1, true);
+      jetGeo.translate(0, 0.5, 0);                                   // base-anchored → scale.y = height
+      mainJet = new THREE.Mesh(jetGeo, jetMat);
+      mainJet.position.set(bf.x, GY + 7.9, bf.z);
+      mainJet.layers.set(1);
+      scene.add(mainJet);
+      for (let k = 0; k < 3; k++) {
+        const a = 0.5 + (k * Math.PI * 2) / 3;
+        const j = new THREE.Mesh(jetGeo, jetMat);
+        j.position.set(bf.x + Math.cos(a) * 11, GY + 1.8, bf.z + Math.sin(a) * 11);
+        j.scale.set(0.8, 5.5, 0.8);
+        j.layers.set(1);
+        scene.add(j);
+      }
+    }
+
+    if (flat.length) {
+      const mesh = new THREE.Mesh(RR.City.mergeGeoms(flat), RR.City.flatMaterial());
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+    }
+
+    // flags ripple hoist→fly; the great plume breathes 8-20m like the real hourly display
+    RR.Engine.onUpdate((dt, t) => {
+      if (flagMesh) {
+        const pos = flagMesh.geometry.attributes.position.array;
+        for (const m of flagMeta) {
+          for (let v = 0; v < flagU.length; v++) {
+            const u = flagU[v];
+            const w = Math.sin(u * 7.5 - t * 3.1 + m.ph) * 0.42 * u;
+            const j = (m.i0 + v) * 3;
+            pos[j] = flagBase[j] + m.px * w;
+            pos[j + 1] = flagBase[j + 1] + Math.sin(u * 4.2 - t * 2.3 + m.ph) * 0.1 * u;
+            pos[j + 2] = flagBase[j + 2] + m.pz * w;
+          }
+        }
+        flagMesh.geometry.attributes.position.needsUpdate = true;
+      }
+      if (mainJet) {
+        mainJet.scale.y = 14 + 6 * Math.sin(t * 0.45);
+        const br = 1 + 0.15 * Math.sin(t * 1.7);
+        mainJet.scale.x = br; mainJet.scale.z = br;
+      }
+    });
+  };
+
+  RR.Eggs = E;
 })();
 
 </script>
@@ -4773,6 +5111,19 @@ window.CHICAGO = {
     // ---------- live river traffic: taxis, a tour boat, kayakers you weave past ----------
     riverCraft = [];
     const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
+    // seated torso+head riders merged into ONE vertex-colored mesh per craft.
+    // list: [{x,y,z,col,yaw}] with y = seat surface
+    function paxMesh(list) {
+      const parts = [];
+      for (const p of list) {
+        const t = RR.City.tintGeom(new THREE.BoxGeometry(0.36, 0.52, 0.26), p.col, 0.15, rng);
+        if (p.yaw) t.rotateY(p.yaw);
+        t.translate(p.x, p.y + 0.26, p.z); parts.push(t);
+        const h = RR.City.tintGeom(new THREE.SphereGeometry(0.14, 6, 5), 0xc9946a, 0.2, rng);
+        h.translate(p.x, p.y + 0.62, p.z); parts.push(h);
+      }
+      return new THREE.Mesh(RR.City.mergeGeoms(parts), RR.City.flatMaterial());
+    }
     function craftMesh(kind) {
       const g = new THREE.Group();
       if (kind === 'kayak') {
@@ -4796,9 +5147,19 @@ window.CHICAGO = {
         for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getZ(i)) > L * 0.42) hp.setX(i, hp.getX(i) * 0.4); }
         hull.geometry.computeVertexNormals(); hull.position.y = 0.55; g.add(hull);
         const stripe = new THREE.Mesh(new THREE.BoxGeometry(W + 0.06, 0.34, L - 1.2), mat(0x141414)); stripe.position.y = 1.28; g.add(stripe);
-        const cabin = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 1.5, L - 3.2), mat(0xf2c200)); cabin.position.set(0, 2.25, -0.4); g.add(cabin);
-        const win = new THREE.Mesh(new THREE.BoxGeometry(W - 0.44, 0.7, L - 3.6), mat(0x10202b)); win.position.set(0, 2.35, -0.4); g.add(win);
+        // cabin: solid sill + header with a see-through window band between them
+        const cabin = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 0.62, L - 3.2), mat(0xf2c200)); cabin.position.set(0, 1.81, -0.4); g.add(cabin);
+        const header = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 0.28, L - 3.2), mat(0xf2c200)); header.position.set(0, 2.86, -0.4); g.add(header);
+        const win = new THREE.Mesh(new THREE.BoxGeometry(W - 0.56, 0.62, L - 3.26),
+          new THREE.MeshLambertMaterial({ color: 0x10202b, transparent: true, opacity: 0.55 }));
+        win.position.set(0, 2.42, -0.4); g.add(win);
         const roof = new THREE.Mesh(new THREE.BoxGeometry(W - 0.3, 0.18, L - 3.0), mat(0x141414)); roof.position.set(0, 3.05, -0.4); g.add(roof);
+        // helmsman silhouette behind the windscreen + commuters, heads in the glass band
+        const pax = [{ x: 0.85, y: 1.88, z: 2.75, col: 0x23303a, yaw: 0 }];
+        for (let i = 0, n = 3 + (rng() * 2 | 0); i < n; i++)
+          pax.push({ x: (i % 2 ? -1 : 1) * (0.55 + rng() * 0.55), y: 1.85, z: -2.3 + i * 1.35,
+            col: SHIRTS[(rng() * SHIRTS.length) | 0], yaw: (rng() - 0.5) * 0.6 });
+        g.add(paxMesh(pax));
       } else {
         // Wendella architecture tour boat — WHITE hull, blue trim, windowed lower lounge,
         // open upper deck of seats under a canopy, forward wheelhouse
@@ -4811,9 +5172,16 @@ window.CHICAGO = {
         const lounge = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 1.3, L - 4.5), mat(0xeceae2)); lounge.position.set(0, 2.2, -0.3); g.add(lounge);
         const lwin = new THREE.Mesh(new THREE.BoxGeometry(W - 0.44, 0.55, L - 5), mat(0x14252f)); lwin.position.set(0, 2.25, -0.3); g.add(lwin);
         const upper = new THREE.Mesh(new THREE.BoxGeometry(W - 0.6, 0.22, L - 4.5), mat(0xdedad0)); upper.position.set(0, 3.0, -0.3); g.add(upper);
+        const pax = [];
         for (let zz = -L * 0.32; zz <= L * 0.28; zz += 1.6) {
           const bench = new THREE.Mesh(new THREE.BoxGeometry(W - 1.2, 0.35, 0.5), mat(0x27548f)); bench.position.set(0, 3.35, zz); g.add(bench);
+          // sightseers: mostly facing forward, a few twisted toward the banks
+          for (const sx of [-1, 1]) if (pax.length < 16 && rng() < 0.85)
+            pax.push({ x: sx * (0.5 + rng() * 1.35), y: 3.53, z: zz + 0.05,
+              col: SHIRTS[(rng() * SHIRTS.length) | 0],
+              yaw: rng() < 0.18 ? (rng() < 0.5 ? 1.5 : -1.5) : (rng() - 0.5) * 0.5 });
         }
+        g.add(paxMesh(pax));
         const awn = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 0.14, L - 8), mat(0x2a5aa0)); awn.position.set(0, 4.5, -0.3); g.add(awn);
         for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
           const p = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.5, 5), mat(0xd7d3c8));
@@ -5041,25 +5409,25 @@ window.CHICAGO = {
     {
       id: 'jetski', name: 'RX BLACKHAWK', kind: 'jetski',
       desc: 'Sport jet ski. Whips around bridge piers like a startled duck. Fragile top end, absurd agility.',
-      top: 33, accel: 15.5, turn: 2.35, grip: 3.4, lean: 0.55, boost: 1.22, mass: 0.7,
+      top: 33, accel: 15.5, turn: 2.5, grip: 3.6, lean: 0.55, boost: 1.22, mass: 0.7,
       hull: 0x1b1e26, deck: 0xff3b30, accent: 0xffc857, seat: 0x22262e,
     },
     {
       id: 'speedboat', name: 'FORMULA 350 GT', kind: 'speedboat',
-      desc: 'Offshore V-hull muscle. Monster straight-line pace, needs the whole channel to turn.',
-      top: 40, accel: 11.5, turn: 1.35, grip: 2.1, lean: 0.34, boost: 1.18, mass: 1.45,
+      desc: 'Offshore V-hull muscle. Monster straight-line pace — but it needs the whole channel to turn.',
+      top: 41, accel: 11.5, turn: 1.3, grip: 1.9, lean: 0.34, boost: 1.16, mass: 1.45,
       hull: 0x10315e, deck: 0xf2f4f6, accent: 0xff3b30, seat: 0x1a1d22,
     },
     {
       id: 'f1', name: 'F1H2O PROTOTYPE', kind: 'f1',
       desc: 'Tunnel-hull race cat. The fastest thing on the river — if you can keep it pointed straight.',
-      top: 46, accel: 14.0, turn: 1.75, grip: 2.9, lean: 0.22, boost: 1.25, mass: 0.9,
+      top: 46, accel: 14.0, turn: 1.6, grip: 2.2, lean: 0.22, boost: 1.14, mass: 0.9,
       hull: 0xffc857, deck: 0x14161c, accent: 0x0f8bd0, seat: 0x14161c,
     },
     {
       id: 'runabout', name: 'LAKESIDE QUEEN ’47', kind: 'runabout',
-      desc: 'Varnished mahogany classic. Slowest in class, biggest heart. Style points are a currency.',
-      top: 29, accel: 9.0, turn: 1.55, grip: 2.5, lean: 0.30, boost: 1.15, mass: 1.2,
+      desc: 'Varnished mahogany classic. Slowest in class — but glued to the water, with the strongest boost aboard.',
+      top: 30, accel: 10.0, turn: 2.1, grip: 3.7, lean: 0.30, boost: 1.3, mass: 1.2,
       hull: 0x6e3b1c, deck: 0x8a5224, accent: 0xe8e2d0, seat: 0x7a1f16,
     },
     {
@@ -5107,27 +5475,82 @@ window.CHICAGO = {
     add(0xffffff, 0, sternZ);
   }
 
-  function addDriver(group, spec, sitY, sitZ, standing) {
+  // capsule limb stretched between two points (init-time only — no hot-loop use)
+  function limb(g, m, r, ax, ay, az, bx, by, bz) {
+    const dx = bx - ax, dy = by - ay, dz = bz - az;
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.01;
+    const seg = new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(0.04, len - r), 2, 6), m);
+    seg.position.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2);
+    seg.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx / len, dy / len, dz / len));
+    g.add(seg);
+    return seg;
+  }
+
+  // reusable low-poly human: origin = seat surface ('sit'/'recline') or stance floor ('stand').
+  // opts: pose, lean (rad, + = forward), suit/vest/helmet/cap colors, visor, fire (helmet brim),
+  // handL/handR [x,y,z] grip targets (null = hand rests on the lap), legs/arms flags,
+  // footDrop (how far below the seat the footwell floor is), scale. ~10-14 prims.
+  function driverFigure(o) {
     const g = new THREE.Group();
-    const suit = mat(spec.accent, { roughness: 0.7, metalness: 0.05 });
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.24, 0.44, 3, 8), suit);
-    torso.position.y = 0.62; g.add(torso);
-    const vest = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 0.3, 3, 8), mat(0xf2b21a, { roughness: 0.7 }));
-    vest.position.y = 0.66; vest.scale.z = 0.7; g.add(vest);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), mat(0x2a2d33, { roughness: 0.3 }));
-    head.position.y = 1.06; g.add(head);
-    const visor = new THREE.Mesh(new THREE.SphereGeometry(0.155, 10, 8, -0.6, 1.2, 1.0, 1.1), glassMat());
-    visor.position.y = 1.06; g.add(visor);
-    for (const s of [-1, 1]) {
-      const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.4, 2, 6), suit);
-      arm.position.set(s * 0.3, 0.72, 0.18);
-      arm.rotation.x = standing ? -0.9 : -0.6;
-      arm.rotation.z = s * -0.25;
-      g.add(arm);
+    const suit = mat(o.suit, { roughness: 0.75, metalness: 0.05 });
+    const skin = mat(0xc9946a, { roughness: 0.85, metalness: 0 });
+    const pose = o.pose || 'sit';
+    let hip, tl; // hip anchor + torso length
+    if (pose === 'stand') { hip = [0, 0.62, -0.08]; tl = 0.55; }
+    else if (pose === 'recline') { hip = [0, 0.02, -0.1]; tl = 0.42; }
+    else { hip = [0, 0.1, 0]; tl = 0.52; }
+    const lean = o.lean != null ? o.lean : (pose === 'stand' ? 0.6 : 0.15);
+    const ny = hip[1] + Math.cos(lean) * tl, nz = hip[2] + Math.sin(lean) * tl;   // neck
+    limb(g, suit, 0.2, hip[0], hip[1], hip[2], 0, ny, nz);                        // torso
+    if (o.vest) {
+      const v = limb(g, mat(o.vest, { roughness: 0.8, metalness: 0 }), 0.23,
+        hip[0], hip[1] + 0.08, hip[2] + 0.02, 0, ny - 0.06, nz);
+      v.scale.z = 0.85;
     }
-    g.position.set(0, sitY, sitZ);
-    g.scale.setScalar(0.95);
-    group.add(g);
+    // head + headgear
+    const hy = ny + Math.cos(lean) * 0.24, hz = nz + Math.sin(lean) * 0.24 + 0.04;
+    if (o.helmet != null) {
+      const h = new THREE.Mesh(new THREE.SphereGeometry(0.165, 10, 8), mat(o.helmet, { roughness: 0.3, metalness: 0.25 }));
+      h.position.set(0, hy, hz); g.add(h);
+      if (o.visor) {
+        const vis = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8, -0.6, 1.2, 1.0, 1.1), glassMat());
+        vis.position.set(0, hy, hz + 0.03); g.add(vis);
+      }
+      if (o.fire) {                                     // wide fire-helmet brim, dipped at the rear
+        const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.04, 10), mat(o.helmet, { roughness: 0.4 }));
+        brim.position.set(0, hy - 0.05, hz - 0.03); brim.rotation.x = -0.12; g.add(brim);
+      }
+    } else {
+      const h = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), skin);
+      h.position.set(0, hy, hz); g.add(h);
+      if (o.cap != null) {                              // flat cap: squashed crown + short brim
+        const crown = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), mat(o.cap, { roughness: 0.9 }));
+        crown.scale.y = 0.55; crown.position.set(0, hy + 0.06, hz - 0.01); g.add(crown);
+        const brim = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.03, 0.16), mat(o.cap, { roughness: 0.9 }));
+        brim.position.set(0, hy + 0.05, hz + 0.15); g.add(brim);
+      }
+    }
+    // legs: thigh + shin per side, bent into the footwell (or crouched when standing)
+    if (o.legs !== false) {
+      const st = pose === 'stand';
+      const hx = st ? 0.2 : 0.12, kx = st ? 0.3 : 0.14;
+      const ky = st ? 0.35 : hip[1] + 0.05, kz = st ? 0.14 : 0.4;
+      const fy = st ? 0.02 : -(o.footDrop != null ? o.footDrop : 0.18), fz = st ? -0.02 : 0.55;
+      for (const s of [-1, 1]) {
+        limb(g, suit, 0.085, s * hx, hip[1], hip[2] + 0.02, s * kx, ky, kz);
+        limb(g, suit, 0.07, s * kx, ky, kz, s * kx, fy, fz);
+      }
+    }
+    // arms: shoulder -> grip target (or resting near the thigh)
+    if (o.arms !== false) {
+      const grips = [o.handL, o.handR];
+      for (let i = 0; i < 2; i++) {
+        const s = i === 0 ? -1 : 1;
+        const t = grips[i] || [s * 0.26, hip[1] + 0.05, hip[2] + 0.3];
+        limb(g, suit, 0.065, s * 0.24, ny - 0.05, nz, t[0], t[1], t[2]);
+      }
+    }
+    if (o.scale) g.scale.setScalar(o.scale);
     return g;
   }
 
@@ -5169,7 +5592,10 @@ window.CHICAGO = {
       // jet nozzle at the stern
       const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.11, 0.4, 8), mat(0x2a2d33, { metalness: 0.5 }));
       nozzle.rotation.x = Math.PI / 2; nozzle.position.set(0, 0.28, -1.55); g.add(nozzle);
-      addDriver(g, spec, 0.95, -0.45, true);
+      // crouched rider, hands on the grips
+      const rider = driverFigure({ pose: 'stand', lean: 0.8, suit: 0x22262e, vest: spec.deck, helmet: spec.accent, visor: true,
+        handL: [-0.3, 0.42, 0.92], handR: [0.3, 0.42, 0.92], scale: 0.95 });
+      rider.position.set(0, 0.66, -0.3); g.add(rider);
       navLights(g, 0.5, 1.3, -1.5, 0.72);
       g.userData.size = { r: 1.4, len: 3.2 };
       return g;
@@ -5204,7 +5630,19 @@ window.CHICAGO = {
         const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.7, 0.24), mat(0x1a1d22)); leg.position.set(s, 0.25, -4.0); g.add(leg);
       }
       cleat(g, 0.9, 3.0, 1.12); cleat(g, -0.9, 3.0, 1.12);
-      addDriver(g, spec, 1.15, -0.9, false);
+      // helm wheel + seated pilot at the starboard seat; rescue hull ships a firefighter
+      const fire = spec.id === 'rescue';
+      const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.03, 6, 14), mat(0x14161c, { metalness: 0.5 }));
+      wheel.position.set(0.4, 1.62, -0.38); wheel.rotation.x = -0.3; g.add(wheel);
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.5, 6), mat(0x1a1d22, { metalness: 0.5 }));
+      col.position.set(0.4, 1.42, -0.28); col.rotation.x = 0.5; g.add(col);
+      const drv = driverFigure({
+        pose: 'sit', lean: 0.18, footDrop: 0.3,
+        suit: fire ? 0x1f242b : 0xe8eaee, vest: fire ? 0xd7e02a : spec.accent,
+        helmet: fire ? 0x14161c : spec.accent, visor: !fire, fire,
+        handL: [-0.15, 0.12, 0.58], handR: [0.15, 0.12, 0.58],
+      });
+      drv.position.set(0.4, 1.52, -1.0); g.add(drv);
       navLights(g, 1.05, 3.4, -4.0, 1.1);
       g.userData.size = { r: 2.4, len: 7.8 };
       return g;
@@ -5228,6 +5666,9 @@ window.CHICAGO = {
       const wing = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.08, 0.55), mat(spec.accent, { roughness: 0.3 })); wing.position.set(0, 1.2, -2.3); g.add(wing);
       for (const s of [-1.05, 1.05]) { const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.6, 0.3), mat(0x14161a)); strut.position.set(s, 0.9, -2.3); g.add(strut); }
       const num = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.03, 16), mat(0xffffff)); num.rotation.x = Math.PI / 2; num.position.set(0, 0.78, 2.0); g.add(num);
+      // reclined pilot: only helmet + shoulders show under the glass, legs run into the hull
+      const pilot = driverFigure({ pose: 'recline', lean: 0.35, suit: spec.hull, helmet: spec.accent, visor: true, legs: false, arms: false });
+      pilot.position.set(0, 0.48, -0.78); g.add(pilot);
       navLights(g, 1.3, 2.4, -2.0, 0.7);
       g.userData.size = { r: 2.2, len: 5.4 };
       return g;
@@ -5259,7 +5700,10 @@ window.CHICAGO = {
       const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.6, 5), chrome()); mast.position.set(0, 1.3, -3.05); g.add(mast);
       const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.25), new THREE.MeshStandardMaterial({ color: spec.seat, side: THREE.DoubleSide })); flag.position.set(0.2, 1.48, -3.05); g.add(flag);
       cleat(g, 0.85, 2.7, 1.02);
-      addDriver(g, spec, 1.05, -0.3, false);
+      // relaxed captain on the bench, flat cap, right hand on the wheel
+      const capt = driverFigure({ pose: 'sit', lean: 0.08, footDrop: 0.06, suit: 0xe8e2d0, cap: 0x5b3a1e,
+        handR: [0.02, 0.1, 0.55] });
+      capt.position.set(-0.35, 1.16, -0.42); g.add(capt);
       navLights(g, 0.95, 2.9, -3.1, 1.02);
       g.userData.size = { r: 2.1, len: 6.6 };
       return g;
@@ -5877,12 +6321,17 @@ window.CHICAGO = {
   var noiseBufs = {};        // cached noise AudioBuffers
   var music = {
     playing: false,
+    mode: null,            // 'title' | 'race'
     interval: null,
     step: 0,
     nextTime: 0,
+    stepDur: 60 / 112 / 4, // 16th note; set per mode
+    stepsTotal: 128,       // 8 bars of 16 steps
+    level: 0.16,           // bus target; set per mode
     bus: null, padFilter: null, padGain: null,
     bassFilter: null, bassGain: null,
     hatFilter: null, hatGain: null,
+    kickGain: null,
     sources: []
   };
 
@@ -6067,7 +6516,7 @@ window.CHICAGO = {
       master.connect(comp);
       comp.connect(ctx.destination);
 
-      engineBus = gain(1);
+      engineBus = gain(0.45); // engines (incl. spray) sit well under music + SFX
       engineBus.connect(master);
       fxBus = gain(0.9);
       fxBus.connect(master);
@@ -6189,7 +6638,7 @@ window.CHICAGO = {
     lfo.start(t);
     sources.push(lfo); nodes.push(lfoGain);
 
-    // Output gain, faded in to avoid pops (engine sits ~-12dBFS at full send)
+    // Output gain, faded in to avoid pops (engine bus is padded to 0.45)
     var out = gain(EPS); nodes.push(out);
     out.gain.setTargetAtTime(def.idle, t, 0.15);
 
@@ -6498,18 +6947,54 @@ window.CHICAGO = {
   }
 
   // --------------------------------------------------------------------------
-  // Menu music — 100 BPM lookahead scheduler
-  // Am7 / Fmaj7 / Cmaj7 / G, soft bass + airy pads + light hats. ~-20dB.
+  // Music — one lookahead scheduler, two ORIGINAL loops (never both):
+  //  'title' — warm Chicago-house groove, 112 BPM, F-major soul changes
+  //            (I–vi–IV–V voiced as maj9/m9/9), gospel piano stabs, walking
+  //            sub bass, soft four-on-floor kick, offbeat hats, airy swells.
+  //  'race'  — driving hype loop, 126 BPM, A minor, hard kick + 808 sub
+  //            bassline, sparse dark brass stabs, energetic hats.
+  // All material composed for this game; no existing song is quoted.
   // --------------------------------------------------------------------------
-  var STEP_DUR = 60 / 100 / 4;   // 16th note at 100 BPM = 0.15s
-  var STEPS_TOTAL = 64;          // 4 bars of 16 steps
-  var MUSIC_LEVEL = 0.1;         // ~-20dBFS
-  var BARS = [
-    { bass: 110.00, chord: [220.00, 261.63, 329.63, 392.00] }, // Am7
-    { bass:  87.31, chord: [174.61, 220.00, 261.63, 329.63] }, // Fmaj7
-    { bass: 130.81, chord: [261.63, 329.63, 392.00, 493.88] }, // Cmaj7
-    { bass:  98.00, chord: [196.00, 246.94, 293.66, 392.00] }  // G
+  var TITLE_BPM = 112, RACE_BPM = 126;
+
+  // Title: chord voicings (Hz) and per-bar walking bass (quarter notes)
+  var T_CH = {
+    F:  [174.61, 220.00, 261.63, 329.63, 392.00], // Fmaj9  (F A C E G)
+    Dm: [174.61, 220.00, 261.63, 329.63],         // Dm9 rootless (F A C E)
+    Bb: [233.08, 293.66, 349.23, 440.00],         // Bbmaj9 (Bb D F A)
+    C9: [261.63, 329.63, 392.00, 466.16]          // C9    (C E G Bb)
+  };
+  var TITLE_BARS = [
+    { chord: T_CH.F,  walk: [87.31, 110.00, 130.81, 110.00] }, // F2 A2 C3 A2
+    { chord: T_CH.F,  walk: [87.31,  98.00,  82.41,  73.42] }, // walk down to Dm
+    { chord: T_CH.Dm, walk: [73.42,  87.31, 110.00,  87.31] }, // D2 F2 A2 F2
+    { chord: T_CH.Dm, walk: [73.42,  65.41,  61.74,  58.27] }, // chromatic to Bb
+    { chord: T_CH.Bb, walk: [58.27,  73.42,  87.31,  73.42] }, // Bb1 D2 F2 D2
+    { chord: T_CH.Bb, walk: [58.27,  61.74,  65.41,  61.74] }, // creep up to C
+    { chord: T_CH.C9, walk: [65.41,  82.41,  98.00,  82.41] }, // C2 E2 G2 E2
+    { chord: T_CH.C9, walk: [65.41,  98.00,  87.31,  82.41] }  // turn back home
   ];
+  var T_STAB_A = [2, 6, 10, 14]; // straight offbeat 8ths
+  var T_STAB_B = [2, 6, 10, 13]; // syncopated; 13 anticipates the next chord
+
+  // Race: minor stab voicings, 808 roots, sparse stab placements
+  var R_CH = {
+    Am: [220.00, 261.63, 329.63], // A3 C4 E4
+    F:  [174.61, 220.00, 261.63], // F3 A3 C4
+    G:  [196.00, 246.94, 293.66], // G3 B3 D4
+    E:  [164.81, 207.65, 246.94]  // E3 G#3 B3 — V turnaround tension
+  };
+  var RACE_BARS = [
+    { root: 55.00, chord: R_CH.Am, stabs: [4] },
+    { root: 55.00, chord: R_CH.Am, stabs: [] },
+    { root: 55.00, chord: R_CH.Am, stabs: [4, 11] },
+    { root: 55.00, chord: R_CH.Am, stabs: [] },
+    { root: 43.65, chord: R_CH.F,  stabs: [4] },
+    { root: 43.65, chord: R_CH.F,  stabs: [11] },
+    { root: 49.00, chord: R_CH.G,  stabs: [4] },
+    { root: 41.20, chord: R_CH.E,  stabs: [8, 10, 12] } // turnaround fill
+  ];
+  var R_808 = [0, 3, 6, 8, 11, 14]; // syncopated sub pattern (6/14 jump octave)
 
   function trackSource(src) {
     music.sources.push(src);
@@ -6520,6 +7005,13 @@ window.CHICAGO = {
     };
   }
 
+  function killSources(list) {
+    for (var i = 0; i < list.length; i++) {
+      try { list[i].onended = null; list[i].stop(); } catch (e) { /* ignore */ }
+      try { list[i].disconnect(); } catch (e) { /* ignore */ }
+    }
+  }
+
   function ensureMusicBuses() {
     if (music.bus) return;
     music.bus = gain(EPS);
@@ -6527,7 +7019,7 @@ window.CHICAGO = {
 
     music.padFilter = ctx.createBiquadFilter();
     music.padFilter.type = 'lowpass';
-    music.padFilter.frequency.value = 1400;
+    music.padFilter.frequency.value = 2200;
     music.padFilter.Q.value = 0.4;
     music.padGain = gain(0.55);
     music.padFilter.connect(music.padGain);
@@ -6546,11 +7038,39 @@ window.CHICAGO = {
     music.hatGain = gain(0.5);
     music.hatFilter.connect(music.hatGain);
     music.hatGain.connect(music.bus);
+
+    music.kickGain = gain(0.8);
+    music.kickGain.connect(music.bus);
   }
 
-  function padChord(freqs, t, dur) {
+  // Per-mode tempo / mix / tone. Called with the bus near-silent.
+  function applyMode(mode) {
+    if (mode === 'race') {
+      music.stepDur = 60 / RACE_BPM / 4;
+      music.level = 0.20;                      // over quiet engines, under SFX
+      music.padFilter.frequency.value = 1000;  // darker stabs
+      music.padGain.gain.value = 0.6;
+      music.bassFilter.frequency.value = 380;  // pure 808 sub
+      music.bassGain.gain.value = 0.9;
+      music.hatGain.gain.value = 0.65;
+      music.kickGain.gain.value = 1.0;
+    } else {
+      music.stepDur = 60 / TITLE_BPM / 4;
+      music.level = 0.16;
+      music.padFilter.frequency.value = 2200;  // warm piano brightness
+      music.padGain.gain.value = 0.55;
+      music.bassFilter.frequency.value = 700;
+      music.bassGain.gain.value = 0.8;
+      music.hatGain.gain.value = 0.5;
+      music.kickGain.gain.value = 0.8;
+    }
+    music.stepsTotal = 128; // both loops: 8 bars of 16 steps
+  }
+
+  // Airy pad swell: slow-attack detuned triangles through the pad lowpass
+  function swellPad(freqs, t, dur, lvl) {
     for (var i = 0; i < freqs.length; i++) {
-      for (var d = -4; d <= 4; d += 8) {
+      for (var d = -5; d <= 5; d += 10) {
         var o = ctx.createOscillator();
         o.type = 'triangle';
         o.frequency.value = freqs[i];
@@ -6558,16 +7078,42 @@ window.CHICAGO = {
         var g = gain(0);
         o.connect(g); g.connect(music.padFilter);
         g.gain.setValueAtTime(EPS, t);
-        g.gain.linearRampToValueAtTime(0.045, t + 0.6);
-        g.gain.setValueAtTime(0.045, t + dur - 0.5);
-        g.gain.linearRampToValueAtTime(EPS, t + dur + 0.6);
-        o.start(t); o.stop(t + dur + 0.7);
+        g.gain.linearRampToValueAtTime(lvl, t + dur * 0.45);
+        g.gain.linearRampToValueAtTime(EPS, t + dur);
+        o.start(t); o.stop(t + dur + 0.1);
         trackSource(o);
         cleanupOnEnd(o, [o, g]);
       }
     }
   }
 
+  // Chord stab: detuned saw/triangle stack, fast attack, exp decay.
+  // brass=false → gospel piano flavor; brass=true → dark race brass.
+  function stabChord(freqs, t, dur, lvl, brass) {
+    for (var i = 0; i < freqs.length; i++) {
+      var o1 = ctx.createOscillator();
+      o1.type = 'sawtooth';
+      o1.frequency.value = freqs[i];
+      o1.detune.value = brass ? -9 : -6;
+      var o2 = ctx.createOscillator();
+      o2.type = brass ? 'sawtooth' : 'triangle';
+      o2.frequency.value = freqs[i];
+      o2.detune.value = brass ? 9 : 5;
+      var g1 = gain(brass ? 0.5 : 0.30), g2 = gain(brass ? 0.5 : 0.75);
+      var g = gain(0);
+      o1.connect(g1); o2.connect(g2); g1.connect(g); g2.connect(g);
+      g.connect(music.padFilter);
+      g.gain.setValueAtTime(EPS, t);
+      g.gain.linearRampToValueAtTime(lvl, t + 0.005);
+      g.gain.exponentialRampToValueAtTime(EPS, t + dur);
+      o1.start(t); o2.start(t);
+      o1.stop(t + dur + 0.05); o2.stop(t + dur + 0.05);
+      trackSource(o1);
+      cleanupOnEnd(o1, [o1, o2, g1, g2, g]);
+    }
+  }
+
+  // Round walking bass (title): triangle + sine an octave blend
   function bassNote(f, t, dur, lvl) {
     var o1 = ctx.createOscillator(); o1.type = 'triangle'; o1.frequency.value = f;
     var o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = f;
@@ -6585,33 +7131,94 @@ window.CHICAGO = {
     cleanupOnEnd(o1, [o1, o2, g, g2]);
   }
 
-  function hatTick(t, accent) {
+  // 808-style sub (race): sine with a quick pitch drop and long-ish decay
+  function bass808(f, t, dur, lvl) {
+    var o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(f * 2.2, t);
+    o.frequency.exponentialRampToValueAtTime(f, t + 0.04);
+    var g = gain(0);
+    o.connect(g); g.connect(music.bassFilter);
+    g.gain.setValueAtTime(EPS, t);
+    g.gain.linearRampToValueAtTime(lvl, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(EPS, t + dur);
+    o.start(t); o.stop(t + dur + 0.05);
+    trackSource(o);
+    cleanupOnEnd(o, [o, g]);
+  }
+
+  // Four-on-the-floor kick: sine drop. hard=true for the race loop.
+  function kick(t, hard) {
+    var o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(hard ? 165 : 120, t);
+    o.frequency.exponentialRampToValueAtTime(hard ? 50 : 44, t + 0.085);
+    var g = gain(0);
+    o.connect(g); g.connect(music.kickGain);
+    g.gain.setValueAtTime(EPS, t);
+    g.gain.linearRampToValueAtTime(hard ? 0.85 : 0.5, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(EPS, t + (hard ? 0.24 : 0.18));
+    o.start(t); o.stop(t + 0.3);
+    trackSource(o);
+    cleanupOnEnd(o, [o, g]);
+  }
+
+  function hatTick(t, accent, dec) {
     var src = ctx.createBufferSource();
     src.buffer = noiseBuffer('white');
     src.playbackRate.value = 1.4;
     var g = gain(0);
     src.connect(g); g.connect(music.hatFilter);
     var peak = accent ? 0.055 : 0.025;
+    var d = dec || 0.055;
     g.gain.setValueAtTime(EPS, t);
     g.gain.linearRampToValueAtTime(peak, t + 0.004);
-    g.gain.exponentialRampToValueAtTime(EPS, t + 0.055);
-    src.start(t); src.stop(t + 0.08);
+    g.gain.exponentialRampToValueAtTime(EPS, t + d);
+    src.start(t); src.stop(t + d + 0.03);
     trackSource(src);
     cleanupOnEnd(src, [src, g]);
   }
 
-  function scheduleStep(step, t) {
-    var bar = BARS[(step / 16) | 0];
-    var s = step % 16;
-    if (s === 0) {
-      padChord(bar.chord, t, 16 * STEP_DUR);
-      bassNote(bar.bass, t, 1.05, 0.20);
-    } else if (s === 8) {
-      bassNote(bar.bass, t, 0.75, 0.16);
-    } else if (s === 14) {
-      bassNote(bar.bass * 1.4983, t, 0.30, 0.10); // fifth as a soft pickup
+  function scheduleTitleStep(step, t) {
+    var bar = (step / 16) | 0, s = step % 16;
+    var B = TITLE_BARS[bar];
+    // Soft four-on-the-floor + walking bass quarters
+    if (s % 4 === 0) {
+      kick(t, false);
+      bassNote(B.walk[s / 4], t, music.stepDur * 3.4, 0.24);
     }
-    if (s % 2 === 0) hatTick(t, s % 8 === 4);
+    // Gospel piano stabs on the offbeats; odd bars anticipate the next chord
+    var pat = (bar % 2) ? T_STAB_B : T_STAB_A;
+    if (pat.indexOf(s) >= 0) {
+      var ch = (s === 13) ? TITLE_BARS[(bar + 1) % 8].chord : B.chord;
+      stabChord(ch, t, 0.24, 0.11, false);
+    }
+    // Airy swell twice per loop (bars 0 and 4), a bar and a half long
+    if (s === 0 && (bar === 0 || bar === 4)) {
+      swellPad(B.chord, t, 24 * music.stepDur, 0.035);
+    }
+    // Offbeat-accented hats on 8ths
+    if (s % 2 === 0) hatTick(t, s % 4 === 2, s % 4 === 2 ? 0.09 : 0.05);
+  }
+
+  function scheduleRaceStep(step, t) {
+    var bar = (step / 16) | 0, s = step % 16;
+    var B = RACE_BARS[bar];
+    // Hard four-on-the-floor
+    if (s % 4 === 0) kick(t, true);
+    // Syncopated 808 subs; steps 6/14 jump the octave
+    if (R_808.indexOf(s) >= 0) {
+      var f = (s === 6 || s === 14) ? B.root * 2 : B.root;
+      bass808(f, t, 0.32, s % 8 === 0 ? 0.55 : 0.42);
+    }
+    // Sparse dark brass stabs
+    if (B.stabs.indexOf(s) >= 0) stabChord(B.chord, t, 0.16, 0.14, true);
+    // Energetic hats: offbeat 8ths accented, 16th fills on bars 3 and 7
+    if (s % 2 === 0) hatTick(t, s % 4 === 2, s % 4 === 2 ? 0.11 : 0.05);
+    else if ((bar === 3 || bar === 7) && s >= 11) hatTick(t, false, 0.04);
+  }
+
+  function scheduleStep(step, t) {
+    if (music.mode === 'race') scheduleRaceStep(step, t);
+    else scheduleTitleStep(step, t);
   }
 
   function schedulerTick() {
@@ -6619,27 +7226,15 @@ window.CHICAGO = {
     var ahead = ctx.currentTime + 0.2; // schedule 200ms ahead
     while (music.nextTime < ahead) {
       scheduleStep(music.step, music.nextTime);
-      music.nextTime += STEP_DUR;
-      music.step = (music.step + 1) % STEPS_TOTAL;
+      music.nextTime += music.stepDur;
+      music.step = (music.step + 1) % music.stepsTotal;
     }
   }
 
-  function doSetMusic(on) {
-    if (on) {
-      if (!ready()) return;
-      ensureMusicBuses();
-      if (music.playing) return;
-      music.playing = true;
-      music.step = 0;
-      music.nextTime = ctx.currentTime + 0.06;
-      var t = now();
-      music.bus.gain.cancelScheduledValues(t);
-      music.bus.gain.setValueAtTime(Math.max(music.bus.gain.value, EPS), t);
-      music.bus.gain.linearRampToValueAtTime(MUSIC_LEVEL, t + 0.8); // fade in
-      schedulerTick();
-      music.interval = setInterval(schedulerTick, 100);
-    } else {
-      if (!music.playing) return;
+  // Shared start/stop for both loops. Idempotent; switching stops the other.
+  function doSetMode(mode, on) {
+    if (!on) {
+      if (!music.playing || music.mode !== mode) return; // off is a no-op unless this loop plays
       music.playing = false;
       if (music.interval) { clearInterval(music.interval); music.interval = null; }
       if (!ctx || !music.bus) { music.sources.length = 0; return; }
@@ -6651,13 +7246,39 @@ window.CHICAGO = {
         if (music.playing) return; // restarted during the fade
         var list = music.sources.slice();
         music.sources.length = 0;
-        for (var i = 0; i < list.length; i++) {
-          try { list[i].onended = null; list[i].stop(); } catch (e) { /* ignore */ }
-          try { list[i].disconnect(); } catch (e) { /* ignore */ }
-        }
+        killSources(list);
       }, 900);
+      return;
     }
+    if (!ready()) return;
+    ensureMusicBuses();
+    if (music.playing && music.mode === mode) return; // idempotent
+    var t = now(), startAt = t + 0.06;
+    music.bus.gain.cancelScheduledValues(t);
+    music.bus.gain.setValueAtTime(Math.max(music.bus.gain.value, EPS), t);
+    if (music.playing) {
+      // Hot-switch: duck the bus, retire the other loop's scheduled notes
+      if (music.interval) { clearInterval(music.interval); music.interval = null; }
+      music.playing = false;
+      music.bus.gain.linearRampToValueAtTime(EPS, t + 0.08);
+      music.bus.gain.setValueAtTime(EPS, t + 0.09);
+      var old = music.sources.slice();
+      music.sources.length = 0;
+      setTimeout(function () { killSources(old); }, 130);
+      startAt = t + 0.14;
+    }
+    music.mode = mode;
+    applyMode(mode);
+    music.playing = true;
+    music.step = 0;
+    music.nextTime = startAt;
+    music.bus.gain.linearRampToValueAtTime(music.level, startAt + 0.7); // fade in
+    schedulerTick();
+    music.interval = setInterval(schedulerTick, 100);
   }
+
+  function doSetMusic(on) { doSetMode('title', !!on); }
+  function doSetRaceMusic(on) { if (!ctx) return; doSetMode('race', !!on); }
 
   // --------------------------------------------------------------------------
   // Public API — every method wrapped so it can never throw
@@ -6687,7 +7308,8 @@ window.CHICAGO = {
     uiSelect: safe(doUiSelect),
     finishFanfare: safe(doFinishFanfare),
     seagull: safe(doSeagull),
-    setMusic: safe(doSetMusic)
+    setMusic: safe(doSetMusic),
+    setRaceMusic: safe(doSetRaceMusic)
   };
 })();
 
@@ -7308,7 +7930,7 @@ window.CHICAGO = {
   MENU.screen = () => screen;
   MENU.selection = () => ({ vehicleIdx, courseIdx });
 
-  function html(s) { root.innerHTML = s; root.classList.remove('off'); }
+  function html(s) { root.innerHTML = s; root.classList.remove('off'); root.classList.toggle('showroom', screen === 'vehicle'); }
   MENU.hide = function () { root.classList.add('off'); screen = 'none'; };
 
   // ---------- title ----------
@@ -7347,7 +7969,7 @@ window.CHICAGO = {
     bindClicks([showTitle]);
   }
 
-  // ---------- vehicle select ----------
+  // ---------- vehicle select: live 3D showroom — the boat idles on the lake mid-screen ----------
   let timeTrial = false;
   function showVehicles(tt) {
     screen = 'vehicle'; sel = vehicleIdx; timeTrial = tt;
@@ -7356,17 +7978,35 @@ window.CHICAGO = {
         <div class="tag">${v.kind.toUpperCase()}</div>
         <h3>${v.name}</h3>
         <canvas width="220" height="110" id="vcard-${i}"></canvas>
-        <div class="desc">${v.desc}</div>
-        ${stat('SPEED', v.top / 46)}${stat('ACCEL', v.accel / 15.5)}${stat('AGILITY', v.turn / 2.35)}
       </div>`).join('');
     html(`
       <div id="select-title">PICK YOUR RIDE</div>
       <div id="select-sub">${timeTrial ? 'TIME TRIAL' : 'RACE'} · ←→ SELECT · ENTER CONFIRM · BKSP BACK</div>
-      <div id="cards">${cards}</div>
+      <div id="ride-panel">
+        <div class="tag" id="ride-kind"></div>
+        <h3 id="ride-name"></h3>
+        <div class="desc" id="ride-desc"></div>
+        <div id="ride-stats"></div>
+      </div>
+      <div id="cards" class="dock">${cards}</div>
     `);
     bindCards(RR.Boats.CATALOG.length, (i) => { vehicleIdx = i; showCourses(); });
     drawVehicleCards();
     paintSel();
+  }
+
+  function updateRidePanel(i) {
+    const v = RR.Boats.CATALOG[i];
+    const kind = $('ride-kind');
+    if (!v || !kind) return;
+    kind.textContent = v.kind.toUpperCase();
+    $('ride-name').textContent = v.name;
+    $('ride-desc').textContent = v.desc;
+    const control = (v.turn / 2.5) * 0.5 + (v.grip / 3.7) * 0.5;
+    $('ride-stats').innerHTML =
+      stat('SPEED', v.top / 46) + stat('ACCEL', v.accel / 15.5) +
+      stat('CONTROL', control) + stat('BOOST', (v.boost - 1) / 0.3);
+    if (MENU.onVehicleFocus) MENU.onVehicleFocus(i);
   }
 
   function stat(label, f) {
@@ -7579,6 +8219,7 @@ window.CHICAGO = {
     });
     const dd = $('diff-desc');
     if (dd && screen === 'difficulty' && DIFFS[sel]) dd.textContent = DIFFS[sel].desc;
+    if (screen === 'vehicle') updateRidePanel(sel);
   }
 
   window.addEventListener('keydown', (e) => {
@@ -7626,7 +8267,7 @@ window.CHICAGO = {
     ['LOWERING THE BRIDGES…', () => { RR.Bridges.init(); RR.Ramps.init(); }],
     ['LAYING THE RIVERWALK…', () => { RR.Riverwalk.init(); }],
     ['OPENING THE LOCK…', () => { RR.Lake.init(); }],
-    ['RIGGING THE SAILBOATS…', () => { RR.Scenery.init(); }],
+    ['RIGGING THE SAILBOATS…', () => { RR.Scenery.init(); if (RR.Eggs) { RR.Eggs.init(); if (RR.Eggs.tags) landmarkTags = landmarkTags.concat(RR.Eggs.tags); } }],
     ['FILLING THE STREETS…', () => { RR.Life.init(); RR.Fireworks.init(); }],
     ['FUELING THE BOATS…', () => { RR.FX.init(); RR.HUD.init(); RR.Minimap.init(); }],
   ];
@@ -7646,10 +8287,22 @@ window.CHICAGO = {
     })();
   }
 
+  // showroom: the vehicle-select boat idles live on the lake, skyline behind it
+  const SHOW = { x: 2150, z: 620 };
+  let showBoat = null, showIdx = -1;
+
   function finishBoot() {
     setLoad(1, 'READY');
     if (RR.Theme) { RR.Theme.buildLamps(); RR.Theme.apply('day'); }
     RR.Menus.init(startRace);
+    RR.Menus.onVehicleFocus = (i) => {
+      if (showIdx === i && showBoat) return;
+      if (showBoat) RR.Engine.scene.remove(showBoat);
+      showBoat = RR.Boats.build(RR.Boats.CATALOG[i]);
+      showBoat.position.set(SHOW.x, 0.3, SHOW.z);
+      RR.Engine.scene.add(showBoat);
+      showIdx = i;
+    };
     RR.Menus.onResume = () => { mode = 'race'; };
     RR.Menus.onQuit = quitToTitle;
     RR.Engine.onUpdate(update);
@@ -7719,11 +8372,13 @@ window.CHICAGO = {
       mode = 'results';
       RR.HUD.show(false);
       RR.Audio.stopEngine();
+      if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(false);
       RR.Menus.showResults(results, raceState.course.id);
     };
 
     RR.Audio.init();
     RR.Audio.startEngine(player.spec.kind);
+    if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(true);
     RR.HUD.show(true);
     RR.Camera.setMode(0);
     RR.Camera.snapTo(player);
@@ -7734,6 +8389,7 @@ window.CHICAGO = {
     mode = 'menu';
     RR.HUD.show(false);
     RR.Audio.stopEngine();
+    if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(false);
     clearBoats();
     raceState = null;
   }
@@ -7785,12 +8441,27 @@ window.CHICAGO = {
     if (RR.Fireworks) RR.Fireworks.update(dt);
     if (mode === 'menu' || mode === 'results') {
       if (RR.Water && RR.Water.material) RR.Water.material.uniforms.uNumBoats.value = 0;  // no stale foam
+      if (RR.Menus.screen() === 'vehicle' && showBoat) {
+        // showroom: slow orbit around the boat bobbing on the lake chop
+        const amp = RR.River.waveAmp(SHOW.x, SHOW.z);
+        showBoat.position.y = RR.U.waterHeight(SHOW.x, SHOW.z, t, amp) + 0.18;
+        showBoat.rotation.set(Math.sin(t * 0.7) * 0.035, t * 0.4, Math.sin(t * 0.55) * 0.045);
+        const cam = RR.Engine.camera;
+        const oa = t * 0.14, r = 10.5;
+        cam.position.set(SHOW.x + Math.sin(oa) * r, 3.4 + Math.sin(t * 0.3) * 0.5, SHOW.z + Math.cos(oa) * r);
+        cam.up.set(0, 1, 0);
+        cam.lookAt(SHOW.x, showBoat.position.y + 0.9, SHOW.z);
+        if (cam.fov !== 50) { cam.fov = 50; cam.updateProjectionMatrix(); }
+        return;
+      }
+      if (showBoat && RR.Menus.screen() !== 'vehicle') { RR.Engine.scene.remove(showBoat); showBoat = null; showIdx = -1; }
       // attract flythrough behind the menus
       const main = RR.River.paths.main;
       if (main) RR.Camera.flyover(dt, main);
       RR.Race.animateGates && raceState && RR.Race.animateGates(t);
       return;
     }
+    if (showBoat) { RR.Engine.scene.remove(showBoat); showBoat = null; showIdx = -1; }   // never leak into a race
     if (mode === 'photo') {
       if (!player) return;
       photoAngle += dt * 0.25;                       // slow orbit; world keeps shimmering (Life/Fireworks/water run above)

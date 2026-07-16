@@ -48,6 +48,7 @@
         varying float vShore;
         varying float vLake;
         varying float vAmp;
+        varying float vH;
         varying vec4 vReflectCoord;
         float wh(vec2 p, float t, float amp) {
           return amp * (
@@ -58,7 +59,9 @@
         }
         void main() {
           vec4 wp = modelMatrix * vec4(position, 1.0);
-          wp.y += wh(wp.xz, uTime, aAmp);
+          float hh = wh(wp.xz, uTime, aAmp);
+          wp.y += hh;
+          vH = hh;
           vWorld = wp.xyz;
           vShore = aShore;
           vLake = aLake;
@@ -81,26 +84,32 @@
         varying float vShore;
         varying float vLake;
         varying float vAmp;
+        varying float vH;
         varying vec4 vReflectCoord;
         void main() {
-          // ripple normal from two scrolling noise layers + analytic swell
+          // ripple normal from three scrolling noise octaves + analytic swell
           vec2 uv1 = vWorld.xz * 0.055 + vec2(uTime * 0.028, uTime * 0.021);
           vec2 uv2 = vWorld.xz * 0.11 - vec2(uTime * 0.031, -uTime * 0.017);
+          vec2 uv3 = vWorld.xz * 0.27 + vec2(uTime * 0.071, -uTime * 0.058);
           float n1 = texture2D(uNoise, uv1).r;
           float n2 = texture2D(uNoise, uv2).r;
-          float bump = (n1 + n2 - 1.0);
+          float n3 = texture2D(uNoise, uv3).r;   // fine octave: close-up sparkle detail
+          float bump = (n1 + n2 - 1.0) + (n3 - 0.5) * 0.4;
           float sx = cos(vWorld.x * 0.11 + uTime * 1.35) * 0.0061 * vAmp + bump * 0.10;
-          float sz = cos(vWorld.z * 0.13 - uTime * 1.02) * 0.0059 * vAmp + (n2 - 0.5) * 0.12;
+          float sz = cos(vWorld.z * 0.13 - uTime * 1.02) * 0.0059 * vAmp + (n2 - 0.5) * 0.12 + (n3 - 0.5) * 0.05;
           vec3 N = normalize(vec3(-sx * 2.4, 1.0, -sz * 2.4));
 
           vec3 V = normalize(uCamPos - vWorld);
-          float fresnel = 0.04 + 0.96 * pow(1.0 - max(dot(N, V), 0.0), 4.2);
+          float grazing = pow(1.0 - max(dot(N, V), 0.0), 4.8);
+          float fresnel = 0.04 + 0.96 * grazing;
 
           vec3 deep = mix(uDeepRiver, uDeepLake, vLake);
           vec3 shallow = mix(uShallowRiver, uShallowLake, vLake);
           vec3 base = mix(deep, shallow, clamp(0.35 + bump * 0.5, 0.0, 1.0));
           // shallower, lighter, greener water near the banks
           base = mix(base, base * 1.12 + vec3(0.03, 0.06, 0.04), smoothstep(0.55, 1.0, vShore) * 0.5 * (1.0 - vLake));
+          // brighten swell crests a touch, darken body at glancing angles (glossier read)
+          base *= (1.0 + max(vH, 0.0) * 0.45) * (1.0 - grazing * 0.22);
 
           // sky reflection tint: warmer when looking toward the low western sun
           float westness = clamp(dot(normalize(vec3(V.x, 0.0, V.z)), vec3(0.72, 0.0, 0.16)), 0.0, 1.0);
@@ -119,15 +128,19 @@
 
           vec3 col = mix(base, refl, fresnel * 0.9);
 
-          // sun glitter
+          // sun glitter: tight warm spec, sparkle twinkles with the fast fine octave
           vec3 H = normalize(uSunDir + V);
-          float spec = pow(max(dot(N, H), 0.0), 220.0) * 2.6;
-          float sparkle = pow(max(dot(N, H), 0.0), 900.0) * 5.0 * step(0.62, n2);
-          col += vec3(1.0, 0.83, 0.58) * (spec + sparkle);
+          float ndh = max(dot(N, H), 0.0);
+          float spec = pow(ndh, 360.0) * 3.0;
+          float sparkle = pow(ndh, 1100.0) * 6.0 * smoothstep(0.56, 0.72, n3) * (0.6 + 0.8 * n2);
+          col += vec3(1.0, 0.80, 0.50) * (spec + sparkle);
+
+          // foam grain: break flat white up with the mid noise octave
+          float foamGrain = 0.6 + 0.8 * n2;
 
           // bank foam: soft lapping line at the seawalls
           float foamBand = smoothstep(0.78, 0.97, vShore + bump * 0.14 + 0.05 * sin(uTime * 1.7 + vWorld.x * 0.5 + vWorld.z * 0.4));
-          col = mix(col, vec3(0.86, 0.92, 0.92), foamBand * 0.5 * (1.0 - vLake * 0.55));
+          col = mix(col, vec3(0.90, 0.91, 0.87), clamp(foamBand * foamGrain, 0.0, 1.0) * 0.5 * (1.0 - vLake * 0.55));
 
           // bow-wave foam churned up around each moving boat
           float boatFoam = 0.0;
@@ -140,8 +153,8 @@
             float f = dot(d, fwd);
             boatFoam += smoothstep(6.0, 1.2, dist) * (0.35 + 0.65 * smoothstep(-1.5, 3.5, f)) * b.z;
           }
-          boatFoam = clamp(boatFoam, 0.0, 1.0);
-          col = mix(col, vec3(0.93, 0.96, 0.97), boatFoam * 0.55);
+          boatFoam = clamp(boatFoam * foamGrain, 0.0, 1.0);
+          col = mix(col, vec3(0.95, 0.95, 0.91), boatFoam * 0.55);
 
           float fog = smoothstep(uFogNear, uFogFar, distance(uCamPos, vWorld));
           col = mix(col, uFogColor, fog);

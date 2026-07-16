@@ -38,7 +38,11 @@ Along the banks, modeled from their actual footprints and heights:
 
 ## Boats
 
-Five hulls with genuinely different physics: a whippy **sport jet ski**, an offshore **V-hull muscle boat**, a screaming **F1H2O tunnel-hull**, a varnished **1947 mahogany runabout**, and the **CFD Marine 7-1** fire boat. Lean into turns, ride the chop, launch off lake swells, manage the boost meter. Pick your poison before each race: **ROOKIE, SKIPPER or LEGEND** rivals — legends run the perfect line and never lift. Cross the line first and the **1ST place pop** says so before the leaderboard does.
+Pick your ride in a **live 3D showroom** — the boat idles on the lake chop with the skyline behind it while you compare **SPEED / ACCEL / CONTROL / BOOST**. Five hulls, genuinely balanced: speed always costs control. The **F1H2O tunnel-hull** is the fastest thing on the river and the most slippery; the offshore **V-hull** needs the whole channel to turn; the **jet ski** and the varnished **'47 mahogany runabout** are slower but glued down — and the runabout packs the strongest boost. Every cockpit has a **real driver** at the helm: a leaning jet-ski rider, a helmeted F1 pilot under the canopy, a flat-capped captain at the wooden wheel, a firefighter in high-vis. Pick your poison before each race: **ROOKIE, SKIPPER or LEGEND** rivals — legends run the perfect line and never lift. Cross the line first and the **1ST place pop** says so before the leaderboard does.
+
+**Original music, zero audio files**: a soulful Chicago-house groove on the title screen and a driving 126 BPM race track once the flag drops — all synthesized live in WebAudio, with the engines mixed low so the music rides on top.
+
+**Chicago easter eggs**: find **Cloud Gate (The Bean)** on its plaza, **Buckingham Fountain** firing its jets ringed by **Chicago flags**, the **Chicago Theatre marquee**, and yes — **the Rat Hole**.
 
 ## Controls
 

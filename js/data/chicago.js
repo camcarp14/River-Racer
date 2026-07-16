@@ -1204,6 +1204,42 @@ window.CHICAGO = {
    "c": 15886876,
    "dark": false,
    "gold": false
+  },
+  {
+   "name": "Cloud Gate (The Bean)",
+   "x": 555.2,
+   "z": 589,
+   "kind": "bean",
+   "h": 10,
+   "w": 20,
+   "d": 13,
+   "c": 14080992,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "Buckingham Fountain",
+   "x": 919.9,
+   "z": 1355.8,
+   "kind": "fountain",
+   "h": 8,
+   "w": 40,
+   "d": 40,
+   "c": 13212298,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "Chicago Theatre",
+   "x": 182.3,
+   "z": 266.7,
+   "kind": "marquee",
+   "h": 30,
+   "w": 22,
+   "d": 18,
+   "c": 12892322,
+   "dark": false,
+   "gold": false
   }
  ],
  "generic": {

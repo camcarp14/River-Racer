@@ -295,6 +295,52 @@
       glass.push(box(l.w, l.h, l.d, l.x, GY(), l.z, l.c));
       flat.push(box(l.w * 1.04, 2.5, l.d * 1.04, l.x, GY() + l.h, l.z, 0x8f8672));
     },
+
+    // Cloud Gate: mirror-steel blob arching between two ground lobes on a granite plaza disc
+    bean(l, glass, flat) {
+      const ST = 0xd6dbe0;                                    // pale steel — reads as brushed mirror
+      flat.push(cyl(15, 15.6, 0.6, 22, l.x, GY() - 0.3, l.z, 0xd8d2c4));   // plaza disc
+      const body = new THREE.SphereGeometry(1, 20, 14);
+      body.scale(7.6, 4.3, 4.4);                              // ~15m long × 10m tall squashed blob
+      flat.push(solid(body, l.x, GY() + 5.6, l.z, ST));
+      for (const s of [-1, 1]) {                              // lobes touch down → the walk-under arch
+        const lobe = new THREE.SphereGeometry(1, 14, 10);
+        lobe.scale(3.3, 3.2, 4.1);
+        flat.push(solid(lobe, l.x + s * 4.6, GY() + 2.1, l.z, ST));
+      }
+    },
+
+    // Buckingham Fountain: three stacked pink-granite basins + patina seahorses in the pool
+    fountain(l, glass, flat) {
+      const PG = 0xc99a8a;
+      flat.push(cyl(20, 20.6, 2.0, 22, l.x, GY(), l.z, PG));  // great basin wall
+      flat.push(solid(new THREE.CylinderGeometry(18.6, 18.6, 0.3, 22), l.x, GY() + 1.65, l.z, 0x2f7d84)); // pool
+      flat.push(cyl(2.2, 3.0, 2.6, 10, l.x, GY() + 1.8, l.z, PG));         // pedestal
+      flat.push(cyl(8.6, 6.8, 1.5, 16, l.x, GY() + 3.6, l.z, PG));         // lower bowl (flared)
+      flat.push(cyl(1.6, 2.2, 1.6, 8, l.x, GY() + 5.1, l.z, PG));
+      flat.push(cyl(5.2, 4.0, 1.2, 12, l.x, GY() + 5.9, l.z, PG));         // middle bowl
+      flat.push(cyl(2.6, 1.9, 1.0, 10, l.x, GY() + 7.0, l.z, PG));         // top bowl
+      for (let k = 0; k < 4; k++) {                           // four seahorse groups, verdigris bronze
+        const a = Math.PI / 4 + k * Math.PI / 2;
+        const sx = l.x + Math.cos(a) * 13.5, sz = l.z + Math.sin(a) * 13.5;
+        flat.push(box(1.3, 2.4, 2.6, sx, GY() + 1.6, sz, 0x5f8a76, a));
+        flat.push(solid(new THREE.SphereGeometry(0.7, 6, 5), sx, GY() + 4.3, sz, 0x5f8a76));
+      }
+    },
+
+    // Chicago Theatre: stone hall + the giant vertical C-H-I-C-A-G-O sign facing State St (west)
+    marquee(l, glass, flat) {
+      const RED = 0xc0231d;
+      glass.push(box(l.w, l.h, l.d, l.x, GY(), l.z, l.c));                 // theatre mass
+      glass.push(box(l.w * 0.8, l.h * 1.15, l.d * 0.55, l.x + l.w * 0.08, GY(), l.z, l.c)); // stage house
+      const wx = l.x - l.w / 2;                               // west face
+      flat.push(box(3.2, 2.6, 15, wx - 1.6, GY() + 6.5, l.z, RED));        // marquee canopy
+      flat.push(box(3.4, 0.5, 15.4, wx - 1.6, GY() + 9.1, l.z, 0xf3e2b0)); // lit canopy rim
+      flat.push(box(1.5, 22, 4.4, wx - 0.75, GY() + 7, l.z, RED));         // vertical sign blade
+      for (let k = 0; k < 7; k++) {                           // letter blocks, hoisted C→O
+        flat.push(box(0.5, 2.3, 2.7, wx - 1.55, GY() + 25.8 - k * 2.9, l.z, 0xfff3d4));
+      }
+    },
   };
 
   // Nudge a landmark landward until its whole footprint clears every channel.

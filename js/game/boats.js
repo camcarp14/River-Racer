@@ -73,27 +73,82 @@
     add(0xffffff, 0, sternZ);
   }
 
-  function addDriver(group, spec, sitY, sitZ, standing) {
+  // capsule limb stretched between two points (init-time only — no hot-loop use)
+  function limb(g, m, r, ax, ay, az, bx, by, bz) {
+    const dx = bx - ax, dy = by - ay, dz = bz - az;
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.01;
+    const seg = new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(0.04, len - r), 2, 6), m);
+    seg.position.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2);
+    seg.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx / len, dy / len, dz / len));
+    g.add(seg);
+    return seg;
+  }
+
+  // reusable low-poly human: origin = seat surface ('sit'/'recline') or stance floor ('stand').
+  // opts: pose, lean (rad, + = forward), suit/vest/helmet/cap colors, visor, fire (helmet brim),
+  // handL/handR [x,y,z] grip targets (null = hand rests on the lap), legs/arms flags,
+  // footDrop (how far below the seat the footwell floor is), scale. ~10-14 prims.
+  function driverFigure(o) {
     const g = new THREE.Group();
-    const suit = mat(spec.accent, { roughness: 0.7, metalness: 0.05 });
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.24, 0.44, 3, 8), suit);
-    torso.position.y = 0.62; g.add(torso);
-    const vest = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 0.3, 3, 8), mat(0xf2b21a, { roughness: 0.7 }));
-    vest.position.y = 0.66; vest.scale.z = 0.7; g.add(vest);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), mat(0x2a2d33, { roughness: 0.3 }));
-    head.position.y = 1.06; g.add(head);
-    const visor = new THREE.Mesh(new THREE.SphereGeometry(0.155, 10, 8, -0.6, 1.2, 1.0, 1.1), glassMat());
-    visor.position.y = 1.06; g.add(visor);
-    for (const s of [-1, 1]) {
-      const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.4, 2, 6), suit);
-      arm.position.set(s * 0.3, 0.72, 0.18);
-      arm.rotation.x = standing ? -0.9 : -0.6;
-      arm.rotation.z = s * -0.25;
-      g.add(arm);
+    const suit = mat(o.suit, { roughness: 0.75, metalness: 0.05 });
+    const skin = mat(0xc9946a, { roughness: 0.85, metalness: 0 });
+    const pose = o.pose || 'sit';
+    let hip, tl; // hip anchor + torso length
+    if (pose === 'stand') { hip = [0, 0.62, -0.08]; tl = 0.55; }
+    else if (pose === 'recline') { hip = [0, 0.02, -0.1]; tl = 0.42; }
+    else { hip = [0, 0.1, 0]; tl = 0.52; }
+    const lean = o.lean != null ? o.lean : (pose === 'stand' ? 0.6 : 0.15);
+    const ny = hip[1] + Math.cos(lean) * tl, nz = hip[2] + Math.sin(lean) * tl;   // neck
+    limb(g, suit, 0.2, hip[0], hip[1], hip[2], 0, ny, nz);                        // torso
+    if (o.vest) {
+      const v = limb(g, mat(o.vest, { roughness: 0.8, metalness: 0 }), 0.23,
+        hip[0], hip[1] + 0.08, hip[2] + 0.02, 0, ny - 0.06, nz);
+      v.scale.z = 0.85;
     }
-    g.position.set(0, sitY, sitZ);
-    g.scale.setScalar(0.95);
-    group.add(g);
+    // head + headgear
+    const hy = ny + Math.cos(lean) * 0.24, hz = nz + Math.sin(lean) * 0.24 + 0.04;
+    if (o.helmet != null) {
+      const h = new THREE.Mesh(new THREE.SphereGeometry(0.165, 10, 8), mat(o.helmet, { roughness: 0.3, metalness: 0.25 }));
+      h.position.set(0, hy, hz); g.add(h);
+      if (o.visor) {
+        const vis = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8, -0.6, 1.2, 1.0, 1.1), glassMat());
+        vis.position.set(0, hy, hz + 0.03); g.add(vis);
+      }
+      if (o.fire) {                                     // wide fire-helmet brim, dipped at the rear
+        const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.04, 10), mat(o.helmet, { roughness: 0.4 }));
+        brim.position.set(0, hy - 0.05, hz - 0.03); brim.rotation.x = -0.12; g.add(brim);
+      }
+    } else {
+      const h = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), skin);
+      h.position.set(0, hy, hz); g.add(h);
+      if (o.cap != null) {                              // flat cap: squashed crown + short brim
+        const crown = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), mat(o.cap, { roughness: 0.9 }));
+        crown.scale.y = 0.55; crown.position.set(0, hy + 0.06, hz - 0.01); g.add(crown);
+        const brim = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.03, 0.16), mat(o.cap, { roughness: 0.9 }));
+        brim.position.set(0, hy + 0.05, hz + 0.15); g.add(brim);
+      }
+    }
+    // legs: thigh + shin per side, bent into the footwell (or crouched when standing)
+    if (o.legs !== false) {
+      const st = pose === 'stand';
+      const hx = st ? 0.2 : 0.12, kx = st ? 0.3 : 0.14;
+      const ky = st ? 0.35 : hip[1] + 0.05, kz = st ? 0.14 : 0.4;
+      const fy = st ? 0.02 : -(o.footDrop != null ? o.footDrop : 0.18), fz = st ? -0.02 : 0.55;
+      for (const s of [-1, 1]) {
+        limb(g, suit, 0.085, s * hx, hip[1], hip[2] + 0.02, s * kx, ky, kz);
+        limb(g, suit, 0.07, s * kx, ky, kz, s * kx, fy, fz);
+      }
+    }
+    // arms: shoulder -> grip target (or resting near the thigh)
+    if (o.arms !== false) {
+      const grips = [o.handL, o.handR];
+      for (let i = 0; i < 2; i++) {
+        const s = i === 0 ? -1 : 1;
+        const t = grips[i] || [s * 0.26, hip[1] + 0.05, hip[2] + 0.3];
+        limb(g, suit, 0.065, s * 0.24, ny - 0.05, nz, t[0], t[1], t[2]);
+      }
+    }
+    if (o.scale) g.scale.setScalar(o.scale);
     return g;
   }
 
@@ -135,7 +190,10 @@
       // jet nozzle at the stern
       const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.11, 0.4, 8), mat(0x2a2d33, { metalness: 0.5 }));
       nozzle.rotation.x = Math.PI / 2; nozzle.position.set(0, 0.28, -1.55); g.add(nozzle);
-      addDriver(g, spec, 0.95, -0.45, true);
+      // crouched rider, hands on the grips
+      const rider = driverFigure({ pose: 'stand', lean: 0.8, suit: 0x22262e, vest: spec.deck, helmet: spec.accent, visor: true,
+        handL: [-0.3, 0.42, 0.92], handR: [0.3, 0.42, 0.92], scale: 0.95 });
+      rider.position.set(0, 0.66, -0.3); g.add(rider);
       navLights(g, 0.5, 1.3, -1.5, 0.72);
       g.userData.size = { r: 1.4, len: 3.2 };
       return g;
@@ -170,7 +228,19 @@
         const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.7, 0.24), mat(0x1a1d22)); leg.position.set(s, 0.25, -4.0); g.add(leg);
       }
       cleat(g, 0.9, 3.0, 1.12); cleat(g, -0.9, 3.0, 1.12);
-      addDriver(g, spec, 1.15, -0.9, false);
+      // helm wheel + seated pilot at the starboard seat; rescue hull ships a firefighter
+      const fire = spec.id === 'rescue';
+      const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.03, 6, 14), mat(0x14161c, { metalness: 0.5 }));
+      wheel.position.set(0.4, 1.62, -0.38); wheel.rotation.x = -0.3; g.add(wheel);
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.5, 6), mat(0x1a1d22, { metalness: 0.5 }));
+      col.position.set(0.4, 1.42, -0.28); col.rotation.x = 0.5; g.add(col);
+      const drv = driverFigure({
+        pose: 'sit', lean: 0.18, footDrop: 0.3,
+        suit: fire ? 0x1f242b : 0xe8eaee, vest: fire ? 0xd7e02a : spec.accent,
+        helmet: fire ? 0x14161c : spec.accent, visor: !fire, fire,
+        handL: [-0.15, 0.12, 0.58], handR: [0.15, 0.12, 0.58],
+      });
+      drv.position.set(0.4, 1.52, -1.0); g.add(drv);
       navLights(g, 1.05, 3.4, -4.0, 1.1);
       g.userData.size = { r: 2.4, len: 7.8 };
       return g;
@@ -194,6 +264,9 @@
       const wing = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.08, 0.55), mat(spec.accent, { roughness: 0.3 })); wing.position.set(0, 1.2, -2.3); g.add(wing);
       for (const s of [-1.05, 1.05]) { const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.6, 0.3), mat(0x14161a)); strut.position.set(s, 0.9, -2.3); g.add(strut); }
       const num = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.03, 16), mat(0xffffff)); num.rotation.x = Math.PI / 2; num.position.set(0, 0.78, 2.0); g.add(num);
+      // reclined pilot: only helmet + shoulders show under the glass, legs run into the hull
+      const pilot = driverFigure({ pose: 'recline', lean: 0.35, suit: spec.hull, helmet: spec.accent, visor: true, legs: false, arms: false });
+      pilot.position.set(0, 0.48, -0.78); g.add(pilot);
       navLights(g, 1.3, 2.4, -2.0, 0.7);
       g.userData.size = { r: 2.2, len: 5.4 };
       return g;
@@ -225,7 +298,10 @@
       const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.6, 5), chrome()); mast.position.set(0, 1.3, -3.05); g.add(mast);
       const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.25), new THREE.MeshStandardMaterial({ color: spec.seat, side: THREE.DoubleSide })); flag.position.set(0.2, 1.48, -3.05); g.add(flag);
       cleat(g, 0.85, 2.7, 1.02);
-      addDriver(g, spec, 1.05, -0.3, false);
+      // relaxed captain on the bench, flat cap, right hand on the wheel
+      const capt = driverFigure({ pose: 'sit', lean: 0.08, footDrop: 0.06, suit: 0xe8e2d0, cap: 0x5b3a1e,
+        handR: [0.02, 0.1, 0.55] });
+      capt.position.set(-0.35, 1.16, -0.42); g.add(capt);
       navLights(g, 0.95, 2.9, -3.1, 1.02);
       g.userData.size = { r: 2.1, len: 6.6 };
       return g;

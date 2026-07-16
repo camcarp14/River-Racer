@@ -152,6 +152,10 @@ const LANDMARKS = [
   { name: 'Old Montgomery Ward', lat: 41.8963, lon: -87.6422, kind: 'boxstone', h: 32, w: 150, d: 40, c: 0xb6ad9c },
   // Fulton River District, west bank of the South Branch — the user's office, an unmistakable orange slab
   { name: '111 N Canal (Ovative Group)', lat: 41.8847, lon: -87.6396, kind: 'canal111', h: 96, w: 64, d: 46, c: 0xf26a1c },
+  // Loop / Grant Park easter-egg landmarks
+  { name: 'Cloud Gate (The Bean)', lat: 41.8827, lon: -87.6233, kind: 'bean', h: 10, w: 20, d: 13, c: 0xd6dbe0 },
+  { name: 'Buckingham Fountain', lat: 41.8758, lon: -87.6189, kind: 'fountain', h: 8, w: 40, d: 40, c: 0xc99a8a },
+  { name: 'Chicago Theatre', lat: 41.8856, lon: -87.6278, kind: 'marquee', h: 30, w: 22, d: 18, c: 0xc4b8a2 },
 ];
 
 // ---------- assemble ----------

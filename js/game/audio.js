@@ -22,12 +22,17 @@
   var noiseBufs = {};        // cached noise AudioBuffers
   var music = {
     playing: false,
+    mode: null,            // 'title' | 'race'
     interval: null,
     step: 0,
     nextTime: 0,
+    stepDur: 60 / 112 / 4, // 16th note; set per mode
+    stepsTotal: 128,       // 8 bars of 16 steps
+    level: 0.16,           // bus target; set per mode
     bus: null, padFilter: null, padGain: null,
     bassFilter: null, bassGain: null,
     hatFilter: null, hatGain: null,
+    kickGain: null,
     sources: []
   };
 
@@ -212,7 +217,7 @@
       master.connect(comp);
       comp.connect(ctx.destination);
 
-      engineBus = gain(1);
+      engineBus = gain(0.45); // engines (incl. spray) sit well under music + SFX
       engineBus.connect(master);
       fxBus = gain(0.9);
       fxBus.connect(master);
@@ -334,7 +339,7 @@
     lfo.start(t);
     sources.push(lfo); nodes.push(lfoGain);
 
-    // Output gain, faded in to avoid pops (engine sits ~-12dBFS at full send)
+    // Output gain, faded in to avoid pops (engine bus is padded to 0.45)
     var out = gain(EPS); nodes.push(out);
     out.gain.setTargetAtTime(def.idle, t, 0.15);
 
@@ -643,18 +648,54 @@
   }
 
   // --------------------------------------------------------------------------
-  // Menu music — 100 BPM lookahead scheduler
-  // Am7 / Fmaj7 / Cmaj7 / G, soft bass + airy pads + light hats. ~-20dB.
+  // Music — one lookahead scheduler, two ORIGINAL loops (never both):
+  //  'title' — warm Chicago-house groove, 112 BPM, F-major soul changes
+  //            (I–vi–IV–V voiced as maj9/m9/9), gospel piano stabs, walking
+  //            sub bass, soft four-on-floor kick, offbeat hats, airy swells.
+  //  'race'  — driving hype loop, 126 BPM, A minor, hard kick + 808 sub
+  //            bassline, sparse dark brass stabs, energetic hats.
+  // All material composed for this game; no existing song is quoted.
   // --------------------------------------------------------------------------
-  var STEP_DUR = 60 / 100 / 4;   // 16th note at 100 BPM = 0.15s
-  var STEPS_TOTAL = 64;          // 4 bars of 16 steps
-  var MUSIC_LEVEL = 0.1;         // ~-20dBFS
-  var BARS = [
-    { bass: 110.00, chord: [220.00, 261.63, 329.63, 392.00] }, // Am7
-    { bass:  87.31, chord: [174.61, 220.00, 261.63, 329.63] }, // Fmaj7
-    { bass: 130.81, chord: [261.63, 329.63, 392.00, 493.88] }, // Cmaj7
-    { bass:  98.00, chord: [196.00, 246.94, 293.66, 392.00] }  // G
+  var TITLE_BPM = 112, RACE_BPM = 126;
+
+  // Title: chord voicings (Hz) and per-bar walking bass (quarter notes)
+  var T_CH = {
+    F:  [174.61, 220.00, 261.63, 329.63, 392.00], // Fmaj9  (F A C E G)
+    Dm: [174.61, 220.00, 261.63, 329.63],         // Dm9 rootless (F A C E)
+    Bb: [233.08, 293.66, 349.23, 440.00],         // Bbmaj9 (Bb D F A)
+    C9: [261.63, 329.63, 392.00, 466.16]          // C9    (C E G Bb)
+  };
+  var TITLE_BARS = [
+    { chord: T_CH.F,  walk: [87.31, 110.00, 130.81, 110.00] }, // F2 A2 C3 A2
+    { chord: T_CH.F,  walk: [87.31,  98.00,  82.41,  73.42] }, // walk down to Dm
+    { chord: T_CH.Dm, walk: [73.42,  87.31, 110.00,  87.31] }, // D2 F2 A2 F2
+    { chord: T_CH.Dm, walk: [73.42,  65.41,  61.74,  58.27] }, // chromatic to Bb
+    { chord: T_CH.Bb, walk: [58.27,  73.42,  87.31,  73.42] }, // Bb1 D2 F2 D2
+    { chord: T_CH.Bb, walk: [58.27,  61.74,  65.41,  61.74] }, // creep up to C
+    { chord: T_CH.C9, walk: [65.41,  82.41,  98.00,  82.41] }, // C2 E2 G2 E2
+    { chord: T_CH.C9, walk: [65.41,  98.00,  87.31,  82.41] }  // turn back home
   ];
+  var T_STAB_A = [2, 6, 10, 14]; // straight offbeat 8ths
+  var T_STAB_B = [2, 6, 10, 13]; // syncopated; 13 anticipates the next chord
+
+  // Race: minor stab voicings, 808 roots, sparse stab placements
+  var R_CH = {
+    Am: [220.00, 261.63, 329.63], // A3 C4 E4
+    F:  [174.61, 220.00, 261.63], // F3 A3 C4
+    G:  [196.00, 246.94, 293.66], // G3 B3 D4
+    E:  [164.81, 207.65, 246.94]  // E3 G#3 B3 — V turnaround tension
+  };
+  var RACE_BARS = [
+    { root: 55.00, chord: R_CH.Am, stabs: [4] },
+    { root: 55.00, chord: R_CH.Am, stabs: [] },
+    { root: 55.00, chord: R_CH.Am, stabs: [4, 11] },
+    { root: 55.00, chord: R_CH.Am, stabs: [] },
+    { root: 43.65, chord: R_CH.F,  stabs: [4] },
+    { root: 43.65, chord: R_CH.F,  stabs: [11] },
+    { root: 49.00, chord: R_CH.G,  stabs: [4] },
+    { root: 41.20, chord: R_CH.E,  stabs: [8, 10, 12] } // turnaround fill
+  ];
+  var R_808 = [0, 3, 6, 8, 11, 14]; // syncopated sub pattern (6/14 jump octave)
 
   function trackSource(src) {
     music.sources.push(src);
@@ -665,6 +706,13 @@
     };
   }
 
+  function killSources(list) {
+    for (var i = 0; i < list.length; i++) {
+      try { list[i].onended = null; list[i].stop(); } catch (e) { /* ignore */ }
+      try { list[i].disconnect(); } catch (e) { /* ignore */ }
+    }
+  }
+
   function ensureMusicBuses() {
     if (music.bus) return;
     music.bus = gain(EPS);
@@ -672,7 +720,7 @@
 
     music.padFilter = ctx.createBiquadFilter();
     music.padFilter.type = 'lowpass';
-    music.padFilter.frequency.value = 1400;
+    music.padFilter.frequency.value = 2200;
     music.padFilter.Q.value = 0.4;
     music.padGain = gain(0.55);
     music.padFilter.connect(music.padGain);
@@ -691,11 +739,39 @@
     music.hatGain = gain(0.5);
     music.hatFilter.connect(music.hatGain);
     music.hatGain.connect(music.bus);
+
+    music.kickGain = gain(0.8);
+    music.kickGain.connect(music.bus);
   }
 
-  function padChord(freqs, t, dur) {
+  // Per-mode tempo / mix / tone. Called with the bus near-silent.
+  function applyMode(mode) {
+    if (mode === 'race') {
+      music.stepDur = 60 / RACE_BPM / 4;
+      music.level = 0.20;                      // over quiet engines, under SFX
+      music.padFilter.frequency.value = 1000;  // darker stabs
+      music.padGain.gain.value = 0.6;
+      music.bassFilter.frequency.value = 380;  // pure 808 sub
+      music.bassGain.gain.value = 0.9;
+      music.hatGain.gain.value = 0.65;
+      music.kickGain.gain.value = 1.0;
+    } else {
+      music.stepDur = 60 / TITLE_BPM / 4;
+      music.level = 0.16;
+      music.padFilter.frequency.value = 2200;  // warm piano brightness
+      music.padGain.gain.value = 0.55;
+      music.bassFilter.frequency.value = 700;
+      music.bassGain.gain.value = 0.8;
+      music.hatGain.gain.value = 0.5;
+      music.kickGain.gain.value = 0.8;
+    }
+    music.stepsTotal = 128; // both loops: 8 bars of 16 steps
+  }
+
+  // Airy pad swell: slow-attack detuned triangles through the pad lowpass
+  function swellPad(freqs, t, dur, lvl) {
     for (var i = 0; i < freqs.length; i++) {
-      for (var d = -4; d <= 4; d += 8) {
+      for (var d = -5; d <= 5; d += 10) {
         var o = ctx.createOscillator();
         o.type = 'triangle';
         o.frequency.value = freqs[i];
@@ -703,16 +779,42 @@
         var g = gain(0);
         o.connect(g); g.connect(music.padFilter);
         g.gain.setValueAtTime(EPS, t);
-        g.gain.linearRampToValueAtTime(0.045, t + 0.6);
-        g.gain.setValueAtTime(0.045, t + dur - 0.5);
-        g.gain.linearRampToValueAtTime(EPS, t + dur + 0.6);
-        o.start(t); o.stop(t + dur + 0.7);
+        g.gain.linearRampToValueAtTime(lvl, t + dur * 0.45);
+        g.gain.linearRampToValueAtTime(EPS, t + dur);
+        o.start(t); o.stop(t + dur + 0.1);
         trackSource(o);
         cleanupOnEnd(o, [o, g]);
       }
     }
   }
 
+  // Chord stab: detuned saw/triangle stack, fast attack, exp decay.
+  // brass=false → gospel piano flavor; brass=true → dark race brass.
+  function stabChord(freqs, t, dur, lvl, brass) {
+    for (var i = 0; i < freqs.length; i++) {
+      var o1 = ctx.createOscillator();
+      o1.type = 'sawtooth';
+      o1.frequency.value = freqs[i];
+      o1.detune.value = brass ? -9 : -6;
+      var o2 = ctx.createOscillator();
+      o2.type = brass ? 'sawtooth' : 'triangle';
+      o2.frequency.value = freqs[i];
+      o2.detune.value = brass ? 9 : 5;
+      var g1 = gain(brass ? 0.5 : 0.30), g2 = gain(brass ? 0.5 : 0.75);
+      var g = gain(0);
+      o1.connect(g1); o2.connect(g2); g1.connect(g); g2.connect(g);
+      g.connect(music.padFilter);
+      g.gain.setValueAtTime(EPS, t);
+      g.gain.linearRampToValueAtTime(lvl, t + 0.005);
+      g.gain.exponentialRampToValueAtTime(EPS, t + dur);
+      o1.start(t); o2.start(t);
+      o1.stop(t + dur + 0.05); o2.stop(t + dur + 0.05);
+      trackSource(o1);
+      cleanupOnEnd(o1, [o1, o2, g1, g2, g]);
+    }
+  }
+
+  // Round walking bass (title): triangle + sine an octave blend
   function bassNote(f, t, dur, lvl) {
     var o1 = ctx.createOscillator(); o1.type = 'triangle'; o1.frequency.value = f;
     var o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = f;
@@ -730,33 +832,94 @@
     cleanupOnEnd(o1, [o1, o2, g, g2]);
   }
 
-  function hatTick(t, accent) {
+  // 808-style sub (race): sine with a quick pitch drop and long-ish decay
+  function bass808(f, t, dur, lvl) {
+    var o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(f * 2.2, t);
+    o.frequency.exponentialRampToValueAtTime(f, t + 0.04);
+    var g = gain(0);
+    o.connect(g); g.connect(music.bassFilter);
+    g.gain.setValueAtTime(EPS, t);
+    g.gain.linearRampToValueAtTime(lvl, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(EPS, t + dur);
+    o.start(t); o.stop(t + dur + 0.05);
+    trackSource(o);
+    cleanupOnEnd(o, [o, g]);
+  }
+
+  // Four-on-the-floor kick: sine drop. hard=true for the race loop.
+  function kick(t, hard) {
+    var o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(hard ? 165 : 120, t);
+    o.frequency.exponentialRampToValueAtTime(hard ? 50 : 44, t + 0.085);
+    var g = gain(0);
+    o.connect(g); g.connect(music.kickGain);
+    g.gain.setValueAtTime(EPS, t);
+    g.gain.linearRampToValueAtTime(hard ? 0.85 : 0.5, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(EPS, t + (hard ? 0.24 : 0.18));
+    o.start(t); o.stop(t + 0.3);
+    trackSource(o);
+    cleanupOnEnd(o, [o, g]);
+  }
+
+  function hatTick(t, accent, dec) {
     var src = ctx.createBufferSource();
     src.buffer = noiseBuffer('white');
     src.playbackRate.value = 1.4;
     var g = gain(0);
     src.connect(g); g.connect(music.hatFilter);
     var peak = accent ? 0.055 : 0.025;
+    var d = dec || 0.055;
     g.gain.setValueAtTime(EPS, t);
     g.gain.linearRampToValueAtTime(peak, t + 0.004);
-    g.gain.exponentialRampToValueAtTime(EPS, t + 0.055);
-    src.start(t); src.stop(t + 0.08);
+    g.gain.exponentialRampToValueAtTime(EPS, t + d);
+    src.start(t); src.stop(t + d + 0.03);
     trackSource(src);
     cleanupOnEnd(src, [src, g]);
   }
 
-  function scheduleStep(step, t) {
-    var bar = BARS[(step / 16) | 0];
-    var s = step % 16;
-    if (s === 0) {
-      padChord(bar.chord, t, 16 * STEP_DUR);
-      bassNote(bar.bass, t, 1.05, 0.20);
-    } else if (s === 8) {
-      bassNote(bar.bass, t, 0.75, 0.16);
-    } else if (s === 14) {
-      bassNote(bar.bass * 1.4983, t, 0.30, 0.10); // fifth as a soft pickup
+  function scheduleTitleStep(step, t) {
+    var bar = (step / 16) | 0, s = step % 16;
+    var B = TITLE_BARS[bar];
+    // Soft four-on-the-floor + walking bass quarters
+    if (s % 4 === 0) {
+      kick(t, false);
+      bassNote(B.walk[s / 4], t, music.stepDur * 3.4, 0.24);
     }
-    if (s % 2 === 0) hatTick(t, s % 8 === 4);
+    // Gospel piano stabs on the offbeats; odd bars anticipate the next chord
+    var pat = (bar % 2) ? T_STAB_B : T_STAB_A;
+    if (pat.indexOf(s) >= 0) {
+      var ch = (s === 13) ? TITLE_BARS[(bar + 1) % 8].chord : B.chord;
+      stabChord(ch, t, 0.24, 0.11, false);
+    }
+    // Airy swell twice per loop (bars 0 and 4), a bar and a half long
+    if (s === 0 && (bar === 0 || bar === 4)) {
+      swellPad(B.chord, t, 24 * music.stepDur, 0.035);
+    }
+    // Offbeat-accented hats on 8ths
+    if (s % 2 === 0) hatTick(t, s % 4 === 2, s % 4 === 2 ? 0.09 : 0.05);
+  }
+
+  function scheduleRaceStep(step, t) {
+    var bar = (step / 16) | 0, s = step % 16;
+    var B = RACE_BARS[bar];
+    // Hard four-on-the-floor
+    if (s % 4 === 0) kick(t, true);
+    // Syncopated 808 subs; steps 6/14 jump the octave
+    if (R_808.indexOf(s) >= 0) {
+      var f = (s === 6 || s === 14) ? B.root * 2 : B.root;
+      bass808(f, t, 0.32, s % 8 === 0 ? 0.55 : 0.42);
+    }
+    // Sparse dark brass stabs
+    if (B.stabs.indexOf(s) >= 0) stabChord(B.chord, t, 0.16, 0.14, true);
+    // Energetic hats: offbeat 8ths accented, 16th fills on bars 3 and 7
+    if (s % 2 === 0) hatTick(t, s % 4 === 2, s % 4 === 2 ? 0.11 : 0.05);
+    else if ((bar === 3 || bar === 7) && s >= 11) hatTick(t, false, 0.04);
+  }
+
+  function scheduleStep(step, t) {
+    if (music.mode === 'race') scheduleRaceStep(step, t);
+    else scheduleTitleStep(step, t);
   }
 
   function schedulerTick() {
@@ -764,27 +927,15 @@
     var ahead = ctx.currentTime + 0.2; // schedule 200ms ahead
     while (music.nextTime < ahead) {
       scheduleStep(music.step, music.nextTime);
-      music.nextTime += STEP_DUR;
-      music.step = (music.step + 1) % STEPS_TOTAL;
+      music.nextTime += music.stepDur;
+      music.step = (music.step + 1) % music.stepsTotal;
     }
   }
 
-  function doSetMusic(on) {
-    if (on) {
-      if (!ready()) return;
-      ensureMusicBuses();
-      if (music.playing) return;
-      music.playing = true;
-      music.step = 0;
-      music.nextTime = ctx.currentTime + 0.06;
-      var t = now();
-      music.bus.gain.cancelScheduledValues(t);
-      music.bus.gain.setValueAtTime(Math.max(music.bus.gain.value, EPS), t);
-      music.bus.gain.linearRampToValueAtTime(MUSIC_LEVEL, t + 0.8); // fade in
-      schedulerTick();
-      music.interval = setInterval(schedulerTick, 100);
-    } else {
-      if (!music.playing) return;
+  // Shared start/stop for both loops. Idempotent; switching stops the other.
+  function doSetMode(mode, on) {
+    if (!on) {
+      if (!music.playing || music.mode !== mode) return; // off is a no-op unless this loop plays
       music.playing = false;
       if (music.interval) { clearInterval(music.interval); music.interval = null; }
       if (!ctx || !music.bus) { music.sources.length = 0; return; }
@@ -796,13 +947,39 @@
         if (music.playing) return; // restarted during the fade
         var list = music.sources.slice();
         music.sources.length = 0;
-        for (var i = 0; i < list.length; i++) {
-          try { list[i].onended = null; list[i].stop(); } catch (e) { /* ignore */ }
-          try { list[i].disconnect(); } catch (e) { /* ignore */ }
-        }
+        killSources(list);
       }, 900);
+      return;
     }
+    if (!ready()) return;
+    ensureMusicBuses();
+    if (music.playing && music.mode === mode) return; // idempotent
+    var t = now(), startAt = t + 0.06;
+    music.bus.gain.cancelScheduledValues(t);
+    music.bus.gain.setValueAtTime(Math.max(music.bus.gain.value, EPS), t);
+    if (music.playing) {
+      // Hot-switch: duck the bus, retire the other loop's scheduled notes
+      if (music.interval) { clearInterval(music.interval); music.interval = null; }
+      music.playing = false;
+      music.bus.gain.linearRampToValueAtTime(EPS, t + 0.08);
+      music.bus.gain.setValueAtTime(EPS, t + 0.09);
+      var old = music.sources.slice();
+      music.sources.length = 0;
+      setTimeout(function () { killSources(old); }, 130);
+      startAt = t + 0.14;
+    }
+    music.mode = mode;
+    applyMode(mode);
+    music.playing = true;
+    music.step = 0;
+    music.nextTime = startAt;
+    music.bus.gain.linearRampToValueAtTime(music.level, startAt + 0.7); // fade in
+    schedulerTick();
+    music.interval = setInterval(schedulerTick, 100);
   }
+
+  function doSetMusic(on) { doSetMode('title', !!on); }
+  function doSetRaceMusic(on) { if (!ctx) return; doSetMode('race', !!on); }
 
   // --------------------------------------------------------------------------
   // Public API — every method wrapped so it can never throw
@@ -832,6 +1009,7 @@
     uiSelect: safe(doUiSelect),
     finishFanfare: safe(doFinishFanfare),
     seagull: safe(doSeagull),
-    setMusic: safe(doSetMusic)
+    setMusic: safe(doSetMusic),
+    setRaceMusic: safe(doSetRaceMusic)
   };
 })();

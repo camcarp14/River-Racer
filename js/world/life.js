@@ -156,6 +156,19 @@
     // ---------- live river traffic: taxis, a tour boat, kayakers you weave past ----------
     riverCraft = [];
     const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
+    // seated torso+head riders merged into ONE vertex-colored mesh per craft.
+    // list: [{x,y,z,col,yaw}] with y = seat surface
+    function paxMesh(list) {
+      const parts = [];
+      for (const p of list) {
+        const t = RR.City.tintGeom(new THREE.BoxGeometry(0.36, 0.52, 0.26), p.col, 0.15, rng);
+        if (p.yaw) t.rotateY(p.yaw);
+        t.translate(p.x, p.y + 0.26, p.z); parts.push(t);
+        const h = RR.City.tintGeom(new THREE.SphereGeometry(0.14, 6, 5), 0xc9946a, 0.2, rng);
+        h.translate(p.x, p.y + 0.62, p.z); parts.push(h);
+      }
+      return new THREE.Mesh(RR.City.mergeGeoms(parts), RR.City.flatMaterial());
+    }
     function craftMesh(kind) {
       const g = new THREE.Group();
       if (kind === 'kayak') {
@@ -179,9 +192,19 @@
         for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getZ(i)) > L * 0.42) hp.setX(i, hp.getX(i) * 0.4); }
         hull.geometry.computeVertexNormals(); hull.position.y = 0.55; g.add(hull);
         const stripe = new THREE.Mesh(new THREE.BoxGeometry(W + 0.06, 0.34, L - 1.2), mat(0x141414)); stripe.position.y = 1.28; g.add(stripe);
-        const cabin = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 1.5, L - 3.2), mat(0xf2c200)); cabin.position.set(0, 2.25, -0.4); g.add(cabin);
-        const win = new THREE.Mesh(new THREE.BoxGeometry(W - 0.44, 0.7, L - 3.6), mat(0x10202b)); win.position.set(0, 2.35, -0.4); g.add(win);
+        // cabin: solid sill + header with a see-through window band between them
+        const cabin = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 0.62, L - 3.2), mat(0xf2c200)); cabin.position.set(0, 1.81, -0.4); g.add(cabin);
+        const header = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 0.28, L - 3.2), mat(0xf2c200)); header.position.set(0, 2.86, -0.4); g.add(header);
+        const win = new THREE.Mesh(new THREE.BoxGeometry(W - 0.56, 0.62, L - 3.26),
+          new THREE.MeshLambertMaterial({ color: 0x10202b, transparent: true, opacity: 0.55 }));
+        win.position.set(0, 2.42, -0.4); g.add(win);
         const roof = new THREE.Mesh(new THREE.BoxGeometry(W - 0.3, 0.18, L - 3.0), mat(0x141414)); roof.position.set(0, 3.05, -0.4); g.add(roof);
+        // helmsman silhouette behind the windscreen + commuters, heads in the glass band
+        const pax = [{ x: 0.85, y: 1.88, z: 2.75, col: 0x23303a, yaw: 0 }];
+        for (let i = 0, n = 3 + (rng() * 2 | 0); i < n; i++)
+          pax.push({ x: (i % 2 ? -1 : 1) * (0.55 + rng() * 0.55), y: 1.85, z: -2.3 + i * 1.35,
+            col: SHIRTS[(rng() * SHIRTS.length) | 0], yaw: (rng() - 0.5) * 0.6 });
+        g.add(paxMesh(pax));
       } else {
         // Wendella architecture tour boat — WHITE hull, blue trim, windowed lower lounge,
         // open upper deck of seats under a canopy, forward wheelhouse
@@ -194,9 +217,16 @@
         const lounge = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 1.3, L - 4.5), mat(0xeceae2)); lounge.position.set(0, 2.2, -0.3); g.add(lounge);
         const lwin = new THREE.Mesh(new THREE.BoxGeometry(W - 0.44, 0.55, L - 5), mat(0x14252f)); lwin.position.set(0, 2.25, -0.3); g.add(lwin);
         const upper = new THREE.Mesh(new THREE.BoxGeometry(W - 0.6, 0.22, L - 4.5), mat(0xdedad0)); upper.position.set(0, 3.0, -0.3); g.add(upper);
+        const pax = [];
         for (let zz = -L * 0.32; zz <= L * 0.28; zz += 1.6) {
           const bench = new THREE.Mesh(new THREE.BoxGeometry(W - 1.2, 0.35, 0.5), mat(0x27548f)); bench.position.set(0, 3.35, zz); g.add(bench);
+          // sightseers: mostly facing forward, a few twisted toward the banks
+          for (const sx of [-1, 1]) if (pax.length < 16 && rng() < 0.85)
+            pax.push({ x: sx * (0.5 + rng() * 1.35), y: 3.53, z: zz + 0.05,
+              col: SHIRTS[(rng() * SHIRTS.length) | 0],
+              yaw: rng() < 0.18 ? (rng() < 0.5 ? 1.5 : -1.5) : (rng() - 0.5) * 0.5 });
         }
+        g.add(paxMesh(pax));
         const awn = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 0.14, L - 8), mat(0x2a5aa0)); awn.position.set(0, 4.5, -0.3); g.add(awn);
         for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
           const p = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.5, 5), mat(0xd7d3c8));
