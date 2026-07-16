@@ -137,6 +137,18 @@ const LANDMARKS = [
   { name: 'Swissôtel', lat: 41.8877, lon: -87.6196, kind: 'swissotel', h: 140, w: 55, d: 55, c: 0xaebfca },
   { name: 'Aqua Tower', lat: 41.8860, lon: -87.6203, kind: 'aqua', h: 262, w: 60, d: 30, c: 0xdfe5e8 },
   { name: 'St. Regis Chicago', lat: 41.8867, lon: -87.6185, kind: 'stregis', h: 363, w: 68, d: 30, c: 0x5d8a96 },
+  // East skyline wall — the Randolph St corridor seen from the lake and the river mouth
+  { name: 'Aon Center', lat: 41.8853, lon: -87.6216, kind: 'aon', h: 346, w: 58, d: 58, c: 0xe8e6e0 },
+  { name: 'One Prudential Plaza', lat: 41.8858, lon: -87.6244, kind: 'pru1', h: 183, w: 80, d: 30, c: 0xcfc8b4 },
+  { name: 'Two Prudential Plaza', lat: 41.8853, lon: -87.6232, kind: 'pru2', h: 275, w: 46, d: 46, c: 0xd8d2c6 },
+  { name: 'Blue Cross Blue Shield Tower', lat: 41.8848, lon: -87.6221, kind: 'boxglass', h: 227, w: 70, d: 32, c: 0x4d708c },
+  // Streeterville / N Michigan — the wall between the river mouth and the pier root
+  { name: 'John Hancock Center', lat: 41.8988, lon: -87.6228, kind: 'hancock', h: 344, w: 80, d: 50, c: 0x1a1d22 },
+  { name: 'Onterie Center', lat: 41.8925, lon: -87.6178, kind: 'onterie', h: 174, w: 55, d: 30, c: 0x9a938a },
+  { name: 'Lake Shore Place', lat: 41.8935, lon: -87.6141, kind: 'boxstone', h: 104, w: 115, d: 42, c: 0xcabb9e },
+  { name: '400 N Lake Shore Dr North', lat: 41.8898, lon: -87.6152, kind: 'boxglass', h: 120, w: 36, d: 30, c: 0xafc3cf },
+  { name: '400 N Lake Shore Dr South', lat: 41.8894, lon: -87.6152, kind: 'boxglass', h: 114, w: 36, d: 30, c: 0xafc3cf },
+  { name: 'North Pier Apartments', lat: 41.8908, lon: -87.6133, kind: 'boxglass', h: 100, w: 42, d: 34, c: 0x8e9aa4 },
   // South Branch, south → north
   { name: 'River City', lat: 41.8686, lon: -87.6342, kind: 'boxstone', h: 35, w: 120, d: 30, c: 0xb8b2a6 },
   { name: 'Willis Tower', lat: 41.8789, lon: -87.6358, kind: 'willis', h: 442, w: 68, d: 68, c: 0x323842 },

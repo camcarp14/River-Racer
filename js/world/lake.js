@@ -130,9 +130,12 @@
     boxAt(geoms, 16, 4, 16, carX, 3.2 + 2, carZ, 0xd8cbb0);
     const canopy = new THREE.ConeGeometry(9, 5, 12); canopy.translate(carX, 3.2 + 8, carZ);
     RR.City.tintGeom(canopy, 0xcf4436, 0, rng); geoms.push(canopy);                                                            // carousel canopy
-    const fring = new THREE.TorusGeometry(14, 2, 6, 20); fring.rotateX(Math.PI / 2);
-    fring.translate(np.root.x - pux * 30, GY + 1, np.root.z - puz * 30);
-    RR.City.tintGeom(fring, 0x9aa7b0, 0, rng); geoms.push(fring);                                                              // Gateway fountain ring
+    const fring = new THREE.TorusGeometry(14, 1.4, 6, 20); fring.rotateX(Math.PI / 2);
+    fring.translate(np.root.x - pux * 30, GY + 0.35, np.root.z - puz * 30);
+    RR.City.tintGeom(fring, 0x9aa7b0, 0, rng); geoms.push(fring);                                                              // Gateway fountain rim
+    const fpool = new THREE.CircleGeometry(13.4, 20); fpool.rotateX(-Math.PI / 2);
+    fpool.translate(np.root.x - pux * 30, GY + 0.55, np.root.z - puz * 30);
+    RR.City.tintGeom(fpool, 0x3f7f96, 0, rng); geoms.push(fpool);                                                              // pool inside the rim
     for (let i = 1; i < 10; i++) {                                                                                             // promenade string-light poles
       const f = i / 10, bx = np.root.x + pux * plen * f, bz = np.root.z + puz * plen * f;
       for (const s of [-1, 1]) {
@@ -294,6 +297,138 @@
       if (RR.City.landClearance(wx, z0) < 14 || RR.City.landClearance(wx, zc) < 14 ||
           RR.City.landClearance(wx, z0 + 40) < 14) continue;
       boxAt(geoms2, 9, CGY + 1.4, 40.4, wx, (CGY + 1.4) / 2 - 0.8, zc, 0x9a988e);
+    }
+
+    // ---------- Milton Lee Olive Park: five circular fountain basins on a promenade ----------
+    // The park's real signature is a formal walk lined with five round fountain pools.
+    function slabTree(x, z, s) {
+      const trunk = new THREE.CylinderGeometry(0.22 * s, 0.32 * s, 2.6 * s, 5);
+      trunk.translate(x, GY + 1.3 * s, z);
+      RR.City.tintGeom(trunk, 0x4a3524, 0, rng); geoms2.push(trunk);
+      const crown = new THREE.SphereGeometry((2.0 + rng() * 1.4) * s, 7, 6);
+      crown.scale(1, 0.82, 1); crown.translate(x, GY + (3.9 + rng()) * s, z);
+      RR.City.tintGeom(crown, 0x3f7238, 0.12, rng); geoms2.push(crown);
+    }
+    boxAt(geoms2, 8, 0.08, 330, 2005, GY + 0.06, -745, 0xcfc7b0);   // promenade strip
+    boxAt(geoms2, 6, 0.08, 70, 2015, GY + 0.06, -555, 0xcfc7b0);    // connector toward the beach
+    const basins = [[-610, 8.5], [-678, 7], [-746, 7], [-814, 6], [-882, 6]];
+    for (const [fz, fr] of basins) {
+      const apron = new THREE.CircleGeometry(fr + 2.5, 22);
+      apron.rotateX(-Math.PI / 2); apron.translate(2005, GY + 0.12, fz);
+      RR.City.tintGeom(apron, 0xc9c2ae, 0.05, rng); geoms2.push(apron);
+      const rim = new THREE.TorusGeometry(fr, 0.9, 6, 22);
+      rim.rotateX(Math.PI / 2); rim.translate(2005, GY + 0.45, fz);
+      RR.City.tintGeom(rim, 0xd6d0c0, 0.05, rng); geoms2.push(rim);
+      const pool = new THREE.CircleGeometry(fr - 1.0, 20);
+      pool.rotateX(-Math.PI / 2); pool.translate(2005, GY + 0.32, fz);
+      RR.City.tintGeom(pool, 0x2e8fa3, 0.06, rng); geoms2.push(pool);
+    }
+    for (let i = 0; i < 4; i++) {                                    // promenade lamps between the pools
+      const lz = basins[i][0] - 34;
+      boxAt(geoms2, 0.4, 4.6, 0.4, 2014, GY + 2.3, lz, 0x555a60);
+      if (RR.Theme) RR.Theme.addLamp(2014, GY + 4.8, lz, 0xffe6b0);
+    }
+    // ~30 trees scattered across the slab, clear of the promenade, beach and pier root
+    let planted = 0;
+    for (let tries = 0; tries < 160 && planted < 30; tries++) {
+      const tx2 = 1885 + rng() * 280, tz2 = -955 + rng() * 790;
+      if (tx2 > 1975 && tx2 < 2125 && tz2 > -530 && tz2 < -410) continue;      // Ohio St Beach
+      if (Math.abs(tx2 - 2005) < 15 && tz2 < -560 && tz2 > -930) continue;     // fountain promenade
+      if (tx2 > 2085 && tz2 > -480 && tz2 < -300) continue;                    // pier root / Gateway fountain
+      if (tz2 > -165 || tx2 > 2165) continue;                                  // seawall trail edges
+      slabTree(tx2, tz2, 0.8 + rng() * 0.5);
+      planted++;
+    }
+
+    // ---------- Ohio Street Beach: sand wedge in the cove NW of the pier root ----------
+    const sand = new THREE.Shape();                                  // shape (x, -z) → rotateX(-90°) lies flat, +y up
+    sand.moveTo(1980, 455); sand.lineTo(2118, 420); sand.lineTo(2118, 520); sand.lineTo(2000, 520);
+    const sandG = new THREE.ShapeGeometry(sand);
+    sandG.rotateX(-Math.PI / 2); sandG.translate(0, GY + 0.1, 0);
+    RR.City.tintGeom(sandG, 0xd9c79c, 0.05, rng); geoms2.push(sandG);
+    const umbCols = [0xe0533f, 0xf2b636, 0x3f8fd0, 0x59b06a, 0xe07a9e, 0xe0533f, 0xf2b636];
+    for (let i = 0; i < 7; i++) {                                    // beach umbrellas: thin pole + cone
+      const ux2 = 2025 + rng() * 80, uz2 = -500 + rng() * 55;
+      const pole = new THREE.CylinderGeometry(0.08, 0.08, 2.4, 5);
+      pole.translate(ux2, GY + 1.3, uz2);
+      RR.City.tintGeom(pole, 0xd8d4c8, 0, rng); geoms2.push(pole);
+      const shade = new THREE.ConeGeometry(1.8, 0.9, 8);
+      shade.translate(ux2, GY + 2.6, uz2);
+      RR.City.tintGeom(shade, umbCols[i], 0.05, rng); geoms2.push(shade);
+    }
+    for (const [gx3, gz3, gc] of [[2042, -470, 0xc98a63], [2072, -452, 0x3f6fae], [2095, -492, 0xba4a4a]]) {
+      const body = new THREE.CylinderGeometry(0.26, 0.3, 1.1, 6);    // a couple of static beach figures
+      body.translate(gx3, GY + 0.65, gz3);
+      RR.City.tintGeom(body, gc, 0, rng); geoms2.push(body);
+      const head = new THREE.SphereGeometry(0.22, 6, 5);
+      head.translate(gx3, GY + 1.4, gz3);
+      RR.City.tintGeom(head, 0xd8b190, 0, rng); geoms2.push(head);
+    }
+
+    // ---------- DuSable Harbor: dock fingers + moored boats south of the mouth ----------
+    // min clearance from BOTH race corridors (lakeGuide + lakeLoop): >0 means safely outside
+    const basinClear = (x, z) => {
+      const a = U().pathNearest(RR.River.paths.lakeGuide, x, z);
+      const b = U().pathNearest(RR.River.paths.lakeLoop, x, z);
+      return Math.min(a.dist - a.w - 15, b.dist - b.w - 15);
+    };
+    const hullCols = [0x2b4a6b, 0x6b2b2b, 0xdfe0e2, 0x3a5a45, 0x8a3a2a];
+    const dockX0 = 1932, dockLen = 80;
+    for (const dz of [130, 230, 330]) {
+      if (basinClear(dockX0, dz) <= 0 || basinClear(dockX0 + dockLen, dz) <= 0) continue;
+      const deckG = new THREE.BoxGeometry(dockLen + 4, 0.7, 3.2);    // finger deck off the seawall
+      deckG.translate(dockX0 + dockLen / 2, 0.85, dz);
+      RR.City.tintGeom(deckG, 0x8a7c62, 0.08, rng); geoms2.push(deckG);
+      for (let d = 4; d <= dockLen; d += 14) {                       // pilings under the deck
+        for (const s of [-1, 1]) {
+          const pile = new THREE.CylinderGeometry(0.3, 0.38, 2.4, 5);
+          pile.translate(dockX0 + d, 0.5, dz + s * 1.4);
+          RR.City.tintGeom(pile, 0x4a3c2c, 0.08, rng); geoms2.push(pile);
+        }
+      }
+      RR.River.addObstacle(dockX0 + dockLen + 2, dz, 4);             // boats can't clip the finger tip
+      for (let k = 0; k < 7; k++) {                                  // moored boats between the fingers
+        const mbx = dockX0 + 12 + k * 11, side = (k % 2) ? 1 : -1, mbz = dz + side * 5.4;
+        if (basinClear(mbx, mbz) <= 0) continue;
+        const sc = 0.55 + rng() * 0.3;
+        const hull = new THREE.BoxGeometry(6.5 * sc, 1.1 * sc, 2.3 * sc);
+        const hp = hull.attributes.position;
+        for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getX(i)) > 2.4 * sc) hp.setZ(i, hp.getZ(i) * 0.35); }
+        hull.computeVertexNormals();
+        hull.translate(mbx, 0.55 * sc, mbz);
+        RR.City.tintGeom(hull, hullCols[(k + (dz / 10 | 0)) % hullCols.length], 0.06, rng); geoms2.push(hull);
+        if (k % 3 !== 2) {                                           // most are sailboats, some motorboats
+          const mast = new THREE.CylinderGeometry(0.09 * sc, 0.11 * sc, 9 * sc, 5);
+          mast.translate(mbx, 5 * sc, mbz);
+          RR.City.tintGeom(mast, 0xcfcabc, 0, rng); geoms2.push(mast);
+        } else {
+          boxAt(geoms2, 2.2 * sc, 0.9 * sc, 1.6 * sc, mbx - 0.6 * sc, 1.4 * sc, mbz, 0xe8e4d8);
+        }
+      }
+    }
+    // small harbor office on the shore behind the seawall
+    const hoX = 1896, hoZ = 230;
+    if (RR.City.landClearance(hoX, hoZ) > 6) {
+      boxAt(geoms2, 15, 5.4, 9, hoX, CGY + 2.7, hoZ, 0x99a5ad);
+      boxAt(geoms2, 16, 0.7, 10, hoX, CGY + 5.75, hoZ, 0x5b656d);    // flat roof cap
+      boxAt(geoms2, 1.6, 2.6, 0.4, hoX + 7.5, CGY + 1.3, hoZ, 0x2c3a44);  // door on the harbor side
+      boxAt(geoms2, 0.4, 4.6, 0.4, hoX + 10, CGY + 2.3, hoZ + 8, 0x555a60);
+      if (RR.Theme) RR.Theme.addLamp(hoX + 10, CGY + 4.8, hoZ + 8, 0xffe6b0);
+    }
+
+    // ---------- seawall trail along the Streeterville shore: mouth → pier root ----------
+    // south edge of the slab (z=-135) then north up the east edge (x=2186) to the pier
+    boxAt(geoms2, 252, 0.08, 3.5, 2055, GY + 0.06, -142.5, 0xb9ac92);        // south trail strip
+    boxAt(geoms2, 256, 0.9, 1.3, 2056, GY + 0.45, -136.8, 0x9a988e);         // south low seawall lip
+    boxAt(geoms2, 3.5, 0.08, 185, 2180.5, GY + 0.06, -232, 0xb9ac92);        // east trail strip
+    boxAt(geoms2, 1.3, 0.9, 190, 2184.6, GY + 0.45, -230, 0x9a988e);         // east low seawall lip
+    for (const sx of [1950, 2010, 2070, 2130]) {
+      boxAt(geoms2, 0.4, 4.6, 0.4, sx, GY + 2.3, -145, 0x555a60);
+      if (RR.Theme) RR.Theme.addLamp(sx, GY + 4.8, -145, 0xffe6b0);
+    }
+    for (const sz of [-180, -240, -300]) {
+      boxAt(geoms2, 0.4, 4.6, 0.4, 2178, GY + 2.3, sz, 0x555a60);
+      if (RR.Theme) RR.Theme.addLamp(2178, GY + 4.8, sz, 0xffe6b0);
     }
 
     const mesh = new THREE.Mesh(RR.City.mergeGeoms(geoms), RR.City.flatMaterial());

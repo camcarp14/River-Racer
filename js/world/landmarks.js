@@ -169,6 +169,76 @@
       }
     },
 
+    // Aon Center: sheer white-granite shaft — dense full-height vertical ribs on the
+    // lake-facing (east) and river-facing (north) faces catch the light like the real fluting
+    aon(l, glass, flat) {
+      glass.push(box(l.w, l.h, l.d, l.x, GY(), l.z, l.c));
+      const ribs = 10, RB = 0xf2f0ea;
+      for (let i = 0; i < ribs; i++) {
+        const o = -l.w / 2 + (i + 0.5) * (l.w / ribs);
+        flat.push(box(0.9, l.h, 1.1, l.x + o, GY(), l.z - l.d / 2, RB));   // north face → river mouth
+        flat.push(box(1.1, l.h, 0.9, l.x + l.w / 2, GY(), l.z + o, RB));   // east face → the lake
+      }
+      flat.push(box(l.w * 0.5, 3.5, l.d * 0.5, l.x, GY() + l.h, l.z, 0xb9b6ae));
+    },
+
+    // One Prudential: mid-century limestone slab, recessed crown floors + the tall TV mast
+    pru1(l, glass, flat) {
+      glass.push(box(l.w, l.h * 0.94, l.d, l.x, GY(), l.z, l.c));
+      glass.push(box(l.w * 0.84, l.h, l.d * 0.84, l.x, GY(), l.z, l.c));
+      flat.push(box(l.w * 0.2, 4, l.d * 0.5, l.x, GY() + l.h, l.z, 0x8f8672)); // mechanical block
+      flat.push(cyl(0.7, 1.5, 92, 6, l.x, GY() + l.h, l.z, 0xd8dadd));         // mast to ~275m
+    },
+
+    // Two Prudential: chevron setbacks stepping ever narrower, then the famous
+    // 45°-rotated pyramid peak and needle spire
+    pru2(l, glass, flat) {
+      const tiers = [[1, 0, 0.52], [0.84, 0.52, 0.7], [0.68, 0.7, 0.84], [0.52, 0.84, 0.94], [0.38, 0.94, 1]];
+      for (const [s, f0, f1] of tiers) {
+        glass.push(box(l.w * s, l.h * (f1 - f0), l.d * s, l.x, GY() + l.h * f0, l.z, l.c));
+      }
+      const pyr = new THREE.ConeGeometry(l.w * 0.27, 16, 4);
+      pyr.rotateY(Math.PI / 4);
+      flat.push(solid(pyr, l.x, GY() + l.h + 8, l.z, 0xe0dacd));
+      flat.push(cyl(0.35, 0.9, 24, 6, l.x, GY() + l.h + 14, l.z, 0xcfd3d8));   // tip ≈ 303m real
+    },
+
+    // Hancock: black tapered obelisk — stacked narrowing boxes with light X-braces
+    // on the lake (east) and river-facing (south) faces, twin white antennas
+    hancock(l, glass, flat) {
+      const secs = [[1, 1, 0, 0.3], [0.84, 0.86, 0.3, 0.57], [0.68, 0.72, 0.57, 0.81], [0.52, 0.6, 0.81, 1]];
+      const BR = 0xb9bec4;
+      for (const [sw, sd, f0, f1] of secs) {
+        const w = l.w * sw, d = l.d * sd, y0 = GY() + l.h * f0, hh = l.h * (f1 - f0);
+        glass.push(box(w, hh, d, l.x, y0, l.z, l.c));
+        const aS = Math.atan2(w * 0.9, hh), dS = Math.hypot(w * 0.9, hh);   // south-face X (±~35°)
+        const aE = Math.atan2(d * 0.9, hh), dE = Math.hypot(d * 0.9, hh);   // east-face X
+        for (const s of [-1, 1]) {
+          const gS = new THREE.BoxGeometry(1.1, dS * 0.94, 0.5);
+          gS.rotateZ(s * aS);
+          flat.push(solid(gS, l.x, y0 + hh / 2, l.z + d / 2 + 0.2, BR));
+          const gE = new THREE.BoxGeometry(0.5, dE * 0.94, 1.1);
+          gE.rotateX(s * aE);
+          flat.push(solid(gE, l.x + w / 2 + 0.2, y0 + hh / 2, l.z, BR));
+        }
+      }
+      for (const s of [-1, 1]) flat.push(cyl(0.7, 1.3, 90, 6, l.x + s * 7, GY() + l.h, l.z, 0xe8eaec));
+    },
+
+    // Onterie Center: concrete tube, X-bracing picked out in filled window bays
+    onterie(l, glass, flat) {
+      glass.push(box(l.w, l.h, l.d, l.x, GY(), l.z, l.c));
+      const hh = l.h * 0.46, a = Math.atan2(l.w * 0.88, hh), dl = Math.hypot(l.w * 0.88, hh);
+      for (let t = 0; t < 2; t++) {                       // two stacked X's, south face
+        for (const s of [-1, 1]) {
+          const g = new THREE.BoxGeometry(1.0, dl * 0.94, 0.4);
+          g.rotateZ(s * a);
+          flat.push(solid(g, l.x, GY() + hh * (t + 0.5), l.z + l.d / 2 + 0.15, 0xcfc9bd));
+        }
+      }
+      flat.push(box(l.w * 0.6, 3, l.d * 0.6, l.x, GY() + l.h, l.z, 0x87817a));
+    },
+
     // terra cotta wedding cake with corner cupolas + central dome tower
     jewelers(l, glass, flat) {
       glass.push(box(l.w, l.h * 0.55, l.d, l.x, GY(), l.z, l.c));

@@ -1350,6 +1350,126 @@ window.CHICAGO = {
    "gold": false
   },
   {
+   "name": "Aon Center",
+   "x": 696.1,
+   "z": 300.1,
+   "kind": "aon",
+   "h": 346,
+   "w": 58,
+   "d": 58,
+   "c": 15263456,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "One Prudential Plaza",
+   "x": 464.1,
+   "z": 244.5,
+   "kind": "pru1",
+   "h": 183,
+   "w": 80,
+   "d": 30,
+   "c": 13617332,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "Two Prudential Plaza",
+   "x": 563.5,
+   "z": 300.1,
+   "kind": "pru2",
+   "h": 275,
+   "w": 46,
+   "d": 46,
+   "c": 14209734,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "Blue Cross Blue Shield Tower",
+   "x": 654.7,
+   "z": 355.6,
+   "kind": "boxglass",
+   "h": 227,
+   "w": 70,
+   "d": 32,
+   "c": 5075084,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "John Hancock Center",
+   "x": 596.7,
+   "z": -1200.2,
+   "kind": "hancock",
+   "h": 344,
+   "w": 80,
+   "d": 50,
+   "c": 1711394,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "Onterie Center",
+   "x": 1011,
+   "z": -500.1,
+   "kind": "onterie",
+   "h": 174,
+   "w": 55,
+   "d": 30,
+   "c": 10130314,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "Lake Shore Place",
+   "x": 1317.7,
+   "z": -611.2,
+   "kind": "boxstone",
+   "h": 104,
+   "w": 115,
+   "d": 42,
+   "c": 13286302,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "400 N Lake Shore Dr North",
+   "x": 1226.5,
+   "z": -200,
+   "kind": "boxglass",
+   "h": 120,
+   "w": 36,
+   "d": 30,
+   "c": 11518927,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "400 N Lake Shore Dr South",
+   "x": 1226.5,
+   "z": -155.6,
+   "kind": "boxglass",
+   "h": 114,
+   "w": 36,
+   "d": 30,
+   "c": 11518927,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "North Pier Apartments",
+   "x": 1384,
+   "z": -311.2,
+   "kind": "boxglass",
+   "h": 100,
+   "w": 42,
+   "d": 34,
+   "c": 9345700,
+   "dark": false,
+   "gold": false
+  },
+  {
    "name": "River City",
    "x": -348.1,
    "z": 2156,
@@ -3648,6 +3768,76 @@ window.CHICAGO = {
       }
     },
 
+    // Aon Center: sheer white-granite shaft — dense full-height vertical ribs on the
+    // lake-facing (east) and river-facing (north) faces catch the light like the real fluting
+    aon(l, glass, flat) {
+      glass.push(box(l.w, l.h, l.d, l.x, GY(), l.z, l.c));
+      const ribs = 10, RB = 0xf2f0ea;
+      for (let i = 0; i < ribs; i++) {
+        const o = -l.w / 2 + (i + 0.5) * (l.w / ribs);
+        flat.push(box(0.9, l.h, 1.1, l.x + o, GY(), l.z - l.d / 2, RB));   // north face → river mouth
+        flat.push(box(1.1, l.h, 0.9, l.x + l.w / 2, GY(), l.z + o, RB));   // east face → the lake
+      }
+      flat.push(box(l.w * 0.5, 3.5, l.d * 0.5, l.x, GY() + l.h, l.z, 0xb9b6ae));
+    },
+
+    // One Prudential: mid-century limestone slab, recessed crown floors + the tall TV mast
+    pru1(l, glass, flat) {
+      glass.push(box(l.w, l.h * 0.94, l.d, l.x, GY(), l.z, l.c));
+      glass.push(box(l.w * 0.84, l.h, l.d * 0.84, l.x, GY(), l.z, l.c));
+      flat.push(box(l.w * 0.2, 4, l.d * 0.5, l.x, GY() + l.h, l.z, 0x8f8672)); // mechanical block
+      flat.push(cyl(0.7, 1.5, 92, 6, l.x, GY() + l.h, l.z, 0xd8dadd));         // mast to ~275m
+    },
+
+    // Two Prudential: chevron setbacks stepping ever narrower, then the famous
+    // 45°-rotated pyramid peak and needle spire
+    pru2(l, glass, flat) {
+      const tiers = [[1, 0, 0.52], [0.84, 0.52, 0.7], [0.68, 0.7, 0.84], [0.52, 0.84, 0.94], [0.38, 0.94, 1]];
+      for (const [s, f0, f1] of tiers) {
+        glass.push(box(l.w * s, l.h * (f1 - f0), l.d * s, l.x, GY() + l.h * f0, l.z, l.c));
+      }
+      const pyr = new THREE.ConeGeometry(l.w * 0.27, 16, 4);
+      pyr.rotateY(Math.PI / 4);
+      flat.push(solid(pyr, l.x, GY() + l.h + 8, l.z, 0xe0dacd));
+      flat.push(cyl(0.35, 0.9, 24, 6, l.x, GY() + l.h + 14, l.z, 0xcfd3d8));   // tip ≈ 303m real
+    },
+
+    // Hancock: black tapered obelisk — stacked narrowing boxes with light X-braces
+    // on the lake (east) and river-facing (south) faces, twin white antennas
+    hancock(l, glass, flat) {
+      const secs = [[1, 1, 0, 0.3], [0.84, 0.86, 0.3, 0.57], [0.68, 0.72, 0.57, 0.81], [0.52, 0.6, 0.81, 1]];
+      const BR = 0xb9bec4;
+      for (const [sw, sd, f0, f1] of secs) {
+        const w = l.w * sw, d = l.d * sd, y0 = GY() + l.h * f0, hh = l.h * (f1 - f0);
+        glass.push(box(w, hh, d, l.x, y0, l.z, l.c));
+        const aS = Math.atan2(w * 0.9, hh), dS = Math.hypot(w * 0.9, hh);   // south-face X (±~35°)
+        const aE = Math.atan2(d * 0.9, hh), dE = Math.hypot(d * 0.9, hh);   // east-face X
+        for (const s of [-1, 1]) {
+          const gS = new THREE.BoxGeometry(1.1, dS * 0.94, 0.5);
+          gS.rotateZ(s * aS);
+          flat.push(solid(gS, l.x, y0 + hh / 2, l.z + d / 2 + 0.2, BR));
+          const gE = new THREE.BoxGeometry(0.5, dE * 0.94, 1.1);
+          gE.rotateX(s * aE);
+          flat.push(solid(gE, l.x + w / 2 + 0.2, y0 + hh / 2, l.z, BR));
+        }
+      }
+      for (const s of [-1, 1]) flat.push(cyl(0.7, 1.3, 90, 6, l.x + s * 7, GY() + l.h, l.z, 0xe8eaec));
+    },
+
+    // Onterie Center: concrete tube, X-bracing picked out in filled window bays
+    onterie(l, glass, flat) {
+      glass.push(box(l.w, l.h, l.d, l.x, GY(), l.z, l.c));
+      const hh = l.h * 0.46, a = Math.atan2(l.w * 0.88, hh), dl = Math.hypot(l.w * 0.88, hh);
+      for (let t = 0; t < 2; t++) {                       // two stacked X's, south face
+        for (const s of [-1, 1]) {
+          const g = new THREE.BoxGeometry(1.0, dl * 0.94, 0.4);
+          g.rotateZ(s * a);
+          flat.push(solid(g, l.x, GY() + hh * (t + 0.5), l.z + l.d / 2 + 0.15, 0xcfc9bd));
+        }
+      }
+      flat.push(box(l.w * 0.6, 3, l.d * 0.6, l.x, GY() + l.h, l.z, 0x87817a));
+    },
+
     // terra cotta wedding cake with corner cupolas + central dome tower
     jewelers(l, glass, flat) {
       glass.push(box(l.w, l.h * 0.55, l.d, l.x, GY(), l.z, l.c));
@@ -4892,9 +5082,12 @@ window.CHICAGO = {
     boxAt(geoms, 16, 4, 16, carX, 3.2 + 2, carZ, 0xd8cbb0);
     const canopy = new THREE.ConeGeometry(9, 5, 12); canopy.translate(carX, 3.2 + 8, carZ);
     RR.City.tintGeom(canopy, 0xcf4436, 0, rng); geoms.push(canopy);                                                            // carousel canopy
-    const fring = new THREE.TorusGeometry(14, 2, 6, 20); fring.rotateX(Math.PI / 2);
-    fring.translate(np.root.x - pux * 30, GY + 1, np.root.z - puz * 30);
-    RR.City.tintGeom(fring, 0x9aa7b0, 0, rng); geoms.push(fring);                                                              // Gateway fountain ring
+    const fring = new THREE.TorusGeometry(14, 1.4, 6, 20); fring.rotateX(Math.PI / 2);
+    fring.translate(np.root.x - pux * 30, GY + 0.35, np.root.z - puz * 30);
+    RR.City.tintGeom(fring, 0x9aa7b0, 0, rng); geoms.push(fring);                                                              // Gateway fountain rim
+    const fpool = new THREE.CircleGeometry(13.4, 20); fpool.rotateX(-Math.PI / 2);
+    fpool.translate(np.root.x - pux * 30, GY + 0.55, np.root.z - puz * 30);
+    RR.City.tintGeom(fpool, 0x3f7f96, 0, rng); geoms.push(fpool);                                                              // pool inside the rim
     for (let i = 1; i < 10; i++) {                                                                                             // promenade string-light poles
       const f = i / 10, bx = np.root.x + pux * plen * f, bz = np.root.z + puz * plen * f;
       for (const s of [-1, 1]) {
@@ -5056,6 +5249,138 @@ window.CHICAGO = {
       if (RR.City.landClearance(wx, z0) < 14 || RR.City.landClearance(wx, zc) < 14 ||
           RR.City.landClearance(wx, z0 + 40) < 14) continue;
       boxAt(geoms2, 9, CGY + 1.4, 40.4, wx, (CGY + 1.4) / 2 - 0.8, zc, 0x9a988e);
+    }
+
+    // ---------- Milton Lee Olive Park: five circular fountain basins on a promenade ----------
+    // The park's real signature is a formal walk lined with five round fountain pools.
+    function slabTree(x, z, s) {
+      const trunk = new THREE.CylinderGeometry(0.22 * s, 0.32 * s, 2.6 * s, 5);
+      trunk.translate(x, GY + 1.3 * s, z);
+      RR.City.tintGeom(trunk, 0x4a3524, 0, rng); geoms2.push(trunk);
+      const crown = new THREE.SphereGeometry((2.0 + rng() * 1.4) * s, 7, 6);
+      crown.scale(1, 0.82, 1); crown.translate(x, GY + (3.9 + rng()) * s, z);
+      RR.City.tintGeom(crown, 0x3f7238, 0.12, rng); geoms2.push(crown);
+    }
+    boxAt(geoms2, 8, 0.08, 330, 2005, GY + 0.06, -745, 0xcfc7b0);   // promenade strip
+    boxAt(geoms2, 6, 0.08, 70, 2015, GY + 0.06, -555, 0xcfc7b0);    // connector toward the beach
+    const basins = [[-610, 8.5], [-678, 7], [-746, 7], [-814, 6], [-882, 6]];
+    for (const [fz, fr] of basins) {
+      const apron = new THREE.CircleGeometry(fr + 2.5, 22);
+      apron.rotateX(-Math.PI / 2); apron.translate(2005, GY + 0.12, fz);
+      RR.City.tintGeom(apron, 0xc9c2ae, 0.05, rng); geoms2.push(apron);
+      const rim = new THREE.TorusGeometry(fr, 0.9, 6, 22);
+      rim.rotateX(Math.PI / 2); rim.translate(2005, GY + 0.45, fz);
+      RR.City.tintGeom(rim, 0xd6d0c0, 0.05, rng); geoms2.push(rim);
+      const pool = new THREE.CircleGeometry(fr - 1.0, 20);
+      pool.rotateX(-Math.PI / 2); pool.translate(2005, GY + 0.32, fz);
+      RR.City.tintGeom(pool, 0x2e8fa3, 0.06, rng); geoms2.push(pool);
+    }
+    for (let i = 0; i < 4; i++) {                                    // promenade lamps between the pools
+      const lz = basins[i][0] - 34;
+      boxAt(geoms2, 0.4, 4.6, 0.4, 2014, GY + 2.3, lz, 0x555a60);
+      if (RR.Theme) RR.Theme.addLamp(2014, GY + 4.8, lz, 0xffe6b0);
+    }
+    // ~30 trees scattered across the slab, clear of the promenade, beach and pier root
+    let planted = 0;
+    for (let tries = 0; tries < 160 && planted < 30; tries++) {
+      const tx2 = 1885 + rng() * 280, tz2 = -955 + rng() * 790;
+      if (tx2 > 1975 && tx2 < 2125 && tz2 > -530 && tz2 < -410) continue;      // Ohio St Beach
+      if (Math.abs(tx2 - 2005) < 15 && tz2 < -560 && tz2 > -930) continue;     // fountain promenade
+      if (tx2 > 2085 && tz2 > -480 && tz2 < -300) continue;                    // pier root / Gateway fountain
+      if (tz2 > -165 || tx2 > 2165) continue;                                  // seawall trail edges
+      slabTree(tx2, tz2, 0.8 + rng() * 0.5);
+      planted++;
+    }
+
+    // ---------- Ohio Street Beach: sand wedge in the cove NW of the pier root ----------
+    const sand = new THREE.Shape();                                  // shape (x, -z) → rotateX(-90°) lies flat, +y up
+    sand.moveTo(1980, 455); sand.lineTo(2118, 420); sand.lineTo(2118, 520); sand.lineTo(2000, 520);
+    const sandG = new THREE.ShapeGeometry(sand);
+    sandG.rotateX(-Math.PI / 2); sandG.translate(0, GY + 0.1, 0);
+    RR.City.tintGeom(sandG, 0xd9c79c, 0.05, rng); geoms2.push(sandG);
+    const umbCols = [0xe0533f, 0xf2b636, 0x3f8fd0, 0x59b06a, 0xe07a9e, 0xe0533f, 0xf2b636];
+    for (let i = 0; i < 7; i++) {                                    // beach umbrellas: thin pole + cone
+      const ux2 = 2025 + rng() * 80, uz2 = -500 + rng() * 55;
+      const pole = new THREE.CylinderGeometry(0.08, 0.08, 2.4, 5);
+      pole.translate(ux2, GY + 1.3, uz2);
+      RR.City.tintGeom(pole, 0xd8d4c8, 0, rng); geoms2.push(pole);
+      const shade = new THREE.ConeGeometry(1.8, 0.9, 8);
+      shade.translate(ux2, GY + 2.6, uz2);
+      RR.City.tintGeom(shade, umbCols[i], 0.05, rng); geoms2.push(shade);
+    }
+    for (const [gx3, gz3, gc] of [[2042, -470, 0xc98a63], [2072, -452, 0x3f6fae], [2095, -492, 0xba4a4a]]) {
+      const body = new THREE.CylinderGeometry(0.26, 0.3, 1.1, 6);    // a couple of static beach figures
+      body.translate(gx3, GY + 0.65, gz3);
+      RR.City.tintGeom(body, gc, 0, rng); geoms2.push(body);
+      const head = new THREE.SphereGeometry(0.22, 6, 5);
+      head.translate(gx3, GY + 1.4, gz3);
+      RR.City.tintGeom(head, 0xd8b190, 0, rng); geoms2.push(head);
+    }
+
+    // ---------- DuSable Harbor: dock fingers + moored boats south of the mouth ----------
+    // min clearance from BOTH race corridors (lakeGuide + lakeLoop): >0 means safely outside
+    const basinClear = (x, z) => {
+      const a = U().pathNearest(RR.River.paths.lakeGuide, x, z);
+      const b = U().pathNearest(RR.River.paths.lakeLoop, x, z);
+      return Math.min(a.dist - a.w - 15, b.dist - b.w - 15);
+    };
+    const hullCols = [0x2b4a6b, 0x6b2b2b, 0xdfe0e2, 0x3a5a45, 0x8a3a2a];
+    const dockX0 = 1932, dockLen = 80;
+    for (const dz of [130, 230, 330]) {
+      if (basinClear(dockX0, dz) <= 0 || basinClear(dockX0 + dockLen, dz) <= 0) continue;
+      const deckG = new THREE.BoxGeometry(dockLen + 4, 0.7, 3.2);    // finger deck off the seawall
+      deckG.translate(dockX0 + dockLen / 2, 0.85, dz);
+      RR.City.tintGeom(deckG, 0x8a7c62, 0.08, rng); geoms2.push(deckG);
+      for (let d = 4; d <= dockLen; d += 14) {                       // pilings under the deck
+        for (const s of [-1, 1]) {
+          const pile = new THREE.CylinderGeometry(0.3, 0.38, 2.4, 5);
+          pile.translate(dockX0 + d, 0.5, dz + s * 1.4);
+          RR.City.tintGeom(pile, 0x4a3c2c, 0.08, rng); geoms2.push(pile);
+        }
+      }
+      RR.River.addObstacle(dockX0 + dockLen + 2, dz, 4);             // boats can't clip the finger tip
+      for (let k = 0; k < 7; k++) {                                  // moored boats between the fingers
+        const mbx = dockX0 + 12 + k * 11, side = (k % 2) ? 1 : -1, mbz = dz + side * 5.4;
+        if (basinClear(mbx, mbz) <= 0) continue;
+        const sc = 0.55 + rng() * 0.3;
+        const hull = new THREE.BoxGeometry(6.5 * sc, 1.1 * sc, 2.3 * sc);
+        const hp = hull.attributes.position;
+        for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getX(i)) > 2.4 * sc) hp.setZ(i, hp.getZ(i) * 0.35); }
+        hull.computeVertexNormals();
+        hull.translate(mbx, 0.55 * sc, mbz);
+        RR.City.tintGeom(hull, hullCols[(k + (dz / 10 | 0)) % hullCols.length], 0.06, rng); geoms2.push(hull);
+        if (k % 3 !== 2) {                                           // most are sailboats, some motorboats
+          const mast = new THREE.CylinderGeometry(0.09 * sc, 0.11 * sc, 9 * sc, 5);
+          mast.translate(mbx, 5 * sc, mbz);
+          RR.City.tintGeom(mast, 0xcfcabc, 0, rng); geoms2.push(mast);
+        } else {
+          boxAt(geoms2, 2.2 * sc, 0.9 * sc, 1.6 * sc, mbx - 0.6 * sc, 1.4 * sc, mbz, 0xe8e4d8);
+        }
+      }
+    }
+    // small harbor office on the shore behind the seawall
+    const hoX = 1896, hoZ = 230;
+    if (RR.City.landClearance(hoX, hoZ) > 6) {
+      boxAt(geoms2, 15, 5.4, 9, hoX, CGY + 2.7, hoZ, 0x99a5ad);
+      boxAt(geoms2, 16, 0.7, 10, hoX, CGY + 5.75, hoZ, 0x5b656d);    // flat roof cap
+      boxAt(geoms2, 1.6, 2.6, 0.4, hoX + 7.5, CGY + 1.3, hoZ, 0x2c3a44);  // door on the harbor side
+      boxAt(geoms2, 0.4, 4.6, 0.4, hoX + 10, CGY + 2.3, hoZ + 8, 0x555a60);
+      if (RR.Theme) RR.Theme.addLamp(hoX + 10, CGY + 4.8, hoZ + 8, 0xffe6b0);
+    }
+
+    // ---------- seawall trail along the Streeterville shore: mouth → pier root ----------
+    // south edge of the slab (z=-135) then north up the east edge (x=2186) to the pier
+    boxAt(geoms2, 252, 0.08, 3.5, 2055, GY + 0.06, -142.5, 0xb9ac92);        // south trail strip
+    boxAt(geoms2, 256, 0.9, 1.3, 2056, GY + 0.45, -136.8, 0x9a988e);         // south low seawall lip
+    boxAt(geoms2, 3.5, 0.08, 185, 2180.5, GY + 0.06, -232, 0xb9ac92);        // east trail strip
+    boxAt(geoms2, 1.3, 0.9, 190, 2184.6, GY + 0.45, -230, 0x9a988e);         // east low seawall lip
+    for (const sx of [1950, 2010, 2070, 2130]) {
+      boxAt(geoms2, 0.4, 4.6, 0.4, sx, GY + 2.3, -145, 0x555a60);
+      if (RR.Theme) RR.Theme.addLamp(sx, GY + 4.8, -145, 0xffe6b0);
+    }
+    for (const sz of [-180, -240, -300]) {
+      boxAt(geoms2, 0.4, 4.6, 0.4, 2178, GY + 2.3, sz, 0x555a60);
+      if (RR.Theme) RR.Theme.addLamp(2178, GY + 4.8, sz, 0xffe6b0);
     }
 
     const mesh = new THREE.Mesh(RR.City.mergeGeoms(geoms), RR.City.flatMaterial());
@@ -6232,7 +6557,7 @@ window.CHICAGO = {
         const a = boats[i], b = boats[j];
         if (Math.abs(a.pos.y - b.pos.y) > 3) continue;       // a boat sailing overhead clears the one below
         const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
-        const rr = (a.radius + b.radius) * 1.02;             // contact registers as the hulls visually touch
+        const rr = (a.radius + b.radius) * 1.06;             // contact registers as the hulls visually touch
         const d2 = dx * dx + dz * dz;
         if (d2 < rr * rr && d2 > 1e-6) {
           const d = Math.sqrt(d2);
@@ -6245,16 +6570,16 @@ window.CHICAGO = {
           const rvx = b.vel.x - a.vel.x, rvz = b.vel.z - a.vel.z;
           const vn = rvx * nx + rvz * nz;
           if (vn < 0) {
-            const e = 0.35;                                  // restitution: give the shove some pop
+            const e = 0.42;                                  // restitution: give the shove some pop
             const jimp = -(1 + e) * vn * ma * mb * inv;
             a.vel.x -= nx * jimp / ma; a.vel.z -= nz * jimp / ma;
             b.vel.x += nx * jimp / mb; b.vel.z += nz * jimp / mb;
             // lateral shove knocks a rival off their racing line on glancing hits
-            const tx = -nz, tz = nx, shove = (rvx * tx + rvz * tz) * 0.22;
+            const tx = -nz, tz = nx, shove = (rvx * tx + rvz * tz) * 0.3;
             a.vel.x -= tx * shove * (mb * inv); a.vel.z -= tz * shove * (mb * inv);
             b.vel.x += tx * shove * (ma * inv); b.vel.z += tz * shove * (ma * inv);
             // small yaw kick so a solid hit visibly spins them
-            const yaw = U().clamp(-vn * 0.015, 0, 0.4);
+            const yaw = U().clamp(-vn * 0.02, 0, 0.45);
             a.angVel -= yaw * (mb * inv); b.angVel += yaw * (ma * inv);
             const sev = Math.min(1, -vn / 11);
             if (sev > 0.1) {
@@ -6330,6 +6655,33 @@ window.CHICAGO = {
     const desired = Math.atan2(tx - b.pos.x, tz - b.pos.z);
     let err = U().wrapAngle(desired - b.heading);
     pilot.ctl.steer = U().clamp(err * (1.9 + pilot.diff * 0.5), -1, 1);
+
+    // shoulder-check: a rival running alongside gets leaned on. Aggression (which scales
+    // with difficulty) sets how often; a long cooldown keeps it racing, not bumper cars.
+    pilot.shoveT = Math.max(0, (pilot.shoveT || 0) - dt);
+    if (pilot.shoveT <= 0 && speed > b.spec.top * 0.55) {
+      const S = RR.Race.state && RR.Race.state();
+      if (S && S.phase === 'racing') {
+        const fx = Math.sin(b.heading), fz = Math.cos(b.heading);
+        for (const o of S.boats) {
+          if (o === b) continue;
+          const dx = o.pos.x - b.pos.x, dz = o.pos.z - b.pos.z;
+          if (dx * dx + dz * dz > 81) continue;                      // within 9m
+          const along = dx * fx + dz * fz, lat = dx * fz - dz * fx;
+          if (Math.abs(along) > 7 || Math.abs(lat) < 1.2) continue;  // alongside, not nose-to-tail
+          if (Math.random() < pilot.aggression * 0.9) {
+            pilot.shoveDir = Math.sign(lat);
+            pilot.shoveHold = 0.45 + pilot.aggression * 0.4;
+          }
+          pilot.shoveT = 3.5 + Math.random() * 4;                    // cooldown, hit or not
+          break;
+        }
+      }
+    }
+    if (pilot.shoveHold > 0) {
+      pilot.shoveHold -= dt;
+      pilot.ctl.steer = U().clamp(pilot.ctl.steer + pilot.shoveDir * 0.5, -1, 1);
+    }
 
     // throttle: full unless a bend looms; brake hard only for hairpins
     let th = 1;
