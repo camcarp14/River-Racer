@@ -16,7 +16,7 @@
     ['POURING LAKE MICHIGAN…', () => { RR.Sky.init(); RR.Water.init(); }],
     ['RAISING THE SKYLINE…', () => { RR.City.init(); }],
     ['DRESSING THE LANDMARKS…', () => { landmarkTags = RR.Landmarks.init(); }],
-    ['LOWERING THE BRIDGES…', () => { RR.Bridges.init(); }],
+    ['LOWERING THE BRIDGES…', () => { RR.Bridges.init(); RR.Ramps.init(); }],
     ['LAYING THE RIVERWALK…', () => { RR.Riverwalk.init(); }],
     ['OPENING THE LOCK…', () => { RR.Lake.init(); }],
     ['RIGGING THE SAILBOATS…', () => { RR.Scenery.init(); }],
@@ -103,10 +103,10 @@
     RR.Race.onCount = (n) => { RR.HUD.countdown(n); if (n > 0) RR.Audio.countdownBeep(false); else { RR.Audio.countdownBeep(true); RR.Audio.airhorn(); } };
     RR.Race.onCheckpoint = (n, total) => {
       RR.HUD.checkpointFlash(n, total); RR.Audio.checkpoint();
-      if (player) { player.boostEnergy = Math.min(1, player.boostEnergy + 0.6); RR.Camera.kick(0.25); RR.HUD.flash('BOOST REFILLED'); }
+      if (player) { player.boostEnergy = Math.min(1, player.boostEnergy + 0.45); RR.Camera.kick(0.25); RR.HUD.flash('+BOOST'); }
     };
     RR.Race.onLap = () => { RR.Audio.checkpoint(); };
-    RR.Race.onPlayerFinish = (pos) => { RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); };
+    RR.Race.onPlayerFinish = (pos) => { RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.flash('FINISH!'); };
     RR.Race.onRaceOver = (results) => {
       mode = 'results';
       RR.HUD.show(false);
@@ -313,6 +313,18 @@
       window.RRTest._freecam = true;
     },
     clearCamera: () => { window.RRTest._freecam = false; },
+    // debug: drop the player somewhere with way on, e.g. lined up on a jump ramp
+    teleport: (x, z, heading, speed) => {
+      if (!player) return;
+      player.pos.set(x, 0.3, z);
+      if (heading != null) player.heading = heading;
+      const sp = speed == null ? 25 : speed;
+      player.vel.x = Math.sin(player.heading) * sp;
+      player.vel.z = Math.cos(player.heading) * sp;
+      player.hint = {};                 // stale water-query hints would drag the boat back
+      player.routeHint = null;
+      RR.Camera.snapTo(player);
+    },
     night: (m) => { if (RR.Theme) RR.Theme.apply(typeof m === 'string' ? m : (m ? 'night' : 'day')); },
     // hold full quality (disable adaptive downgrade) — used by visual tests on the software renderer
     pinQuality: () => { RR.Engine.setAutoQuality(false); if (RR.Reflect) RR.Reflect.enabled = true; if (RR.Post) RR.Post.enabled = true; },

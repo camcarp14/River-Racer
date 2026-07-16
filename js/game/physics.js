@@ -30,10 +30,12 @@
   P.update = function (boat, dt, ctl, t) {
     const spec = boat.spec;
 
-    // ---- boost meter ----
-    const boosting = ctl.boost && ctl.throttle > 0.3 && boat.boostEnergy > 0.02 && !boat.finished;
-    if (boosting) boat.boostEnergy = Math.max(0, boat.boostEnergy - dt * 0.30);
-    else boat.boostEnergy = Math.min(1, boat.boostEnergy + dt * 0.115);
+    // ---- boost meter: drains fast, regens slow — a resource you spend on straights and jumps.
+    // Engaging needs a real reserve (0.15) but once lit it burns down to fumes (hysteresis).
+    const canEngage = boat.boostEnergy > (boat.boostHeat > 0.3 ? 0.02 : 0.15);
+    const boosting = ctl.boost && ctl.throttle > 0.3 && canEngage && !boat.finished;
+    if (boosting) boat.boostEnergy = Math.max(0, boat.boostEnergy - dt * 0.38);
+    else boat.boostEnergy = Math.min(1, boat.boostEnergy + dt * 0.085);
     boat.boostHeat = U().damp(boat.boostHeat, boosting ? 1 : 0, 6, dt);
 
     const topSpeed = spec.top * (boosting ? spec.boost : 1);
@@ -107,6 +109,28 @@
       }
     }
 
+    // ---- jump ramps: ride up the wedge, launch off the lip (speed sets the arc) ----
+    if (RR.Ramps) {
+      const r = RR.Ramps.query(boat.pos.x, boat.pos.z);
+      if (r) {
+        if (boat.pos.y <= r.y + 0.6) {
+          boat.pos.y = r.y;
+          boat.airborne = false; boat.vy = 0; boat.airTime = 0;
+          boat._ramp = r;
+        }
+      } else if (boat._ramp) {
+        const sp = Math.hypot(boat.vel.x, boat.vel.z);
+        const fwd = boat.vel.x * boat._ramp.dirx + boat.vel.z * boat._ramp.dirz;
+        if (boat._ramp.prog > 0.65 && fwd > 5) {          // went over the lip, not off the side
+          boat.airborne = true;
+          boat.vy = sp * boat._ramp.slope * 1.25 + 1.6;
+          boat.airTime = 0;
+          if (boat.onLaunch) boat.onLaunch(sp);
+        }
+        boat._ramp = null;
+      }
+    }
+
     // ---- collisions: banks, obstacles, walls ----
     const wq = RR.River.waterQuery(boat.pos.x, boat.pos.z, boat.hint);
     boat.water = wq;
@@ -125,7 +149,8 @@
 
     // ---- visual attitude ----
     const accelPitch = U().clamp((ctl.throttle * accel - ctl.brake * accel) * 0.012, -0.1, 0.16);
-    const targetPitch = boat.airborne ? -0.12 : (-accelPitch - wn.pitch * 1.4 * (fz) - wn.roll * 1.4 * fx) * 0.5 - Math.min(0.14, speed * 0.004);
+    let targetPitch = boat.airborne ? -0.12 : (-accelPitch - wn.pitch * 1.4 * (fz) - wn.roll * 1.4 * fx) * 0.5 - Math.min(0.14, speed * 0.004);
+    if (boat._ramp) targetPitch = -boat._ramp.slope * 1.15;   // nose-up climbing the wedge
     const targetRoll = ctl.steer * spec.lean * U().clamp(speed / 14, 0, 1) + (wn.roll * fz - wn.pitch * fx) * 1.2;
     boat.visPitch = U().damp(boat.visPitch, targetPitch, 5, dt);
     boat.visRoll = U().damp(boat.visRoll, targetRoll, 5, dt);
@@ -156,6 +181,7 @@
     for (let i = 0; i < boats.length; i++) {
       for (let j = i + 1; j < boats.length; j++) {
         const a = boats[i], b = boats[j];
+        if (Math.abs(a.pos.y - b.pos.y) > 3) continue;       // a boat sailing overhead clears the one below
         const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
         const rr = (a.radius + b.radius) * 1.02;             // contact registers as the hulls visually touch
         const d2 = dx * dx + dz * dz;

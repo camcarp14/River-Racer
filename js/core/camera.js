@@ -34,11 +34,12 @@
     const tx = boat.pos.x - s * back;
     const tz = boat.pos.z - c * back;
     let ty = boat.pos.y + up;
-    // duck under bridge decks so the span never cuts across the view
+    // duck under bridge decks so the span never cuts across the view —
+    // unless the boat is jumping OVER the bridge, in which case the camera flies with it
     if (RR.Bridges && RR.Bridges.duckY) {
       const deckA = RR.Bridges.duckY(tx, tz), deckB = RR.Bridges.duckY(boat.pos.x, boat.pos.z);
       const deck = Math.min(deckA, deckB);
-      if (isFinite(deck)) ty = Math.min(ty, deck - 1.4);
+      if (isFinite(deck) && boat.pos.y < deck - 1.5) ty = Math.min(ty, deck - 1.4);
     }
     const k = 1 - Math.exp(-m.stiff * dt);
     pos.x += (tx - pos.x) * k;
@@ -63,7 +64,7 @@
     cam.lookAt(look);
     // subtle roll with the boat lean
     cam.rotation.z += boat.visRoll * (mode === 2 ? 0.55 : 0.16);
-    const fovT = m.fov + spd * 0.16 + (boat.boostHeat > 0 ? 4 : 0);
+    const fovT = m.fov + spd * 0.16 + boat.boostHeat * 10;   // boost = a real FOV punch
     if (Math.abs(cam.fov - fovT) > 0.05) { cam.fov += (fovT - cam.fov) * Math.min(1, 3 * dt); cam.updateProjectionMatrix(); }
   };
 

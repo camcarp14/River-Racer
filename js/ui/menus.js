@@ -44,7 +44,7 @@
       <div id="select-title">HOW TO PLAY</div>
       <div class="menu-note" style="font-size:15px;max-width:640px;line-height:2.1;">
         <b>W / ↑</b> — throttle &nbsp;&nbsp; <b>S / ↓</b> — brake &amp; reverse &nbsp;&nbsp; <b>A·D / ←·→</b> — steer<br>
-        <b>SHIFT</b> — trim boost (watch the meter under your speed) &nbsp;&nbsp; <b>C</b> — camera &nbsp;&nbsp; <b>R</b> — reset to course<br>
+        <b>SHIFT</b> — boost (watch the meter under your speed — spend it wisely) &nbsp;&nbsp; <b>C</b> — camera &nbsp;&nbsp; <b>R</b> — reset to course<br>
         <b>ESC</b> — pause &nbsp;&nbsp; Gamepad and touch supported.<br><br>
         Thread the checkpoint buoys — <span style="color:#ff5b4c">red LEFT</span>, <span style="color:#2ecc71">green RIGHT</span>.
         The river is narrow and the seawalls are real concrete; the lake is open water with real chop.<br>

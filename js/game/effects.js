@@ -169,6 +169,15 @@
         boat.vel.z * 0.35 - s * side * (2 + intensity * 5),
         2, 1.6, 1);
     }
+    // boost: a tall rooster tail off the stern so the burn is unmistakable
+    if (boat.boostHeat > 0.4 && speed > 8) {
+      FX.spray(
+        boat.pos.x - s * boat.radius * 1.15,
+        boat.pos.y + 0.3,
+        boat.pos.z - c * boat.radius * 1.15,
+        -boat.vel.x * 0.3, 4.5 + intensity * 4.5, -boat.vel.z * 0.3,
+        3, 3.2, 1.8);
+    }
     // hard turns throw a rooster fan
     if (Math.abs(boat.visRoll) > 0.18 && speed > 12 && Math.random() < 0.75) {
       const side = Math.sign(boat.visRoll);

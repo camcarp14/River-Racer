@@ -25,96 +25,121 @@
   // glassGeoms get the window texture; flatGeoms are plain color
   const builders = {
 
-    // twin corncobs: stacked scalloped balcony rings over a plinth
+    // twin concrete corncobs: open parking decks spiral up the bottom third, then ring
+    // after ring of semicircular petal balconies — the real scalloped silhouette
     marina(l, glass, flat) {
       for (const s of [-1, 1]) {
         const x = l.x + s * 28, z = l.z;
-        flat.push(cyl(9.5, 9.5, l.h * 0.35, 12, x, GY(), z, 0x8f8b82));         // parking spiral core
-        const rings = 13;
-        for (let i = 0; i < rings; i++) {
-          const y = GY() + l.h * 0.35 + i * (l.h * 0.62 / rings);
-          const ring = new THREE.CylinderGeometry(13.5, 12.2, l.h * 0.62 / rings * 0.82, 16);
-          flat.push(solid(ring, x, y + l.h * 0.3 / rings, z, i % 2 ? 0xcac4b8 : 0xbdb6a8));
+        const parkH = l.h * 0.35, resH = l.h * 0.60;
+        flat.push(cyl(7.0, 7.0, l.h * 0.99, 12, x, GY(), z, 0xa9a396));          // service core
+        const decks = 9;
+        for (let i = 0; i <= decks; i++) {                                        // open parking decks
+          const y = GY() + (i / decks) * (parkH - 1);
+          flat.push(solid(new THREE.CylinderGeometry(12.6, 12.6, 0.55, 18), x, y + 0.3, z, 0xcfc9bc));
         }
-        flat.push(cyl(10.5, 12.5, 4, 16, x, GY() + l.h * 0.97, z, 0x84807a));   // crown
+        const lvls = 11, petals = 14;
+        for (let i = 0; i < lvls; i++) {
+          const fh = resH / lvls, y = GY() + parkH + (i + 0.5) * fh;
+          flat.push(solid(new THREE.CylinderGeometry(10.6, 10.6, fh * 0.9, 16), x, y, z, 0x5d6066)); // recessed glass band
+          for (let k = 0; k < petals; k++) {                                      // balcony petals
+            const a = (k / petals) * Math.PI * 2 + (i % 2) * (Math.PI / petals);
+            flat.push(solid(new THREE.CylinderGeometry(2.5, 2.5, fh * 0.6, 6),
+              x + Math.cos(a) * 11.4, y, z + Math.sin(a) * 11.4, 0xd6d0c2));
+          }
+        }
+        flat.push(cyl(11.8, 12.6, 3.4, 18, x, GY() + parkH + resH, z, 0xb3ada0)); // mechanical crown
       }
     },
 
-    // nine bundled black tubes with the famous setbacks + twin antennas
+    // nine bundled black tubes with the famous setbacks + twin antennas.
+    // Real profile: all nine to mid-height, seven on, five on, and just two ride to the top.
     willis(l, glass, flat) {
       const t = l.w / 3;
-      const tubeH = [[0.5, 1, 0.72], [1, 0.9, 1], [0.72, 1, 0.5]];              // relative heights per tube
+      const tubeH = [[0.46, 0.61, 0.46], [0.83, 1, 0.61], [0.46, 1, 0.83]];
       for (let i = 0; i < 3; i++) {
         for (let j = 0; j < 3; j++) {
           const h = l.h * tubeH[i][j];
-          glass.push(box(t - 1.5, h, t - 1.5, l.x + (i - 1) * t, GY(), l.z + (j - 1) * t, l.c));
+          glass.push(box(t - 1.5, h, t - 1.5, l.x + (i - 1) * t, GY(), l.z + (j - 1) * t, 0x191c20));
         }
       }
       for (const s of [-6, 6]) {
-        flat.push(cyl(0.8, 1.2, 85, 6, l.x + s, GY() + l.h, l.z, 0xd8d8dc));
+        flat.push(cyl(0.8, 1.2, 85, 6, l.x + s, GY() + l.h, l.z, 0xe8eaec));
       }
     },
 
     // stepped silver-blue glass slab + spire
     trump(l, glass, flat) {
-      glass.push(box(l.w, l.h * 0.45, l.d, l.x, GY(), l.z, l.c));
-      glass.push(box(l.w * 0.78, l.h * 0.75, l.d * 0.92, l.x + l.w * 0.1, GY(), l.z, l.c));
-      glass.push(box(l.w * 0.55, l.h, l.d * 0.84, l.x + l.w * 0.2, GY(), l.z, l.c));
+      const SB = 0x9fb6c4;                                    // polished stainless-blue curtain wall
+      glass.push(box(l.w, l.h * 0.45, l.d, l.x, GY(), l.z, SB));
+      glass.push(box(l.w * 0.78, l.h * 0.75, l.d * 0.92, l.x + l.w * 0.1, GY(), l.z, SB));
+      glass.push(box(l.w * 0.55, l.h, l.d * 0.84, l.x + l.w * 0.2, GY(), l.z, SB));
       flat.push(cyl(0.9, 1.6, 66, 6, l.x + l.w * 0.2, GY() + l.h, l.z, 0xcfd6da));
     },
 
-    // white terra cotta + freestanding clock tower
+    // gleaming white terra cotta + the tiered Spanish-revival clock tower
     wrigley(l, glass, flat) {
-      glass.push(box(l.w, l.h * 0.55, l.d, l.x, GY(), l.z, l.c));
-      glass.push(box(l.w * 0.55, l.h * 0.72, l.d * 0.8, l.x - l.w * 0.1, GY(), l.z, l.c));
-      // clock tower
+      const TC = 0xf4efdf;
+      glass.push(box(l.w, l.h * 0.52, l.d, l.x, GY(), l.z, TC));                     // south block
+      glass.push(box(l.w * 0.55, l.h * 0.68, l.d * 0.8, l.x - l.w * 0.1, GY(), l.z, TC)); // north annex
       const tx = l.x + l.w * 0.28;
-      glass.push(box(14, l.h * 0.88, 14, tx, GY(), l.z, l.c));
-      flat.push(box(11, l.h * 0.08, 11, tx, GY() + l.h * 0.88, l.z, l.c));
-      flat.push(cyl(4.5, 6.5, l.h * 0.1, 8, tx, GY() + l.h * 0.96, l.z, 0xe8e4d4));
+      glass.push(box(14, l.h * 0.8, 14, tx, GY(), l.z, TC));                         // tower shaft
+      flat.push(box(11.5, l.h * 0.08, 11.5, tx, GY() + l.h * 0.8, l.z, TC));         // first tier
+      flat.push(cyl(4.8, 5.8, l.h * 0.09, 8, tx, GY() + l.h * 0.88, l.z, TC));       // octagonal tempietto
+      flat.push(cyl(2.4, 3.4, l.h * 0.06, 8, tx, GY() + l.h * 0.965, l.z, TC));
+      flat.push(cyl(0.3, 0.9, 5, 6, tx, GY() + l.h * 1.02, l.z, 0xd9d2ba));          // finial
       for (const [dx, dz] of [[7.2, 0], [-7.2, 0], [0, 7.2], [0, -7.2]]) {
-        const face = new THREE.CylinderGeometry(3.4, 3.4, 0.5, 12);
+        const face = new THREE.CylinderGeometry(3.2, 3.2, 0.5, 12);
         face.rotateZ(Math.PI / 2);
         face.rotateY(dz !== 0 ? Math.PI / 2 : 0);
-        flat.push(solid(face, tx + dx, GY() + l.h * 0.8, l.z + dz, 0x2a2d31));
+        flat.push(solid(face, tx + dx, GY() + l.h * 0.74, l.z + dz, 0x2a2d31));
       }
     },
 
-    // neo-gothic: shaft + crown of buttresses
+    // neo-gothic: pale limestone shaft crowned by flying buttresses and pinnacles
     tribune(l, glass, flat) {
-      glass.push(box(l.w, l.h * 0.78, l.d, l.x, GY(), l.z, l.c));
-      glass.push(box(l.w * 0.62, l.h * 0.94, l.d * 0.62, l.x, GY(), l.z, l.c));
-      flat.push(cyl(4, 7, l.h * 0.14, 8, l.x, GY() + l.h * 0.9, l.z, l.c));
+      const ST = 0xcdc5b2;
+      glass.push(box(l.w, l.h * 0.76, l.d, l.x, GY(), l.z, ST));
+      glass.push(box(l.w * 0.6, l.h * 0.92, l.d * 0.6, l.x, GY(), l.z, ST));
       for (let a = 0; a < 8; a++) {
         const ang = (a / 8) * Math.PI * 2;
-        flat.push(cyl(0.9, 1.4, l.h * 0.14, 4,
-          l.x + Math.cos(ang) * l.w * 0.31, GY() + l.h * 0.78, l.z + Math.sin(ang) * l.d * 0.31, 0xb8ae96));
+        const bx2 = l.x + Math.cos(ang) * l.w * 0.3, bz2 = l.z + Math.sin(ang) * l.d * 0.3;
+        flat.push(cyl(0.8, 1.2, l.h * 0.16, 4, bx2, GY() + l.h * 0.76, bz2, ST));     // buttress piers
+        flat.push(solid(new THREE.ConeGeometry(1.1, 4.5, 4), bx2, GY() + l.h * 0.92 + 2.2, bz2, ST)); // pinnacles
       }
+      flat.push(cyl(3.6, 6.4, l.h * 0.12, 8, l.x, GY() + l.h * 0.9, l.z, ST));        // crown drum
+      flat.push(solid(new THREE.ConeGeometry(2.6, 7, 8), l.x, GY() + l.h * 1.02 + 3.5, l.z, ST));
     },
 
-    // the Mart: colossal deco block with corner pavilions and a center tower
+    // the Mart: colossal deco limestone block — arcaded base, vertical piers marching
+    // down the river facade, corner pavilions and the stepped central tower
     mart(l, glass, flat) {
-      glass.push(box(l.w, l.h * 0.8, l.d, l.x, GY(), l.z, l.c));
-      glass.push(box(l.w * 0.3, l.h, l.d * 0.55, l.x, GY(), l.z, l.c));            // center mass
-      for (const sx of [-1, 1]) {
-        glass.push(box(l.w * 0.14, l.h * 0.9, l.d * 0.7, l.x + sx * l.w * 0.42, GY(), l.z, l.c));
+      flat.push(box(l.w, 9, l.d, l.x, GY(), l.z, 0x8f8672));                        // arcade base
+      glass.push(box(l.w, l.h * 0.8, l.d, l.x, GY() + 9, l.z, l.c));                // main mass
+      const piers = 12;
+      for (let i = 0; i <= piers; i++) {                                            // river-facade piers
+        const px = l.x - l.w / 2 + (i / piers) * l.w;
+        flat.push(box(1.6, l.h * 0.72, 1.2, px, GY() + 9, l.z + l.d / 2, 0xc8bda4));
       }
-      flat.push(box(l.w * 0.1, l.h * 0.12, l.d * 0.3, l.x, GY() + l.h, l.z, 0x8f8570));
+      for (const sx of [-1, 1]) {                                                   // corner pavilions
+        glass.push(box(l.w * 0.13, l.h * 0.92, l.d * 0.72, l.x + sx * l.w * 0.43, GY(), l.z, l.c));
+      }
+      glass.push(box(l.w * 0.24, l.h * 1.12, l.d * 0.5, l.x, GY(), l.z, l.c));      // center tower
+      flat.push(box(l.w * 0.12, 4, l.d * 0.3, l.x, GY() + l.h * 1.12, l.z, 0x8f8570));
     },
 
-    // curved green glass following the bend (arc of thin boxes)
+    // curved bottle-green glass following the bend (arc of thin boxes)
     wacker333(l, glass, flat) {
       const segs = 9;
       for (let i = 0; i < segs; i++) {
         const a = (i / (segs - 1) - 0.5) * 1.5;                                    // ~86° arc
         const r = l.w * 0.72;
         glass.push(box(l.w / segs + 4, l.h, l.d * 0.8,
-          l.x + Math.sin(a) * r, GY(), l.z + (1 - Math.cos(a)) * r, l.c, -a));
+          l.x + Math.sin(a) * r, GY(), l.z + (1 - Math.cos(a)) * r, 0x3f8272, -a));
       }
       flat.push(box(l.w * 1.05, 4, l.d, l.x, GY() + l.h, l.z + l.w * 0.1, 0x1e3d38));
     },
 
-    // three stacked-frustum sisters
+    // St. Regis: three stacked-frustum sisters in shifting blue-green glass
     stregis(l, glass, flat) {
       const heights = [0.65, 1, 0.82];
       for (let i = 0; i < 3; i++) {
@@ -124,20 +149,23 @@
           const y0 = GY() + (s / stacks) * l.h * heights[i];
           const taper = s % 2 ? 1 : 0.88;
           glass.push(box((l.w / 3 - 2) * taper, l.h * heights[i] / stacks, l.d * (s % 2 ? 0.88 : 1),
-            x, y0, l.z, i === 1 ? 0x4d7d8a : l.c));
+            x, y0, l.z, i === 1 ? 0x4d7d8a : 0x5d8a96));
         }
       }
     },
 
-    // wavy white balcony stack
+    // Aqua: white balcony plates rippling like water around a dark glass core —
+    // smooth multi-frequency waves instead of jitter, so the contours flow
     aqua(l, glass, flat) {
-      glass.push(box(l.w - 6, l.h, l.d - 5, l.x, GY(), l.z, 0x3f5a66));
-      const plates = 16;
+      glass.push(box(l.w - 7, l.h, l.d - 6, l.x, GY(), l.z, 0x2e4a58));
+      const plates = 22;
       for (let i = 0; i < plates; i++) {
         const y = GY() + (i + 0.5) * (l.h / plates);
-        const ox = Math.sin(i * 1.7) * 4, oz = Math.cos(i * 2.3) * 3;
-        flat.push(box(l.w + Math.sin(i * 2.1) * 6, 1.1, l.d + Math.cos(i * 1.3) * 5,
-          l.x + ox, y, l.z + oz, l.c));
+        const u = i * 0.9;
+        flat.push(box(
+          l.w + Math.sin(u) * 5 + Math.sin(u * 0.37 + 1.4) * 3.5, 0.5,
+          l.d + Math.cos(u * 0.8) * 4 + Math.sin(u * 0.53 + 0.6) * 2.5,
+          l.x + Math.sin(u * 0.61) * 2.2, y, l.z + Math.cos(u * 0.43) * 1.8, 0xf1f1ec));
       }
     },
 
@@ -167,12 +195,13 @@
       flat.push(solid(new THREE.SphereGeometry(4.2, 8, 6), l.x + l.w * 0.32, GY() + l.h * 0.94 + 9, l.z - l.d * 0.3, 0x94886c));
     },
 
-    // Civic Opera "throne": tall river-facing slab + lower flanks
+    // Civic Opera "throne": tall limestone river-facing slab + lower flanks
     opera(l, glass, flat) {
-      glass.push(box(l.w, l.h, l.d * 0.55, l.x, GY(), l.z - l.d * 0.2, l.c));
-      glass.push(box(l.w, l.h * 0.55, l.d * 0.5, l.x, GY(), l.z + l.d * 0.25, l.c));
+      const LS = 0xc9bfa8;
+      glass.push(box(l.w, l.h, l.d * 0.55, l.x, GY(), l.z - l.d * 0.2, LS));
+      glass.push(box(l.w, l.h * 0.55, l.d * 0.5, l.x, GY(), l.z + l.d * 0.25, LS));
       for (const s of [-1, 1]) {
-        glass.push(box(l.w * 0.24, l.h * 0.8, l.d, l.x + s * l.w * 0.38, GY(), l.z, l.c));
+        glass.push(box(l.w * 0.24, l.h * 0.8, l.d, l.x + s * l.w * 0.38, GY(), l.z, LS));
       }
     },
 

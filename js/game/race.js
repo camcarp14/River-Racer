@@ -72,9 +72,10 @@
     return RR.U.canvasTexture(64, 128, (c, w, h) => {
       c.clearRect(0, 0, w, h);
       c.strokeStyle = '#ffd24a'; c.lineWidth = 14; c.lineCap = 'round';
-      for (let k = -1; k < 3; k++) {
+      // apex toward -canvas-y = +v = toward the FINISH (CanvasTexture flips Y)
+      for (let k = 0; k < 4; k++) {
         const y = k * (h / 2);
-        c.beginPath(); c.moveTo(6, y); c.lineTo(w / 2, y + h * 0.28); c.lineTo(w - 6, y); c.stroke();
+        c.beginPath(); c.moveTo(6, y); c.lineTo(w / 2, y - h * 0.28); c.lineTo(w - 6, y); c.stroke();
       }
     });
   }
@@ -273,6 +274,7 @@
       S.results.push({ boat: b, time: S.time });
       if (b === S.player) {
         S.phase = 'finished';
+        S.finishTimeout = Math.min(S.finishTimeout, 2.2);   // the race is over when YOU cross the line
         saveBest(S.course.id, S.time);
         if (RACE.onPlayerFinish) RACE.onPlayerFinish(S.results.length, S.time);
       }

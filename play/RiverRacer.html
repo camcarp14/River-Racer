@@ -92,10 +92,10 @@
   <canvas id="minimap" width="200" height="260"></canvas>
   <div id="speedo" class="hud-panel"><div id="speed-num">0</div><div id="speed-unit">MPH</div><div id="throttle-bar"><div id="throttle-fill"></div></div></div>
   <div id="checkpoint-flash"></div>
-  <div id="wrongway">WRONG WAY!</div>
+  <div id="wrongway">WRONG WAY HOMIE</div>
   <div id="countdown"></div>
   <div id="landmark-tag"></div>
-  <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake<br><b>SHIFT</b> trim boost &nbsp;<b>C</b> camera &nbsp;<b>N</b> time of day &nbsp;<b>G</b> green river &nbsp;<b>P</b> photo &nbsp;<b>R</b> reset &nbsp;<b>ESC</b> pause</div>
+  <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake<br><b>SHIFT</b> boost &nbsp;<b>C</b> camera &nbsp;<b>N</b> time of day &nbsp;<b>G</b> green river &nbsp;<b>P</b> photo &nbsp;<b>R</b> reset &nbsp;<b>ESC</b> pause</div>
 </div>
 
 <div id="menu"></div>
@@ -2062,11 +2062,12 @@ window.CHICAGO = {
     const tx = boat.pos.x - s * back;
     const tz = boat.pos.z - c * back;
     let ty = boat.pos.y + up;
-    // duck under bridge decks so the span never cuts across the view
+    // duck under bridge decks so the span never cuts across the view —
+    // unless the boat is jumping OVER the bridge, in which case the camera flies with it
     if (RR.Bridges && RR.Bridges.duckY) {
       const deckA = RR.Bridges.duckY(tx, tz), deckB = RR.Bridges.duckY(boat.pos.x, boat.pos.z);
       const deck = Math.min(deckA, deckB);
-      if (isFinite(deck)) ty = Math.min(ty, deck - 1.4);
+      if (isFinite(deck) && boat.pos.y < deck - 1.5) ty = Math.min(ty, deck - 1.4);
     }
     const k = 1 - Math.exp(-m.stiff * dt);
     pos.x += (tx - pos.x) * k;
@@ -2091,7 +2092,7 @@ window.CHICAGO = {
     cam.lookAt(look);
     // subtle roll with the boat lean
     cam.rotation.z += boat.visRoll * (mode === 2 ? 0.55 : 0.16);
-    const fovT = m.fov + spd * 0.16 + (boat.boostHeat > 0 ? 4 : 0);
+    const fovT = m.fov + spd * 0.16 + boat.boostHeat * 10;   // boost = a real FOV punch
     if (Math.abs(cam.fov - fovT) > 0.05) { cam.fov += (fovT - cam.fov) * Math.min(1, 3 * dt); cam.updateProjectionMatrix(); }
   };
 
@@ -3383,96 +3384,121 @@ window.CHICAGO = {
   // glassGeoms get the window texture; flatGeoms are plain color
   const builders = {
 
-    // twin corncobs: stacked scalloped balcony rings over a plinth
+    // twin concrete corncobs: open parking decks spiral up the bottom third, then ring
+    // after ring of semicircular petal balconies — the real scalloped silhouette
     marina(l, glass, flat) {
       for (const s of [-1, 1]) {
         const x = l.x + s * 28, z = l.z;
-        flat.push(cyl(9.5, 9.5, l.h * 0.35, 12, x, GY(), z, 0x8f8b82));         // parking spiral core
-        const rings = 13;
-        for (let i = 0; i < rings; i++) {
-          const y = GY() + l.h * 0.35 + i * (l.h * 0.62 / rings);
-          const ring = new THREE.CylinderGeometry(13.5, 12.2, l.h * 0.62 / rings * 0.82, 16);
-          flat.push(solid(ring, x, y + l.h * 0.3 / rings, z, i % 2 ? 0xcac4b8 : 0xbdb6a8));
+        const parkH = l.h * 0.35, resH = l.h * 0.60;
+        flat.push(cyl(7.0, 7.0, l.h * 0.99, 12, x, GY(), z, 0xa9a396));          // service core
+        const decks = 9;
+        for (let i = 0; i <= decks; i++) {                                        // open parking decks
+          const y = GY() + (i / decks) * (parkH - 1);
+          flat.push(solid(new THREE.CylinderGeometry(12.6, 12.6, 0.55, 18), x, y + 0.3, z, 0xcfc9bc));
         }
-        flat.push(cyl(10.5, 12.5, 4, 16, x, GY() + l.h * 0.97, z, 0x84807a));   // crown
+        const lvls = 11, petals = 14;
+        for (let i = 0; i < lvls; i++) {
+          const fh = resH / lvls, y = GY() + parkH + (i + 0.5) * fh;
+          flat.push(solid(new THREE.CylinderGeometry(10.6, 10.6, fh * 0.9, 16), x, y, z, 0x5d6066)); // recessed glass band
+          for (let k = 0; k < petals; k++) {                                      // balcony petals
+            const a = (k / petals) * Math.PI * 2 + (i % 2) * (Math.PI / petals);
+            flat.push(solid(new THREE.CylinderGeometry(2.5, 2.5, fh * 0.6, 6),
+              x + Math.cos(a) * 11.4, y, z + Math.sin(a) * 11.4, 0xd6d0c2));
+          }
+        }
+        flat.push(cyl(11.8, 12.6, 3.4, 18, x, GY() + parkH + resH, z, 0xb3ada0)); // mechanical crown
       }
     },
 
-    // nine bundled black tubes with the famous setbacks + twin antennas
+    // nine bundled black tubes with the famous setbacks + twin antennas.
+    // Real profile: all nine to mid-height, seven on, five on, and just two ride to the top.
     willis(l, glass, flat) {
       const t = l.w / 3;
-      const tubeH = [[0.5, 1, 0.72], [1, 0.9, 1], [0.72, 1, 0.5]];              // relative heights per tube
+      const tubeH = [[0.46, 0.61, 0.46], [0.83, 1, 0.61], [0.46, 1, 0.83]];
       for (let i = 0; i < 3; i++) {
         for (let j = 0; j < 3; j++) {
           const h = l.h * tubeH[i][j];
-          glass.push(box(t - 1.5, h, t - 1.5, l.x + (i - 1) * t, GY(), l.z + (j - 1) * t, l.c));
+          glass.push(box(t - 1.5, h, t - 1.5, l.x + (i - 1) * t, GY(), l.z + (j - 1) * t, 0x191c20));
         }
       }
       for (const s of [-6, 6]) {
-        flat.push(cyl(0.8, 1.2, 85, 6, l.x + s, GY() + l.h, l.z, 0xd8d8dc));
+        flat.push(cyl(0.8, 1.2, 85, 6, l.x + s, GY() + l.h, l.z, 0xe8eaec));
       }
     },
 
     // stepped silver-blue glass slab + spire
     trump(l, glass, flat) {
-      glass.push(box(l.w, l.h * 0.45, l.d, l.x, GY(), l.z, l.c));
-      glass.push(box(l.w * 0.78, l.h * 0.75, l.d * 0.92, l.x + l.w * 0.1, GY(), l.z, l.c));
-      glass.push(box(l.w * 0.55, l.h, l.d * 0.84, l.x + l.w * 0.2, GY(), l.z, l.c));
+      const SB = 0x9fb6c4;                                    // polished stainless-blue curtain wall
+      glass.push(box(l.w, l.h * 0.45, l.d, l.x, GY(), l.z, SB));
+      glass.push(box(l.w * 0.78, l.h * 0.75, l.d * 0.92, l.x + l.w * 0.1, GY(), l.z, SB));
+      glass.push(box(l.w * 0.55, l.h, l.d * 0.84, l.x + l.w * 0.2, GY(), l.z, SB));
       flat.push(cyl(0.9, 1.6, 66, 6, l.x + l.w * 0.2, GY() + l.h, l.z, 0xcfd6da));
     },
 
-    // white terra cotta + freestanding clock tower
+    // gleaming white terra cotta + the tiered Spanish-revival clock tower
     wrigley(l, glass, flat) {
-      glass.push(box(l.w, l.h * 0.55, l.d, l.x, GY(), l.z, l.c));
-      glass.push(box(l.w * 0.55, l.h * 0.72, l.d * 0.8, l.x - l.w * 0.1, GY(), l.z, l.c));
-      // clock tower
+      const TC = 0xf4efdf;
+      glass.push(box(l.w, l.h * 0.52, l.d, l.x, GY(), l.z, TC));                     // south block
+      glass.push(box(l.w * 0.55, l.h * 0.68, l.d * 0.8, l.x - l.w * 0.1, GY(), l.z, TC)); // north annex
       const tx = l.x + l.w * 0.28;
-      glass.push(box(14, l.h * 0.88, 14, tx, GY(), l.z, l.c));
-      flat.push(box(11, l.h * 0.08, 11, tx, GY() + l.h * 0.88, l.z, l.c));
-      flat.push(cyl(4.5, 6.5, l.h * 0.1, 8, tx, GY() + l.h * 0.96, l.z, 0xe8e4d4));
+      glass.push(box(14, l.h * 0.8, 14, tx, GY(), l.z, TC));                         // tower shaft
+      flat.push(box(11.5, l.h * 0.08, 11.5, tx, GY() + l.h * 0.8, l.z, TC));         // first tier
+      flat.push(cyl(4.8, 5.8, l.h * 0.09, 8, tx, GY() + l.h * 0.88, l.z, TC));       // octagonal tempietto
+      flat.push(cyl(2.4, 3.4, l.h * 0.06, 8, tx, GY() + l.h * 0.965, l.z, TC));
+      flat.push(cyl(0.3, 0.9, 5, 6, tx, GY() + l.h * 1.02, l.z, 0xd9d2ba));          // finial
       for (const [dx, dz] of [[7.2, 0], [-7.2, 0], [0, 7.2], [0, -7.2]]) {
-        const face = new THREE.CylinderGeometry(3.4, 3.4, 0.5, 12);
+        const face = new THREE.CylinderGeometry(3.2, 3.2, 0.5, 12);
         face.rotateZ(Math.PI / 2);
         face.rotateY(dz !== 0 ? Math.PI / 2 : 0);
-        flat.push(solid(face, tx + dx, GY() + l.h * 0.8, l.z + dz, 0x2a2d31));
+        flat.push(solid(face, tx + dx, GY() + l.h * 0.74, l.z + dz, 0x2a2d31));
       }
     },
 
-    // neo-gothic: shaft + crown of buttresses
+    // neo-gothic: pale limestone shaft crowned by flying buttresses and pinnacles
     tribune(l, glass, flat) {
-      glass.push(box(l.w, l.h * 0.78, l.d, l.x, GY(), l.z, l.c));
-      glass.push(box(l.w * 0.62, l.h * 0.94, l.d * 0.62, l.x, GY(), l.z, l.c));
-      flat.push(cyl(4, 7, l.h * 0.14, 8, l.x, GY() + l.h * 0.9, l.z, l.c));
+      const ST = 0xcdc5b2;
+      glass.push(box(l.w, l.h * 0.76, l.d, l.x, GY(), l.z, ST));
+      glass.push(box(l.w * 0.6, l.h * 0.92, l.d * 0.6, l.x, GY(), l.z, ST));
       for (let a = 0; a < 8; a++) {
         const ang = (a / 8) * Math.PI * 2;
-        flat.push(cyl(0.9, 1.4, l.h * 0.14, 4,
-          l.x + Math.cos(ang) * l.w * 0.31, GY() + l.h * 0.78, l.z + Math.sin(ang) * l.d * 0.31, 0xb8ae96));
+        const bx2 = l.x + Math.cos(ang) * l.w * 0.3, bz2 = l.z + Math.sin(ang) * l.d * 0.3;
+        flat.push(cyl(0.8, 1.2, l.h * 0.16, 4, bx2, GY() + l.h * 0.76, bz2, ST));     // buttress piers
+        flat.push(solid(new THREE.ConeGeometry(1.1, 4.5, 4), bx2, GY() + l.h * 0.92 + 2.2, bz2, ST)); // pinnacles
       }
+      flat.push(cyl(3.6, 6.4, l.h * 0.12, 8, l.x, GY() + l.h * 0.9, l.z, ST));        // crown drum
+      flat.push(solid(new THREE.ConeGeometry(2.6, 7, 8), l.x, GY() + l.h * 1.02 + 3.5, l.z, ST));
     },
 
-    // the Mart: colossal deco block with corner pavilions and a center tower
+    // the Mart: colossal deco limestone block — arcaded base, vertical piers marching
+    // down the river facade, corner pavilions and the stepped central tower
     mart(l, glass, flat) {
-      glass.push(box(l.w, l.h * 0.8, l.d, l.x, GY(), l.z, l.c));
-      glass.push(box(l.w * 0.3, l.h, l.d * 0.55, l.x, GY(), l.z, l.c));            // center mass
-      for (const sx of [-1, 1]) {
-        glass.push(box(l.w * 0.14, l.h * 0.9, l.d * 0.7, l.x + sx * l.w * 0.42, GY(), l.z, l.c));
+      flat.push(box(l.w, 9, l.d, l.x, GY(), l.z, 0x8f8672));                        // arcade base
+      glass.push(box(l.w, l.h * 0.8, l.d, l.x, GY() + 9, l.z, l.c));                // main mass
+      const piers = 12;
+      for (let i = 0; i <= piers; i++) {                                            // river-facade piers
+        const px = l.x - l.w / 2 + (i / piers) * l.w;
+        flat.push(box(1.6, l.h * 0.72, 1.2, px, GY() + 9, l.z + l.d / 2, 0xc8bda4));
       }
-      flat.push(box(l.w * 0.1, l.h * 0.12, l.d * 0.3, l.x, GY() + l.h, l.z, 0x8f8570));
+      for (const sx of [-1, 1]) {                                                   // corner pavilions
+        glass.push(box(l.w * 0.13, l.h * 0.92, l.d * 0.72, l.x + sx * l.w * 0.43, GY(), l.z, l.c));
+      }
+      glass.push(box(l.w * 0.24, l.h * 1.12, l.d * 0.5, l.x, GY(), l.z, l.c));      // center tower
+      flat.push(box(l.w * 0.12, 4, l.d * 0.3, l.x, GY() + l.h * 1.12, l.z, 0x8f8570));
     },
 
-    // curved green glass following the bend (arc of thin boxes)
+    // curved bottle-green glass following the bend (arc of thin boxes)
     wacker333(l, glass, flat) {
       const segs = 9;
       for (let i = 0; i < segs; i++) {
         const a = (i / (segs - 1) - 0.5) * 1.5;                                    // ~86° arc
         const r = l.w * 0.72;
         glass.push(box(l.w / segs + 4, l.h, l.d * 0.8,
-          l.x + Math.sin(a) * r, GY(), l.z + (1 - Math.cos(a)) * r, l.c, -a));
+          l.x + Math.sin(a) * r, GY(), l.z + (1 - Math.cos(a)) * r, 0x3f8272, -a));
       }
       flat.push(box(l.w * 1.05, 4, l.d, l.x, GY() + l.h, l.z + l.w * 0.1, 0x1e3d38));
     },
 
-    // three stacked-frustum sisters
+    // St. Regis: three stacked-frustum sisters in shifting blue-green glass
     stregis(l, glass, flat) {
       const heights = [0.65, 1, 0.82];
       for (let i = 0; i < 3; i++) {
@@ -3482,20 +3508,23 @@ window.CHICAGO = {
           const y0 = GY() + (s / stacks) * l.h * heights[i];
           const taper = s % 2 ? 1 : 0.88;
           glass.push(box((l.w / 3 - 2) * taper, l.h * heights[i] / stacks, l.d * (s % 2 ? 0.88 : 1),
-            x, y0, l.z, i === 1 ? 0x4d7d8a : l.c));
+            x, y0, l.z, i === 1 ? 0x4d7d8a : 0x5d8a96));
         }
       }
     },
 
-    // wavy white balcony stack
+    // Aqua: white balcony plates rippling like water around a dark glass core —
+    // smooth multi-frequency waves instead of jitter, so the contours flow
     aqua(l, glass, flat) {
-      glass.push(box(l.w - 6, l.h, l.d - 5, l.x, GY(), l.z, 0x3f5a66));
-      const plates = 16;
+      glass.push(box(l.w - 7, l.h, l.d - 6, l.x, GY(), l.z, 0x2e4a58));
+      const plates = 22;
       for (let i = 0; i < plates; i++) {
         const y = GY() + (i + 0.5) * (l.h / plates);
-        const ox = Math.sin(i * 1.7) * 4, oz = Math.cos(i * 2.3) * 3;
-        flat.push(box(l.w + Math.sin(i * 2.1) * 6, 1.1, l.d + Math.cos(i * 1.3) * 5,
-          l.x + ox, y, l.z + oz, l.c));
+        const u = i * 0.9;
+        flat.push(box(
+          l.w + Math.sin(u) * 5 + Math.sin(u * 0.37 + 1.4) * 3.5, 0.5,
+          l.d + Math.cos(u * 0.8) * 4 + Math.sin(u * 0.53 + 0.6) * 2.5,
+          l.x + Math.sin(u * 0.61) * 2.2, y, l.z + Math.cos(u * 0.43) * 1.8, 0xf1f1ec));
       }
     },
 
@@ -3525,12 +3554,13 @@ window.CHICAGO = {
       flat.push(solid(new THREE.SphereGeometry(4.2, 8, 6), l.x + l.w * 0.32, GY() + l.h * 0.94 + 9, l.z - l.d * 0.3, 0x94886c));
     },
 
-    // Civic Opera "throne": tall river-facing slab + lower flanks
+    // Civic Opera "throne": tall limestone river-facing slab + lower flanks
     opera(l, glass, flat) {
-      glass.push(box(l.w, l.h, l.d * 0.55, l.x, GY(), l.z - l.d * 0.2, l.c));
-      glass.push(box(l.w, l.h * 0.55, l.d * 0.5, l.x, GY(), l.z + l.d * 0.25, l.c));
+      const LS = 0xc9bfa8;
+      glass.push(box(l.w, l.h, l.d * 0.55, l.x, GY(), l.z - l.d * 0.2, LS));
+      glass.push(box(l.w, l.h * 0.55, l.d * 0.5, l.x, GY(), l.z + l.d * 0.25, LS));
       for (const s of [-1, 1]) {
-        glass.push(box(l.w * 0.24, l.h * 0.8, l.d, l.x + s * l.w * 0.38, GY(), l.z, l.c));
+        glass.push(box(l.w * 0.24, l.h * 0.8, l.d, l.x + s * l.w * 0.38, GY(), l.z, LS));
       }
     },
 
@@ -3743,7 +3773,7 @@ window.CHICAGO = {
     ];
     for (const p of corners) S.sv.push(p[0], p[1], p[2]);
     S.suv.push(c.u0, c.vTop, c.u1, c.vTop, c.u1, c.vBot, c.u0, c.vBot);
-    S.sidx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    S.sidx.push(base, base + 2, base + 1, base, base + 3, base + 2);   // wound so the face points along (nx,nz)
   }
 
   function addPierObstacles(cx, cz, tx, tz, half) {
@@ -3806,16 +3836,15 @@ window.CHICAGO = {
         if (RR.Theme) RR.Theme.addLamp(gx + tx * d * 0.55, cl + 5.6, gz + tz * d * 0.55, 0xffe6b0);
       }
     }
-    // name plates mounted on a post at each bank abutment — readable on approach, never floating
-    // over the channel, and clear of the bascule leaves (which pivot at the bank and rise mid-channel).
-    function addBankSigns(y) {
-      const w = Math.min(2 * half * 0.5, 8), h = w / 5.2;
-      for (const sp of [{ s: 1, nx: -tx, nz: -tz }, { s: -1, nx: tx, nz: tz }]) {
-        const acr = (half + 3) * sp.s;
-        const bx = cx - tz * acr, bz = cz + tx * acr;
-        cylAt(0.17, y + 0.8, 0, acr, (y + 0.8) / 2, 0x272b30, 6);   // support post from the abutment up to the plate
-        signQuad(S, bx, y, bz, sp.nx, sp.nz, w, h, cellUV);
-      }
+    // street-name signs mounted over the deck: a dark backing plate merged into the bridge
+    // geometry with a single-sided textured plate just in front of it, one facing each way —
+    // so the name reads correctly from both approaches and never shows mirrored text.
+    function addSigns(y) {
+      const w = Math.min(2 * half * 0.62, 13), h = w / 5.2;
+      at(w + 0.5, h + 0.5, 0.18, -6.8, 0, y, 0x18251f, true);
+      at(w + 0.5, h + 0.5, 0.18, 6.8, 0, y, 0x18251f, true);
+      signQuad(S, cx - tx * 6.95, y, cz - tz * 6.95, -tx, -tz, w, h, cellUV);   // faces upstream
+      signQuad(S, cx + tx * 6.95, y, cz + tz * 6.95, tx, tz, w, h, cellUV);     // faces downstream
     }
 
     // abutment piers on both banks (all bridge kinds)
@@ -3852,7 +3881,7 @@ window.CHICAGO = {
     // each half of the deck as a leaf that pivots up at its bank (bascule bridge opening)
     function buildLeaf(s, opening) {
       const parts = [];
-      const gap = 1.3, acrossLen = half - gap, cAcross = ((gap + half) / 2) * s;
+      const gap = 0.15, acrossLen = half - gap, cAcross = ((gap + half) / 2) * s;   // leaves all but touch when closed
       function piece(aSize, h, alongSize, alongC, oy, color, jit) {
         const g = new THREE.BoxGeometry(aSize, h, alongSize);
         g.rotateY(ang);
@@ -3867,6 +3896,12 @@ window.CHICAGO = {
         piece(acrossLen, 2.4, 1.1, so * (deckW / 2 - 0.4), cl + 1.5, RED_DK);
         piece(acrossLen, 0.95, 0.3, so * (deckW / 2 + 0.1), cl + 2.4, RED);
       }
+      // each leaf carries its own name sign (upstream face on one leaf, downstream on the
+      // other) so the sign pivots up WITH the deck when the bridge opens
+      const sw = Math.min(acrossLen * 0.9, 11), sh = sw / 5.2, sy = cl + 3.2;
+      const sAlong = s === 1 ? -6.8 : 6.8;
+      const snx = s === 1 ? -tx : tx, snz = s === 1 ? -tz : tz;
+      piece(sw + 0.4, sh + 0.4, 0.18, sAlong, sy, RED_DK);
       const geo = RR.City.mergeGeoms(parts);
       const px = cx - tz * half * s, py = cl + 0.8, pz = cz + tx * half * s;
       geo.translate(-px, -py, -pz);
@@ -3875,6 +3910,14 @@ window.CHICAGO = {
       const hinge = new THREE.Group();
       hinge.position.set(px, py, pz);
       hinge.add(mesh);
+      const SL = { sv: [], suv: [], sidx: [] };
+      signQuad(SL, cx + tx * sAlong + snx * 0.14 - tz * cAcross, sy, cz + tz * sAlong + snz * 0.14 + tx * cAcross, snx, snz, sw, sh, cellUV);
+      const sg = new THREE.BufferGeometry();
+      sg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(SL.sv), 3));
+      sg.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(SL.suv), 2));
+      sg.setIndex(SL.sidx);
+      sg.translate(-px, -py, -pz);
+      hinge.add(new THREE.Mesh(sg, S.signMat));
       RR.Engine.scene.add(hinge);
       animLeaves.push({ hinge, axis: new THREE.Vector3(tx, 0, tz).normalize(), s, phase: ((cx * 0.7 + cz) % 100) / 100, opening });
     }
@@ -3912,18 +3955,18 @@ window.CHICAGO = {
         for (let a = -half; a <= half; a += 6) cylAt(0.3, 6.0, s * 5.4, a, cl + 4.6, RED_DK, 4);
         cross(0.5, 0.5, span, s * 5.4, cl + 7.5, 0x3a3f45);
       }
-      addBankSigns(cl + 3.6);
+      addSigns(cl + 3.4);
     } else if (bridge.kind === 'deck') {
       // Lake Shore Drive: steel through-truss
       for (const s of [-1, 1]) cross(1.2, 7, span, s * 9.5, cl + 5.4, 0x6a7076);
       cross(20, 1.2, 8, 0, cl + 9.2, 0x6a7076);
       for (let a = -half; a <= half; a += 8) for (const s of [-1, 1]) cylAt(0.35, 7, s * 9.5, a, cl + 5.4, 0x5a6066, 4);
-      addBankSigns(cl + 3.8);
+      addSigns(cl + 3.6);
     } else {
       // bascule tender houses
       const houses = bridge.kind === 'bascule2' ? [[-1, -1], [-1, 1], [1, -1], [1, 1]] : [[-1, -1], [1, 1]];
       for (const [a, b2] of houses) tenderHouse(a * 8.5, b2 * (half + 3.6));
-      addBankSigns(cl + 3.6);
+      if (!anim) addSigns(cl + 3.3);   // animated bridges carry their signs on the leaves
     }
 
     addPierObstacles(cx, cz, tx, tz, half);
@@ -3936,6 +3979,7 @@ window.CHICAGO = {
     B.openings = [];
     const bridges = window.CHICAGO.bridges;
     const S = { geoms: [], sv: [], suv: [], sidx: [], atlas: buildSignAtlas(bridges) };
+    S.signMat = new THREE.MeshBasicMaterial({ map: S.atlas.tex });   // single-sided: no mirrored text
     bridges.forEach((b, i) => build(b, i, S));
 
     const mesh = new THREE.Mesh(RR.City.mergeGeoms(S.geoms), RR.City.flatMaterial());
@@ -3948,7 +3992,7 @@ window.CHICAGO = {
       g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(S.suv), 2));
       g.setIndex(S.sidx);
       g.computeVertexNormals();
-      const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: S.atlas.tex, side: THREE.DoubleSide }));
+      const m = new THREE.Mesh(g, S.signMat);
       m.renderOrder = 1;
       RR.Engine.scene.add(m);
     }
@@ -3967,6 +4011,93 @@ window.CHICAGO = {
   };
 
   RR.Bridges = B;
+})();
+
+</script>
+<script>
+/* ===== js/world/ramps.js ===== */
+/* River Racer — jump ramps: floating orange wedges moored on the straight approach to a few
+   bridges. Hit one at speed (boost helps) and you launch clear over the span. */
+(function () {
+  const RAMPS = { list: [] };
+  const U = () => RR.U;
+
+  // bridge name → how far upstream of the span the ramp lip sits (course travel = increasing d)
+  const PICKS = { 'LaSalle St': 40, 'State St': 44, 'Adams St': 42, 'Randolph St': 44, 'Grand Ave': 40, 'Columbus Dr': 48 };
+  const LEN = 16, W = 7, H = 4.6;
+
+  RAMPS.init = function () {
+    const rng = U().mulberry(777);
+    const geoms = [];
+    for (const b of window.CHICAGO.bridges) {
+      const dist = PICKS[b.name];
+      if (!dist) continue;
+      const p = RR.River.paths[b.branch];
+      if (!p) continue;
+      const q = U().pathNearest(p, b.x, b.z);
+      const d0 = q.d - dist - LEN;                    // leading (low) edge of the wedge
+      if (d0 < 40) continue;
+      const a = U().pathAt(p, d0, {});
+      RAMPS.list.push({ x: a.x, z: a.z, dirx: a.tx, dirz: a.tz, len: LEN, w: W, h: H, slope: H / LEN });
+      buildMesh(geoms, a.x, a.z, a.tx, a.tz, rng);
+    }
+    if (geoms.length) {
+      const mesh = new THREE.Mesh(RR.City.mergeGeoms(geoms), RR.City.flatMaterial());
+      mesh.castShadow = true;
+      RR.Engine.scene.add(mesh);
+    }
+  };
+
+  function buildMesh(geoms, x, z, dx, dz, rng) {
+    const ang = Math.atan2(dx, dz);
+    const pitch = Math.atan2(H, LEN);
+    const slopeLen = Math.hypot(LEN, H);
+    function part(g, c) {
+      g.rotateY(ang);
+      g.translate(x, 0, z);
+      RR.City.tintGeom(g, c, 0, rng);
+      geoms.push(g);
+    }
+    function onSlope(w2, th, sLen, sCenter, yLift, c) {
+      // a slab lying on the slope: sCenter = distance up the slope from the low lip
+      const g = new THREE.BoxGeometry(w2, th, sLen);
+      g.rotateX(-pitch);
+      const f = sCenter / slopeLen;
+      g.translate(0, 0.2 + f * H + yLift, f * LEN);
+      part(g, c);
+    }
+    onSlope(W, 0.5, slopeLen, slopeLen / 2, 0, 0xf07820);                 // deck
+    for (const s of [-1, 1]) {                                            // white edge rails
+      const g = new THREE.BoxGeometry(0.35, 0.55, slopeLen);
+      g.rotateX(-pitch);
+      g.translate(s * (W / 2 - 0.2), 0.2 + H / 2 + 0.34, LEN / 2);
+      part(g, 0xf2f2ee);
+    }
+    for (let i = 1; i <= 3; i++) onSlope(W - 1.6, 0.06, 1.0, slopeLen * i / 4, 0.29, 0xf2f2ee);  // cross stripes
+    const post = new THREE.BoxGeometry(W - 0.6, H, 1.4);                  // support under the lip
+    post.translate(0, H / 2 - 0.4, LEN - 0.7);
+    part(post, 0xc45a14);
+    const pont = new THREE.BoxGeometry(W + 0.8, 0.7, 2.6);                // pontoon at the low edge
+    pont.translate(0, 0.15, 0.8);
+    part(pont, 0x54585e);
+  }
+
+  // surface height if (x,z) is on a ramp, else null
+  RAMPS.query = function (x, z) {
+    for (let i = 0; i < RAMPS.list.length; i++) {
+      const r = RAMPS.list[i];
+      const dx = x - r.x, dz = z - r.z;
+      const along = dx * r.dirx + dz * r.dirz;
+      if (along < -0.4 || along > r.len) continue;
+      const across = dx * -r.dirz + dz * r.dirx;
+      if (Math.abs(across) > r.w / 2) continue;
+      const prog = Math.max(0, along) / r.len;
+      return { y: 0.25 + prog * r.h, slope: r.slope, dirx: r.dirx, dirz: r.dirz, prog };
+    }
+    return null;
+  };
+
+  RR.Ramps = RAMPS;
 })();
 
 </script>
@@ -4501,9 +4632,14 @@ window.CHICAGO = {
       const q = U().pathNearest(p, b.x, b.z);
       const ax = -q.tz, az = q.tx;                                // across-channel axis
       const half = q.w;
+      // if this is an animated bascule, cars must wait at the barrier while it's open
+      let gate = null;
+      if (RR.Bridges && RR.Bridges.openings) {
+        for (const o of RR.Bridges.openings) if (U().dist2(o.x, o.z, q.x, q.z) < 100) gate = o;
+      }
       for (let lane = 0; lane < 2; lane++) {
         for (let n = 0; n < 2; n++) {
-          carList.push({ cx: q.x, cz: q.z, ax, az, tx: q.tx, tz: q.tz, half,
+          carList.push({ cx: q.x, cz: q.z, ax, az, tx: q.tx, tz: q.tz, half, gate,
             lane: lane === 0 ? 2.4 : -2.4, dir: lane === 0 ? 1 : -1,
             u: (rng() * 2 - 1) * half, y: b.clearance + 2.15, spd: 7 + rng() * 5,
             col: CARS[(rng() * CARS.length) | 0] });
@@ -4640,7 +4776,12 @@ window.CHICAGO = {
     // cars
     for (let i = 0; i < carData.length; i++) {
       const c = carData[i];
-      c.u += c.spd * c.dir * dt;
+      let du = c.spd * c.dir * dt;
+      if (c.gate && c.gate.open > 0.02) {
+        if (Math.abs(c.u) < c.half + 1.5) du *= 1.7;               // caught on the span — clear it fast
+        else if (Math.abs(c.u + du) < c.half + 3.5) du = 0;        // otherwise wait at the barrier
+      }
+      c.u += du;
       if (c.u > c.half + 8) c.u = -(c.half + 8);
       else if (c.u < -(c.half + 8)) c.u = c.half + 8;
       const x = c.cx + c.ax * c.u + c.tx * c.lane, z = c.cz + c.az * c.u + c.tz * c.lane;
@@ -5066,10 +5207,12 @@ window.CHICAGO = {
   P.update = function (boat, dt, ctl, t) {
     const spec = boat.spec;
 
-    // ---- boost meter ----
-    const boosting = ctl.boost && ctl.throttle > 0.3 && boat.boostEnergy > 0.02 && !boat.finished;
-    if (boosting) boat.boostEnergy = Math.max(0, boat.boostEnergy - dt * 0.30);
-    else boat.boostEnergy = Math.min(1, boat.boostEnergy + dt * 0.115);
+    // ---- boost meter: drains fast, regens slow — a resource you spend on straights and jumps.
+    // Engaging needs a real reserve (0.15) but once lit it burns down to fumes (hysteresis).
+    const canEngage = boat.boostEnergy > (boat.boostHeat > 0.3 ? 0.02 : 0.15);
+    const boosting = ctl.boost && ctl.throttle > 0.3 && canEngage && !boat.finished;
+    if (boosting) boat.boostEnergy = Math.max(0, boat.boostEnergy - dt * 0.38);
+    else boat.boostEnergy = Math.min(1, boat.boostEnergy + dt * 0.085);
     boat.boostHeat = U().damp(boat.boostHeat, boosting ? 1 : 0, 6, dt);
 
     const topSpeed = spec.top * (boosting ? spec.boost : 1);
@@ -5143,6 +5286,28 @@ window.CHICAGO = {
       }
     }
 
+    // ---- jump ramps: ride up the wedge, launch off the lip (speed sets the arc) ----
+    if (RR.Ramps) {
+      const r = RR.Ramps.query(boat.pos.x, boat.pos.z);
+      if (r) {
+        if (boat.pos.y <= r.y + 0.6) {
+          boat.pos.y = r.y;
+          boat.airborne = false; boat.vy = 0; boat.airTime = 0;
+          boat._ramp = r;
+        }
+      } else if (boat._ramp) {
+        const sp = Math.hypot(boat.vel.x, boat.vel.z);
+        const fwd = boat.vel.x * boat._ramp.dirx + boat.vel.z * boat._ramp.dirz;
+        if (boat._ramp.prog > 0.65 && fwd > 5) {          // went over the lip, not off the side
+          boat.airborne = true;
+          boat.vy = sp * boat._ramp.slope * 1.25 + 1.6;
+          boat.airTime = 0;
+          if (boat.onLaunch) boat.onLaunch(sp);
+        }
+        boat._ramp = null;
+      }
+    }
+
     // ---- collisions: banks, obstacles, walls ----
     const wq = RR.River.waterQuery(boat.pos.x, boat.pos.z, boat.hint);
     boat.water = wq;
@@ -5161,7 +5326,8 @@ window.CHICAGO = {
 
     // ---- visual attitude ----
     const accelPitch = U().clamp((ctl.throttle * accel - ctl.brake * accel) * 0.012, -0.1, 0.16);
-    const targetPitch = boat.airborne ? -0.12 : (-accelPitch - wn.pitch * 1.4 * (fz) - wn.roll * 1.4 * fx) * 0.5 - Math.min(0.14, speed * 0.004);
+    let targetPitch = boat.airborne ? -0.12 : (-accelPitch - wn.pitch * 1.4 * (fz) - wn.roll * 1.4 * fx) * 0.5 - Math.min(0.14, speed * 0.004);
+    if (boat._ramp) targetPitch = -boat._ramp.slope * 1.15;   // nose-up climbing the wedge
     const targetRoll = ctl.steer * spec.lean * U().clamp(speed / 14, 0, 1) + (wn.roll * fz - wn.pitch * fx) * 1.2;
     boat.visPitch = U().damp(boat.visPitch, targetPitch, 5, dt);
     boat.visRoll = U().damp(boat.visRoll, targetRoll, 5, dt);
@@ -5192,6 +5358,7 @@ window.CHICAGO = {
     for (let i = 0; i < boats.length; i++) {
       for (let j = i + 1; j < boats.length; j++) {
         const a = boats[i], b = boats[j];
+        if (Math.abs(a.pos.y - b.pos.y) > 3) continue;       // a boat sailing overhead clears the one below
         const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
         const rr = (a.radius + b.radius) * 1.02;             // contact registers as the hulls visually touch
         const d2 = dx * dx + dz * dz;
@@ -5502,6 +5669,15 @@ window.CHICAGO = {
         1.6 + intensity * 2.6,
         boat.vel.z * 0.35 - s * side * (2 + intensity * 5),
         2, 1.6, 1);
+    }
+    // boost: a tall rooster tail off the stern so the burn is unmistakable
+    if (boat.boostHeat > 0.4 && speed > 8) {
+      FX.spray(
+        boat.pos.x - s * boat.radius * 1.15,
+        boat.pos.y + 0.3,
+        boat.pos.z - c * boat.radius * 1.15,
+        -boat.vel.x * 0.3, 4.5 + intensity * 4.5, -boat.vel.z * 0.3,
+        3, 3.2, 1.8);
     }
     // hard turns throw a rooster fan
     if (Math.abs(boat.visRoll) > 0.18 && speed > 12 && Math.random() < 0.75) {
@@ -6474,9 +6650,10 @@ window.CHICAGO = {
     return RR.U.canvasTexture(64, 128, (c, w, h) => {
       c.clearRect(0, 0, w, h);
       c.strokeStyle = '#ffd24a'; c.lineWidth = 14; c.lineCap = 'round';
-      for (let k = -1; k < 3; k++) {
+      // apex toward -canvas-y = +v = toward the FINISH (CanvasTexture flips Y)
+      for (let k = 0; k < 4; k++) {
         const y = k * (h / 2);
-        c.beginPath(); c.moveTo(6, y); c.lineTo(w / 2, y + h * 0.28); c.lineTo(w - 6, y); c.stroke();
+        c.beginPath(); c.moveTo(6, y); c.lineTo(w / 2, y - h * 0.28); c.lineTo(w - 6, y); c.stroke();
       }
     });
   }
@@ -6675,6 +6852,7 @@ window.CHICAGO = {
       S.results.push({ boat: b, time: S.time });
       if (b === S.player) {
         S.phase = 'finished';
+        S.finishTimeout = Math.min(S.finishTimeout, 2.2);   // the race is over when YOU cross the line
         saveBest(S.course.id, S.time);
         if (RACE.onPlayerFinish) RACE.onPlayerFinish(S.results.length, S.time);
       }
@@ -7028,7 +7206,7 @@ window.CHICAGO = {
       <div id="select-title">HOW TO PLAY</div>
       <div class="menu-note" style="font-size:15px;max-width:640px;line-height:2.1;">
         <b>W / ↑</b> — throttle &nbsp;&nbsp; <b>S / ↓</b> — brake &amp; reverse &nbsp;&nbsp; <b>A·D / ←·→</b> — steer<br>
-        <b>SHIFT</b> — trim boost (watch the meter under your speed) &nbsp;&nbsp; <b>C</b> — camera &nbsp;&nbsp; <b>R</b> — reset to course<br>
+        <b>SHIFT</b> — boost (watch the meter under your speed — spend it wisely) &nbsp;&nbsp; <b>C</b> — camera &nbsp;&nbsp; <b>R</b> — reset to course<br>
         <b>ESC</b> — pause &nbsp;&nbsp; Gamepad and touch supported.<br><br>
         Thread the checkpoint buoys — <span style="color:#ff5b4c">red LEFT</span>, <span style="color:#2ecc71">green RIGHT</span>.
         The river is narrow and the seawalls are real concrete; the lake is open water with real chop.<br>
@@ -7286,7 +7464,7 @@ window.CHICAGO = {
     ['POURING LAKE MICHIGAN…', () => { RR.Sky.init(); RR.Water.init(); }],
     ['RAISING THE SKYLINE…', () => { RR.City.init(); }],
     ['DRESSING THE LANDMARKS…', () => { landmarkTags = RR.Landmarks.init(); }],
-    ['LOWERING THE BRIDGES…', () => { RR.Bridges.init(); }],
+    ['LOWERING THE BRIDGES…', () => { RR.Bridges.init(); RR.Ramps.init(); }],
     ['LAYING THE RIVERWALK…', () => { RR.Riverwalk.init(); }],
     ['OPENING THE LOCK…', () => { RR.Lake.init(); }],
     ['RIGGING THE SAILBOATS…', () => { RR.Scenery.init(); }],
@@ -7373,10 +7551,10 @@ window.CHICAGO = {
     RR.Race.onCount = (n) => { RR.HUD.countdown(n); if (n > 0) RR.Audio.countdownBeep(false); else { RR.Audio.countdownBeep(true); RR.Audio.airhorn(); } };
     RR.Race.onCheckpoint = (n, total) => {
       RR.HUD.checkpointFlash(n, total); RR.Audio.checkpoint();
-      if (player) { player.boostEnergy = Math.min(1, player.boostEnergy + 0.6); RR.Camera.kick(0.25); RR.HUD.flash('BOOST REFILLED'); }
+      if (player) { player.boostEnergy = Math.min(1, player.boostEnergy + 0.45); RR.Camera.kick(0.25); RR.HUD.flash('+BOOST'); }
     };
     RR.Race.onLap = () => { RR.Audio.checkpoint(); };
-    RR.Race.onPlayerFinish = (pos) => { RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); };
+    RR.Race.onPlayerFinish = (pos) => { RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.flash('FINISH!'); };
     RR.Race.onRaceOver = (results) => {
       mode = 'results';
       RR.HUD.show(false);
@@ -7583,6 +7761,18 @@ window.CHICAGO = {
       window.RRTest._freecam = true;
     },
     clearCamera: () => { window.RRTest._freecam = false; },
+    // debug: drop the player somewhere with way on, e.g. lined up on a jump ramp
+    teleport: (x, z, heading, speed) => {
+      if (!player) return;
+      player.pos.set(x, 0.3, z);
+      if (heading != null) player.heading = heading;
+      const sp = speed == null ? 25 : speed;
+      player.vel.x = Math.sin(player.heading) * sp;
+      player.vel.z = Math.cos(player.heading) * sp;
+      player.hint = {};                 // stale water-query hints would drag the boat back
+      player.routeHint = null;
+      RR.Camera.snapTo(player);
+    },
     night: (m) => { if (RR.Theme) RR.Theme.apply(typeof m === 'string' ? m : (m ? 'night' : 'day')); },
     // hold full quality (disable adaptive downgrade) — used by visual tests on the software renderer
     pinQuality: () => { RR.Engine.setAutoQuality(false); if (RR.Reflect) RR.Reflect.enabled = true; if (RR.Post) RR.Post.enabled = true; },

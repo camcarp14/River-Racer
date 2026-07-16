@@ -122,9 +122,14 @@
       const q = U().pathNearest(p, b.x, b.z);
       const ax = -q.tz, az = q.tx;                                // across-channel axis
       const half = q.w;
+      // if this is an animated bascule, cars must wait at the barrier while it's open
+      let gate = null;
+      if (RR.Bridges && RR.Bridges.openings) {
+        for (const o of RR.Bridges.openings) if (U().dist2(o.x, o.z, q.x, q.z) < 100) gate = o;
+      }
       for (let lane = 0; lane < 2; lane++) {
         for (let n = 0; n < 2; n++) {
-          carList.push({ cx: q.x, cz: q.z, ax, az, tx: q.tx, tz: q.tz, half,
+          carList.push({ cx: q.x, cz: q.z, ax, az, tx: q.tx, tz: q.tz, half, gate,
             lane: lane === 0 ? 2.4 : -2.4, dir: lane === 0 ? 1 : -1,
             u: (rng() * 2 - 1) * half, y: b.clearance + 2.15, spd: 7 + rng() * 5,
             col: CARS[(rng() * CARS.length) | 0] });
@@ -261,7 +266,12 @@
     // cars
     for (let i = 0; i < carData.length; i++) {
       const c = carData[i];
-      c.u += c.spd * c.dir * dt;
+      let du = c.spd * c.dir * dt;
+      if (c.gate && c.gate.open > 0.02) {
+        if (Math.abs(c.u) < c.half + 1.5) du *= 1.7;               // caught on the span — clear it fast
+        else if (Math.abs(c.u + du) < c.half + 3.5) du = 0;        // otherwise wait at the barrier
+      }
+      c.u += du;
       if (c.u > c.half + 8) c.u = -(c.half + 8);
       else if (c.u < -(c.half + 8)) c.u = c.half + 8;
       const x = c.cx + c.ax * c.u + c.tx * c.lane, z = c.cz + c.az * c.u + c.tz * c.lane;

@@ -63,7 +63,7 @@
     ];
     for (const p of corners) S.sv.push(p[0], p[1], p[2]);
     S.suv.push(c.u0, c.vTop, c.u1, c.vTop, c.u1, c.vBot, c.u0, c.vBot);
-    S.sidx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    S.sidx.push(base, base + 2, base + 1, base, base + 3, base + 2);   // wound so the face points along (nx,nz)
   }
 
   function addPierObstacles(cx, cz, tx, tz, half) {
@@ -126,16 +126,15 @@
         if (RR.Theme) RR.Theme.addLamp(gx + tx * d * 0.55, cl + 5.6, gz + tz * d * 0.55, 0xffe6b0);
       }
     }
-    // name plates mounted on a post at each bank abutment — readable on approach, never floating
-    // over the channel, and clear of the bascule leaves (which pivot at the bank and rise mid-channel).
-    function addBankSigns(y) {
-      const w = Math.min(2 * half * 0.5, 8), h = w / 5.2;
-      for (const sp of [{ s: 1, nx: -tx, nz: -tz }, { s: -1, nx: tx, nz: tz }]) {
-        const acr = (half + 3) * sp.s;
-        const bx = cx - tz * acr, bz = cz + tx * acr;
-        cylAt(0.17, y + 0.8, 0, acr, (y + 0.8) / 2, 0x272b30, 6);   // support post from the abutment up to the plate
-        signQuad(S, bx, y, bz, sp.nx, sp.nz, w, h, cellUV);
-      }
+    // street-name signs mounted over the deck: a dark backing plate merged into the bridge
+    // geometry with a single-sided textured plate just in front of it, one facing each way —
+    // so the name reads correctly from both approaches and never shows mirrored text.
+    function addSigns(y) {
+      const w = Math.min(2 * half * 0.62, 13), h = w / 5.2;
+      at(w + 0.5, h + 0.5, 0.18, -6.8, 0, y, 0x18251f, true);
+      at(w + 0.5, h + 0.5, 0.18, 6.8, 0, y, 0x18251f, true);
+      signQuad(S, cx - tx * 6.95, y, cz - tz * 6.95, -tx, -tz, w, h, cellUV);   // faces upstream
+      signQuad(S, cx + tx * 6.95, y, cz + tz * 6.95, tx, tz, w, h, cellUV);     // faces downstream
     }
 
     // abutment piers on both banks (all bridge kinds)
@@ -172,7 +171,7 @@
     // each half of the deck as a leaf that pivots up at its bank (bascule bridge opening)
     function buildLeaf(s, opening) {
       const parts = [];
-      const gap = 1.3, acrossLen = half - gap, cAcross = ((gap + half) / 2) * s;
+      const gap = 0.15, acrossLen = half - gap, cAcross = ((gap + half) / 2) * s;   // leaves all but touch when closed
       function piece(aSize, h, alongSize, alongC, oy, color, jit) {
         const g = new THREE.BoxGeometry(aSize, h, alongSize);
         g.rotateY(ang);
@@ -187,6 +186,12 @@
         piece(acrossLen, 2.4, 1.1, so * (deckW / 2 - 0.4), cl + 1.5, RED_DK);
         piece(acrossLen, 0.95, 0.3, so * (deckW / 2 + 0.1), cl + 2.4, RED);
       }
+      // each leaf carries its own name sign (upstream face on one leaf, downstream on the
+      // other) so the sign pivots up WITH the deck when the bridge opens
+      const sw = Math.min(acrossLen * 0.9, 11), sh = sw / 5.2, sy = cl + 3.2;
+      const sAlong = s === 1 ? -6.8 : 6.8;
+      const snx = s === 1 ? -tx : tx, snz = s === 1 ? -tz : tz;
+      piece(sw + 0.4, sh + 0.4, 0.18, sAlong, sy, RED_DK);
       const geo = RR.City.mergeGeoms(parts);
       const px = cx - tz * half * s, py = cl + 0.8, pz = cz + tx * half * s;
       geo.translate(-px, -py, -pz);
@@ -195,6 +200,14 @@
       const hinge = new THREE.Group();
       hinge.position.set(px, py, pz);
       hinge.add(mesh);
+      const SL = { sv: [], suv: [], sidx: [] };
+      signQuad(SL, cx + tx * sAlong + snx * 0.14 - tz * cAcross, sy, cz + tz * sAlong + snz * 0.14 + tx * cAcross, snx, snz, sw, sh, cellUV);
+      const sg = new THREE.BufferGeometry();
+      sg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(SL.sv), 3));
+      sg.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(SL.suv), 2));
+      sg.setIndex(SL.sidx);
+      sg.translate(-px, -py, -pz);
+      hinge.add(new THREE.Mesh(sg, S.signMat));
       RR.Engine.scene.add(hinge);
       animLeaves.push({ hinge, axis: new THREE.Vector3(tx, 0, tz).normalize(), s, phase: ((cx * 0.7 + cz) % 100) / 100, opening });
     }
@@ -232,18 +245,18 @@
         for (let a = -half; a <= half; a += 6) cylAt(0.3, 6.0, s * 5.4, a, cl + 4.6, RED_DK, 4);
         cross(0.5, 0.5, span, s * 5.4, cl + 7.5, 0x3a3f45);
       }
-      addBankSigns(cl + 3.6);
+      addSigns(cl + 3.4);
     } else if (bridge.kind === 'deck') {
       // Lake Shore Drive: steel through-truss
       for (const s of [-1, 1]) cross(1.2, 7, span, s * 9.5, cl + 5.4, 0x6a7076);
       cross(20, 1.2, 8, 0, cl + 9.2, 0x6a7076);
       for (let a = -half; a <= half; a += 8) for (const s of [-1, 1]) cylAt(0.35, 7, s * 9.5, a, cl + 5.4, 0x5a6066, 4);
-      addBankSigns(cl + 3.8);
+      addSigns(cl + 3.6);
     } else {
       // bascule tender houses
       const houses = bridge.kind === 'bascule2' ? [[-1, -1], [-1, 1], [1, -1], [1, 1]] : [[-1, -1], [1, 1]];
       for (const [a, b2] of houses) tenderHouse(a * 8.5, b2 * (half + 3.6));
-      addBankSigns(cl + 3.6);
+      if (!anim) addSigns(cl + 3.3);   // animated bridges carry their signs on the leaves
     }
 
     addPierObstacles(cx, cz, tx, tz, half);
@@ -256,6 +269,7 @@
     B.openings = [];
     const bridges = window.CHICAGO.bridges;
     const S = { geoms: [], sv: [], suv: [], sidx: [], atlas: buildSignAtlas(bridges) };
+    S.signMat = new THREE.MeshBasicMaterial({ map: S.atlas.tex });   // single-sided: no mirrored text
     bridges.forEach((b, i) => build(b, i, S));
 
     const mesh = new THREE.Mesh(RR.City.mergeGeoms(S.geoms), RR.City.flatMaterial());
@@ -268,7 +282,7 @@
       g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(S.suv), 2));
       g.setIndex(S.sidx);
       g.computeVertexNormals();
-      const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: S.atlas.tex, side: THREE.DoubleSide }));
+      const m = new THREE.Mesh(g, S.signMat);
       m.renderOrder = 1;
       RR.Engine.scene.add(m);
     }

@@ -10,7 +10,7 @@ Arcade boat racing down the **real Chicago River** and out into **Lake Michigan*
 
 **From the repo:** open `index.html` in any browser.
 
-The river **mirrors the skyline** with real planar reflections, the golden hour **blooms**, boats kick up **bow-wave foam**, and **bascule bridges raise and lower** — gun it under one as its warning horn sounds and gulls scatter off the deck. You **shove rival racers off their line**, **dodge the yellow water taxis and white Wendella tour boats** working the channel, and blast through checkpoint gates to top up your boost. Tap **N** to ride the clock through **day → sunset → night**: the sky burns orange at dusk, then the whole city lights up — thousands of windows and street lamps glowing on the black water, the **Navy Pier wheel** blazing with color-cycling LEDs, and **fireworks** bursting over the pier. Hit **G** to dye the whole river **St. Patrick's-Day green**, or **P** for a cinematic photo-mode orbit. The renderer scales quality dynamically to hold frame rate.
+The river **mirrors the skyline** with real planar reflections, the golden hour **blooms**, boats kick up **bow-wave foam**, and **bascule bridges raise and lower** — gun it under one as its warning horn sounds and gulls scatter off the deck (traffic waits at the barriers while the leaves are up). Hit one of the orange **jump ramps** at full boost and you'll **launch clean over the span**. You **shove rival racers off their line**, **dodge the yellow water taxis and white Wendella tour boats** working the channel, and blast through checkpoint gates to top up your boost. Tap **N** to ride the clock through **day → sunset → night**: the sky burns orange at dusk, then the whole city lights up — thousands of windows and street lamps glowing on the black water, the **Navy Pier wheel** blazing with color-cycling LEDs, and **fireworks** bursting over the pier. Hit **G** to dye the whole river **St. Patrick's-Day green**, or **P** for a cinematic photo-mode orbit. The renderer scales quality dynamically to hold frame rate.
 
 ## The map is real
 
@@ -46,7 +46,7 @@ Five hulls with genuinely different physics: a whippy **sport jet ski**, an offs
 | `W` / `↑` | Throttle |
 | `S` / `↓` | Brake / reverse |
 | `A` `D` / `←` `→` | Steer |
-| `Shift` | Trim boost (watch the meter) |
+| `Shift` | Boost (drains fast, refills slow — spend it wisely) |
 | `C` | Camera (chase / close / hull) |
 | `N` | Time of day (day / sunset / night) |
 | `G` | Dye the river green (St. Patrick's Day) |
