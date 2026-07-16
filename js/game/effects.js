@@ -127,6 +127,79 @@
     pGeo.attributes.position.needsUpdate = true;
   }
 
+  // ---------- confetti: bright multicolor celebration pieces ----------
+  const MAXC = 700;
+  const CONF_COLORS = [
+    [1.0, 0.824, 0.29],    // gold #ffd24a
+    [1.0, 0.231, 0.188],   // red #ff3b30
+    [0.494, 0.784, 0.89],  // sky #7ec8e3
+    [1.0, 1.0, 1.0],       // white
+    [0.18, 0.8, 0.443],    // green #2ecc71
+  ];
+  let cGeo, cPts, cPool, cIdx = 0;
+  function initConfetti(scene) {
+    cGeo = new THREE.BufferGeometry();
+    const pos = new Float32Array(MAXC * 3);
+    const col = new Float32Array(MAXC * 3);
+    for (let i = 0; i < MAXC; i++) pos[i * 3 + 1] = -50;
+    cGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+    cGeo.setAttribute('color', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
+    cPool = [];
+    for (let i = 0; i < MAXC; i++) cPool.push({ x: 0, y: -50, z: 0, vx: 0, vy: 0, vz: 0, life: 0, age: 99, r: 1, g: 1, b: 1 });
+    const tex = U().canvasTexture(32, 32, (ctx) => {
+      ctx.shadowColor = 'rgba(255,255,255,1)';
+      ctx.shadowBlur = 5;
+      ctx.fillStyle = 'rgba(255,255,255,1)';
+      ctx.fillRect(9, 9, 14, 14);              // soft square-ish sprite
+    });
+    const mat = new THREE.PointsMaterial({
+      size: 0.55, map: tex, vertexColors: true, transparent: true,
+      depthWrite: false, sizeAttenuation: true,          // normal blending so colors read
+    });
+    cPts = new THREE.Points(cGeo, mat);
+    cPts.frustumCulled = false;
+    cPts.renderOrder = 4;
+    cPts.layers.set(1);
+    scene.add(cPts);
+  }
+
+  FX.confetti = function (x, y, z, n) {
+    if (!cPool) return;
+    for (let i = 0; i < n; i++) {
+      const p = cPool[cIdx]; cIdx = (cIdx + 1) % MAXC;
+      const c = CONF_COLORS[(Math.random() * CONF_COLORS.length) | 0];
+      p.x = x; p.y = y; p.z = z;
+      p.vx = (Math.random() - 0.5) * 10;       // lateral ±5
+      p.vy = 6 + Math.random() * 6;            // upward 6..12
+      p.vz = (Math.random() - 0.5) * 10;
+      p.life = 1.6 + Math.random() * 1.0;
+      p.age = 0;
+      p.r = c[0]; p.g = c[1]; p.b = c[2];
+    }
+  };
+
+  function updateConfetti(dt, t) {
+    const pos = cGeo.attributes.position.array;
+    const col = cGeo.attributes.color.array;
+    for (let i = 0; i < MAXC; i++) {
+      const p = cPool[i];
+      if (p.age < p.life) {
+        p.age += dt;
+        p.vy -= 6 * dt;
+        p.x += (p.vx + Math.sin(t * 8 + i) * 1.7) * dt;   // per-piece flutter
+        p.y += p.vy * dt; p.z += p.vz * dt;
+        if (p.y < -0.2) p.age = p.life;
+        const fade = Math.max(0, 1 - p.age / p.life);
+        pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
+        col[i * 3] = p.r * fade; col[i * 3 + 1] = p.g * fade; col[i * 3 + 2] = p.b * fade;
+      } else {
+        pos[i * 3 + 1] = -50;
+      }
+    }
+    cGeo.attributes.position.needsUpdate = true;
+    cGeo.attributes.color.needsUpdate = true;
+  }
+
   // ---------- gulls circling over the lake ----------
   let gulls = [];
   function initGulls(scene) {
@@ -192,6 +265,42 @@
     }
   }
 
+  // ---------- boost flame: additive cone pair at the stern while the burn is hot ----------
+  function createFlame(boat) {
+    const size = boat.mesh.userData && boat.mesh.userData.size;
+    const sternZ = size ? -size.l / 2 : -(boat.radius || 2);
+    const g = new THREE.Group();
+    const outer = new THREE.Mesh(
+      new THREE.ConeGeometry(0.28, 1.4, 6),
+      new THREE.MeshBasicMaterial({ color: 0xff8a2a, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
+    outer.rotation.x = -Math.PI / 2;           // cone tip aft (-z local)
+    outer.layers.set(1);
+    outer.renderOrder = 3;
+    const inner = new THREE.Mesh(
+      new THREE.ConeGeometry(0.14, 0.85, 6),
+      new THREE.MeshBasicMaterial({ color: 0xfff3cf, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+    inner.rotation.x = -Math.PI / 2;
+    inner.position.z = -0.12;                  // white-hot core sits inside the orange sheath
+    inner.layers.set(1);
+    inner.renderOrder = 3;
+    g.add(outer); g.add(inner);
+    g.position.set(0, 0.35, sternZ - 0.5);
+    g.visible = false;
+    return g;
+  }
+
+  function updateFlame(w, boat, t) {
+    if (!w.flame) {
+      if (!boat.mesh) return;
+      w.flame = createFlame(boat);
+      boat.mesh.add(w.flame);
+    }
+    const heat = boat.boostHeat || 0;
+    const on = heat > 0.45;
+    w.flame.visible = on;
+    if (on) w.flame.scale.setScalar(0.7 + heat * (0.6 + 0.25 * Math.sin(t * 40)));
+  }
+
   FX.splashBurst = function (x, y, z, intensity) {
     FX.spray(x, y + 0.2, z, 0, 3.5 + intensity * 5, 0, Math.floor(12 + intensity * 26), 4.5 + intensity * 3, 1.6);
   };
@@ -200,6 +309,7 @@
   FX.init = function () {
     const scene = RR.Engine.scene;
     initParticles(scene);
+    initConfetti(scene);
     initGulls(scene);
     FX._scene = scene;
   };
@@ -214,6 +324,11 @@
       FX._scene.remove(w.mesh);
       w.geo.dispose();
       w.mat.dispose();
+      if (w.flame) {                 // cones ride on boat.mesh (removed with the boat) — just free GPU resources
+        if (w.flame.parent) w.flame.parent.remove(w.flame);
+        w.flame.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
+        w.flame = null;
+      }
     });
     wakes.clear();
   };
@@ -221,10 +336,11 @@
   FX.update = function (boats, dt, t) {
     for (const b of boats) {
       const w = wakes.get(b);
-      if (w) updateWake(w, b, dt, t);
+      if (w) { updateWake(w, b, dt, t); updateFlame(w, b, t); }
       hullSpray(b, dt, t);
     }
     updateParticles(dt);
+    updateConfetti(dt, t);
     updateGulls(t);
   };
 

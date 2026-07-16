@@ -39,6 +39,13 @@
 
   F.setActive = function (on) { F.active = on; };
 
+  // fire one burst immediately at a point, regardless of the night-only flag.
+  // colorArrOrNull: [r,g,b] 0..1 or null for a random palette color. No-op before init.
+  F.burstAt = function (x, y, z, colorArrOrNull) {
+    if (!geo) return;
+    burst(x, y, z, colorArrOrNull || COLORS[(Math.random() * COLORS.length) | 0]);
+  };
+
   F.init = function () {
     const np = window.CHICAGO.lake.navyPier;
     bases = [

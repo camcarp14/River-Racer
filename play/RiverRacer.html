@@ -41,6 +41,8 @@
   #placement-sub { font-size: 26px; font-weight: 700; letter-spacing: 10px; color: #e8f4fa; text-shadow: 0 3px 16px rgba(0,0,0,.6); animation: placesub .5s ease-out .35s both; }
   @keyframes placepop { 0% { transform: scale(.1) rotate(-9deg); opacity: 0; } 60% { transform: scale(1.18) rotate(2deg); opacity: 1; } 100% { transform: scale(1) rotate(0); opacity: 1; } }
   @keyframes placesub { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+  #vignette { position: absolute; inset: 0; pointer-events: none; z-index: 4; opacity: 0;
+    background: radial-gradient(ellipse at center, transparent 52%, rgba(4,10,18,.55) 88%, rgba(2,6,12,.8) 100%); }
   @keyframes blink { 50% { opacity: .15; } }
   #countdown { position: absolute; left: 50%; top: 38%; transform: translate(-50%,-50%); font-size: 140px; font-weight: 900; font-style: italic; color: #fff; text-shadow: 0 0 40px rgba(126,200,227,.9), 0 6px 0 rgba(0,0,0,.35); display: none; }
   #minimap { position: absolute; right: 22px; top: 18px; width: 200px; height: 260px; border-radius: 12px; border: 1px solid rgba(126,200,227,.35); background: var(--hud-bg); }
@@ -113,6 +115,7 @@
   <div id="checkpoint-flash"></div>
   <div id="wrongway">WRONG WAY HOMIE</div>
   <div id="placement"><div id="placement-big"></div><div id="placement-sub"></div></div>
+  <div id="vignette"></div>
   <div id="countdown"></div>
   <div id="landmark-tag"></div>
   <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake<br><b>SHIFT</b> boost &nbsp;<b>C</b> camera &nbsp;<b>N</b> time of day &nbsp;<b>G</b> green river &nbsp;<b>P</b> photo &nbsp;<b>R</b> reset &nbsp;<b>ESC</b> pause</div>
@@ -4113,16 +4116,25 @@ window.CHICAGO = {
       }
       addSigns(cl + 3.4);
     } else if (bridge.kind === 'deck') {
-      // Lake Shore Drive: steel through-truss
-      for (const s of [-1, 1]) cross(1.2, 7, span, s * 9.5, cl + 5.4, 0x6a7076);
-      cross(20, 1.2, 8, 0, cl + 9.2, 0x6a7076);
-      for (let a = -half; a <= half; a += 8) for (const s of [-1, 1]) cylAt(0.35, 7, s * 9.5, a, cl + 5.4, 0x5a6066, 4);
+      // girder bridge: green-steel fascia UNDER the deck edges + open railings above,
+      // so the span reads airy from the water instead of a solid wall
+      const GRN = 0x4f625a;
+      for (const s of [-1, 1]) cross(0.9, 2.0, span, s * 10.2, cl - 0.2, GRN);
+      for (const s of [-1, 1]) {
+        cross(0.22, 0.18, span, s * 10.6, cl + 3.1, 0x77817b);                       // top rail
+        for (let a = -half - 4; a <= half + 4; a += 5) cylAt(0.11, 1.2, s * 10.6, a, cl + 2.5, 0x6a7076, 4);
+      }
       if (bridge.name.indexOf('Lake Shore') >= 0) {
-        // the Link Bridge's four monumental Art-Moderne pylons
+        // the Link Bridge: double-deck steel + four slender Art-Moderne limestone pylons
+        cross(18, 0.9, span, 0, cl - 2.4, GRN);                                       // lower deck chord
+        for (let a = -half; a <= half; a += 8) for (const s of [-1, 1]) cylAt(0.15, 2.2, s * 8.8, a, cl - 1.2, 0x44554e, 4);
         for (const sA of [-1, 1]) for (const sB of [-1, 1]) {
-          at(7, 17, 10, sA * (deckW / 2 + 4.5), sB * (half + 6), 8.5, 0xb9b4a6, true);
-          at(8, 2, 11, sA * (deckW / 2 + 4.5), sB * (half + 6), 18, 0x9a968c, true);
-          if (RR.Theme) RR.Theme.addLamp(cx + tx * sA * (deckW / 2 + 4.5) - tz * sB * (half + 6), 19.6, cz + tz * sA * (deckW / 2 + 4.5) + tx * sB * (half + 6), 0xffe6b0);
+          const ao = sA * (deckW / 2 + 3.5), ac = sB * (half + 4);
+          at(5.5, 3, 6.5, ao, ac, 1.5, 0xb3ae9e, true);                               // base
+          at(4.2, 18, 5.2, ao, ac, 12, 0xc4bfae, true);                               // shaft
+          at(4.8, 1.6, 5.8, ao, ac, 21.4, 0xb3ae9e, true);                            // stepped cap
+          at(2.2, 1.8, 3.0, ao, ac, 23, 0xc4bfae, true);                              // crown block
+          if (RR.Theme) RR.Theme.addLamp(cx + tx * ao - tz * ac, 24.2, cz + tz * ao + tx * ac, 0xffe6b0);
         }
       }
       addSigns(cl + 3.6);
@@ -4267,16 +4279,20 @@ window.CHICAGO = {
 </script>
 <script>
 /* ===== js/world/eggs.js ===== */
-/* River Racer — Chicago easter eggs: waving city flags, the famous Rat Hole sidewalk
-   imprint, and Buckingham Fountain's animated water jets. Static bits merge into one
-   draw call; only the flags and jets are live meshes (all on layer 1, skipped by the
-   planar-reflection pass). */
+/* River Racer — Chicago easter eggs: waving city flags (three fly from bascule
+   tender-house roofs over the racing line), the famous Rat Hole sidewalk imprint,
+   Buckingham Fountain's animated water jets, CTA "L" trains crossing the Wells St
+   and Lake St double-deck bridges, and a fireboat saluting racers near the river
+   mouth with arcing water plumes. Static bits merge into one draw call; the live
+   meshes all sit on layer 1 (skipped by the planar-reflection pass). */
 (function () {
   const E = { tags: [] };
   const U = () => RR.U;
   let rng;
   let flagMesh = null, flagMeta = [], flagBase = null, flagU = null;
   let mainJet = null;
+  const trains = [];             // CTA "L" trains crossing the double-deck bridges
+  let fb = null;                 // fireboat salute state
 
   function tint(geo, hex, jit) { RR.City.tintGeom(geo, hex, jit || 0, rng); return geo; }
 
@@ -4320,12 +4336,18 @@ window.CHICAGO = {
       spots.push({ x: bf.x + dx, z: bf.z + dz, y: GY });             // fountain plaza corners
     }
     const main = RR.River.paths.main;
-    for (const f of [0.22, 0.42, 0.62]) {                            // riverwalk spots, south bank
-      const q = U().pathAt(main, main.len * f, {});
-      for (let off = q.w + 11; off < q.w + 32; off += 4) {
-        const px = q.x - q.tz * off, pz = q.z + q.tx * off;
-        if (RR.City.landClearance(px, pz) > 2) { spots.push({ x: px, z: pz, y: GY }); break; }
-      }
+    // three flags fly from bascule tender-house roofs where racers pass right under them
+    // (houses sit at along ±8.5, across ±(w+3.6) from the snapped bridge center)
+    for (const nm of ['LaSalle St', 'DuSable / Michigan Ave', 'State St']) {
+      const b = C.bridges.find((bb) => bb.name === nm);
+      if (!b || !RR.River.paths[b.branch]) continue;
+      const q = U().pathNearest(RR.River.paths[b.branch], b.x, b.z);
+      const acr = q.w + 3.6;
+      spots.push({
+        x: q.x + q.tx * 8.5 - q.tz * acr,
+        z: q.z + q.tz * 8.5 + q.tx * acr,
+        y: b.clearance + 10, deck: true,                             // pole base on the roof top
+      });
     }
 
     // one shared plane, cloned into a single merged mesh; vertices wave in the update hook
@@ -4419,6 +4441,72 @@ window.CHICAGO = {
       }
     }
 
+    // ---------- CTA "L" trains: a stainless 3-car consist slides across each double-deck span ----------
+    for (const b of C.bridges) {
+      if (b.kind !== 'l') continue;                                  // Wells St + Lake St
+      const path = RR.River.paths[b.branch];
+      if (!path) continue;
+      const q = U().pathNearest(path, b.x, b.z);
+      const ax = -q.tz, az = q.tx;                                   // across-channel axis
+      const parts = [];
+      for (let k = -1; k <= 1; k++) {                                // three cars, small gaps
+        const co = k * 14.6;
+        const body = new THREE.BoxGeometry(14, 3, 2.6);
+        body.translate(co, 1.5, 0);
+        parts.push(tint(body, 0xc9ced4, 0.03));                      // stainless silver
+        for (const s of [-1, 1]) {                                   // dark window band each side
+          const band = new THREE.BoxGeometry(12.6, 0.95, 0.12);
+          band.translate(co, 1.95, s * 1.32);
+          parts.push(tint(band, 0x1c232b, 0));
+        }
+        const hump = new THREE.BoxGeometry(13.2, 0.35, 1.7);         // subtle roof hump
+        hump.translate(co, 3.12, 0);
+        parts.push(tint(hump, 0xaab0b6, 0));
+      }
+      const g = RR.City.mergeGeoms(parts);
+      g.rotateY(Math.atan2(-az, ax));                                // length axis onto the crossing axis
+      const m = new THREE.Mesh(g, RR.City.flatMaterial());
+      m.layers.set(1);
+      m.position.set(q.x, -1000, q.z);                               // parked hidden until it runs
+      scene.add(m);
+      trains.push({ mesh: m, cx: q.x, cz: q.z, ax, az, y: b.clearance + 8.6,
+        end: q.w + 55, run: false, dir: 1, s: 0, wait: 4 + rng() * 14 });
+    }
+
+    // ---------- FIREBOAT SALUTE: moored near the river mouth, arcing water plumes over the channel ----------
+    {
+      const q = U().pathAt(main, main.len - 320, {});
+      const off = q.w * 0.72;                                        // hugs the bank, out of the racing line
+      const bx = q.x - q.tz * off, bz = q.z + q.tx * off;
+      const grp = new THREE.Group();
+      const bm = (c) => new THREE.MeshLambertMaterial({ color: c });
+      const L = 12, W = 4;
+      const hull = new THREE.Mesh(new THREE.BoxGeometry(W, 1.7, L), bm(0xc22b1f));
+      const hp = hull.geometry.attributes.position;                  // pinch bow/stern like life.js
+      for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getZ(i)) > L * 0.42) hp.setX(i, hp.getX(i) * 0.4); }
+      hull.geometry.computeVertexNormals(); hull.position.y = 0.55; grp.add(hull);
+      const cabin = new THREE.Mesh(new THREE.BoxGeometry(W - 1.1, 1.5, 4.6), bm(0xf1efe7));
+      cabin.position.set(0, 2.1, -0.8); grp.add(cabin);
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 3.2, 5), bm(0x5b6066));
+      mast.position.set(0, 4.2, -1.6); grp.add(mast);
+      for (const s of [-1, 1]) {                                     // deck monitors the plumes fire from
+        const mon = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 1.1, 5), bm(0x8a2018));
+        mon.position.set(s * 1.1, 1.9, 2.2); grp.add(mon);
+      }
+      grp.rotation.y = Math.atan2(q.tx, q.tz);                       // bow points downstream
+      grp.position.set(bx, 0, bz);
+      grp.traverse((o) => o.layers.set(1));
+      scene.add(grp);
+      const cy = Math.cos(grp.rotation.y), sy = Math.sin(grp.rotation.y);
+      fb = { g: grp, x: bx, z: bz, ph: rng() * 9, n: [] };
+      for (const s of [-1, 1]) fb.n.push({                           // nozzle offsets + launch velocities
+        ox: s * 1.1 * cy + 2.2 * sy, oy: 2.5, oz: -s * 1.1 * sy + 2.2 * cy,
+        vx: q.tz * 5 + q.tx * s * 4.5,                               // out over the river, fanned fore/aft
+        vz: -q.tx * 5 + q.tz * s * 4.5,
+      });
+      E.tags.push({ name: 'FIREBOAT SALUTE', x: bx, z: bz, r2: 90 * 90 });
+    }
+
     if (flat.length) {
       const mesh = new THREE.Mesh(RR.City.mergeGeoms(flat), RR.City.flatMaterial());
       mesh.castShadow = true;
@@ -4446,6 +4534,31 @@ window.CHICAGO = {
         mainJet.scale.y = 14 + 6 * Math.sin(t * 0.45);
         const br = 1 + 0.15 * Math.sin(t * 1.7);
         mainJet.scale.x = br; mainJet.scale.z = br;
+      }
+      // L trains slide across their spans at ~20 m/s, then hide and re-arm (14-24 s)
+      for (let i = 0; i < trains.length; i++) {
+        const tr = trains[i];
+        if (tr.run) {
+          tr.s += 20 * dt * tr.dir;
+          if (tr.s * tr.dir > tr.end) { tr.run = false; tr.wait = 14 + rng() * 10; tr.mesh.position.y = -1000; }
+          else tr.mesh.position.set(tr.cx + tr.ax * tr.s, tr.y, tr.cz + tr.az * tr.s);
+        } else {
+          tr.wait -= dt;
+          if (tr.wait <= 0) { tr.run = true; tr.dir = -tr.dir; tr.s = -tr.end * tr.dir; }
+        }
+      }
+      // fireboat bobs on the swell and keeps two arcing plumes going over the channel
+      if (fb) {
+        const wy = U().waterHeight(fb.x, fb.z, t, 1);
+        fb.g.position.y = wy;
+        fb.g.rotation.z = Math.sin(t * 0.7 + fb.ph) * 0.03;
+        if (RR.FX) for (let i = 0; i < 2; i++) {
+          if (Math.random() < 0.25) {
+            const n = fb.n[i];
+            RR.FX.spray(fb.x + n.ox, wy + n.oy, fb.z + n.oz,
+              n.vx, 7.5 + Math.random() * 1.5, n.vz, 3, 1.4, 1.4);
+          }
+        }
       }
     });
   };
@@ -5340,6 +5453,13 @@ window.CHICAGO = {
 
   F.setActive = function (on) { F.active = on; };
 
+  // fire one burst immediately at a point, regardless of the night-only flag.
+  // colorArrOrNull: [r,g,b] 0..1 or null for a random palette color. No-op before init.
+  F.burstAt = function (x, y, z, colorArrOrNull) {
+    if (!geo) return;
+    burst(x, y, z, colorArrOrNull || COLORS[(Math.random() * COLORS.length) | 0]);
+  };
+
   F.init = function () {
     const np = window.CHICAGO.lake.navyPier;
     bases = [
@@ -6190,6 +6310,79 @@ window.CHICAGO = {
     pGeo.attributes.position.needsUpdate = true;
   }
 
+  // ---------- confetti: bright multicolor celebration pieces ----------
+  const MAXC = 700;
+  const CONF_COLORS = [
+    [1.0, 0.824, 0.29],    // gold #ffd24a
+    [1.0, 0.231, 0.188],   // red #ff3b30
+    [0.494, 0.784, 0.89],  // sky #7ec8e3
+    [1.0, 1.0, 1.0],       // white
+    [0.18, 0.8, 0.443],    // green #2ecc71
+  ];
+  let cGeo, cPts, cPool, cIdx = 0;
+  function initConfetti(scene) {
+    cGeo = new THREE.BufferGeometry();
+    const pos = new Float32Array(MAXC * 3);
+    const col = new Float32Array(MAXC * 3);
+    for (let i = 0; i < MAXC; i++) pos[i * 3 + 1] = -50;
+    cGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+    cGeo.setAttribute('color', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
+    cPool = [];
+    for (let i = 0; i < MAXC; i++) cPool.push({ x: 0, y: -50, z: 0, vx: 0, vy: 0, vz: 0, life: 0, age: 99, r: 1, g: 1, b: 1 });
+    const tex = U().canvasTexture(32, 32, (ctx) => {
+      ctx.shadowColor = 'rgba(255,255,255,1)';
+      ctx.shadowBlur = 5;
+      ctx.fillStyle = 'rgba(255,255,255,1)';
+      ctx.fillRect(9, 9, 14, 14);              // soft square-ish sprite
+    });
+    const mat = new THREE.PointsMaterial({
+      size: 0.55, map: tex, vertexColors: true, transparent: true,
+      depthWrite: false, sizeAttenuation: true,          // normal blending so colors read
+    });
+    cPts = new THREE.Points(cGeo, mat);
+    cPts.frustumCulled = false;
+    cPts.renderOrder = 4;
+    cPts.layers.set(1);
+    scene.add(cPts);
+  }
+
+  FX.confetti = function (x, y, z, n) {
+    if (!cPool) return;
+    for (let i = 0; i < n; i++) {
+      const p = cPool[cIdx]; cIdx = (cIdx + 1) % MAXC;
+      const c = CONF_COLORS[(Math.random() * CONF_COLORS.length) | 0];
+      p.x = x; p.y = y; p.z = z;
+      p.vx = (Math.random() - 0.5) * 10;       // lateral ±5
+      p.vy = 6 + Math.random() * 6;            // upward 6..12
+      p.vz = (Math.random() - 0.5) * 10;
+      p.life = 1.6 + Math.random() * 1.0;
+      p.age = 0;
+      p.r = c[0]; p.g = c[1]; p.b = c[2];
+    }
+  };
+
+  function updateConfetti(dt, t) {
+    const pos = cGeo.attributes.position.array;
+    const col = cGeo.attributes.color.array;
+    for (let i = 0; i < MAXC; i++) {
+      const p = cPool[i];
+      if (p.age < p.life) {
+        p.age += dt;
+        p.vy -= 6 * dt;
+        p.x += (p.vx + Math.sin(t * 8 + i) * 1.7) * dt;   // per-piece flutter
+        p.y += p.vy * dt; p.z += p.vz * dt;
+        if (p.y < -0.2) p.age = p.life;
+        const fade = Math.max(0, 1 - p.age / p.life);
+        pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
+        col[i * 3] = p.r * fade; col[i * 3 + 1] = p.g * fade; col[i * 3 + 2] = p.b * fade;
+      } else {
+        pos[i * 3 + 1] = -50;
+      }
+    }
+    cGeo.attributes.position.needsUpdate = true;
+    cGeo.attributes.color.needsUpdate = true;
+  }
+
   // ---------- gulls circling over the lake ----------
   let gulls = [];
   function initGulls(scene) {
@@ -6255,6 +6448,42 @@ window.CHICAGO = {
     }
   }
 
+  // ---------- boost flame: additive cone pair at the stern while the burn is hot ----------
+  function createFlame(boat) {
+    const size = boat.mesh.userData && boat.mesh.userData.size;
+    const sternZ = size ? -size.l / 2 : -(boat.radius || 2);
+    const g = new THREE.Group();
+    const outer = new THREE.Mesh(
+      new THREE.ConeGeometry(0.28, 1.4, 6),
+      new THREE.MeshBasicMaterial({ color: 0xff8a2a, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
+    outer.rotation.x = -Math.PI / 2;           // cone tip aft (-z local)
+    outer.layers.set(1);
+    outer.renderOrder = 3;
+    const inner = new THREE.Mesh(
+      new THREE.ConeGeometry(0.14, 0.85, 6),
+      new THREE.MeshBasicMaterial({ color: 0xfff3cf, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+    inner.rotation.x = -Math.PI / 2;
+    inner.position.z = -0.12;                  // white-hot core sits inside the orange sheath
+    inner.layers.set(1);
+    inner.renderOrder = 3;
+    g.add(outer); g.add(inner);
+    g.position.set(0, 0.35, sternZ - 0.5);
+    g.visible = false;
+    return g;
+  }
+
+  function updateFlame(w, boat, t) {
+    if (!w.flame) {
+      if (!boat.mesh) return;
+      w.flame = createFlame(boat);
+      boat.mesh.add(w.flame);
+    }
+    const heat = boat.boostHeat || 0;
+    const on = heat > 0.45;
+    w.flame.visible = on;
+    if (on) w.flame.scale.setScalar(0.7 + heat * (0.6 + 0.25 * Math.sin(t * 40)));
+  }
+
   FX.splashBurst = function (x, y, z, intensity) {
     FX.spray(x, y + 0.2, z, 0, 3.5 + intensity * 5, 0, Math.floor(12 + intensity * 26), 4.5 + intensity * 3, 1.6);
   };
@@ -6263,6 +6492,7 @@ window.CHICAGO = {
   FX.init = function () {
     const scene = RR.Engine.scene;
     initParticles(scene);
+    initConfetti(scene);
     initGulls(scene);
     FX._scene = scene;
   };
@@ -6277,6 +6507,11 @@ window.CHICAGO = {
       FX._scene.remove(w.mesh);
       w.geo.dispose();
       w.mat.dispose();
+      if (w.flame) {                 // cones ride on boat.mesh (removed with the boat) — just free GPU resources
+        if (w.flame.parent) w.flame.parent.remove(w.flame);
+        w.flame.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
+        w.flame = null;
+      }
     });
     wakes.clear();
   };
@@ -6284,10 +6519,11 @@ window.CHICAGO = {
   FX.update = function (boats, dt, t) {
     for (const b of boats) {
       const w = wakes.get(b);
-      if (w) updateWake(w, b, dt, t);
+      if (w) { updateWake(w, b, dt, t); updateFlame(w, b, t); }
       hullSpray(b, dt, t);
     }
     updateParticles(dt);
+    updateConfetti(dt, t);
     updateGulls(t);
   };
 
@@ -6322,6 +6558,7 @@ window.CHICAGO = {
   var music = {
     playing: false,
     mode: null,            // 'title' | 'race'
+    wantMode: null,        // requested before the ctx existed — honored on init
     interval: null,
     step: 0,
     nextTime: 0,
@@ -6516,7 +6753,7 @@ window.CHICAGO = {
       master.connect(comp);
       comp.connect(ctx.destination);
 
-      engineBus = gain(0.45); // engines (incl. spray) sit well under music + SFX
+      engineBus = gain(0.38); // engines (incl. spray) sit well under music + SFX
       engineBus.connect(master);
       fxBus = gain(0.9);
       fxBus.connect(master);
@@ -6524,6 +6761,12 @@ window.CHICAGO = {
       ensureAmbience();
     }
     doResume();
+    // music requested before the first user gesture (title screen at boot) starts now
+    if (music.wantMode && !music.playing) {
+      var wm = music.wantMode;
+      music.wantMode = null;
+      doSetMode(wm, true);
+    }
   }
 
   function doResume() {
@@ -7047,7 +7290,7 @@ window.CHICAGO = {
   function applyMode(mode) {
     if (mode === 'race') {
       music.stepDur = 60 / RACE_BPM / 4;
-      music.level = 0.20;                      // over quiet engines, under SFX
+      music.level = 0.34;                      // clearly over the quiet engines, under SFX peaks
       music.padFilter.frequency.value = 1000;  // darker stabs
       music.padGain.gain.value = 0.6;
       music.bassFilter.frequency.value = 380;  // pure 808 sub
@@ -7056,7 +7299,7 @@ window.CHICAGO = {
       music.kickGain.gain.value = 1.0;
     } else {
       music.stepDur = 60 / TITLE_BPM / 4;
-      music.level = 0.16;
+      music.level = 0.30;
       music.padFilter.frequency.value = 2200;  // warm piano brightness
       music.padGain.gain.value = 0.55;
       music.bassFilter.frequency.value = 700;
@@ -7234,6 +7477,7 @@ window.CHICAGO = {
   // Shared start/stop for both loops. Idempotent; switching stops the other.
   function doSetMode(mode, on) {
     if (!on) {
+      if (music.wantMode === mode) music.wantMode = null;
       if (!music.playing || music.mode !== mode) return; // off is a no-op unless this loop plays
       music.playing = false;
       if (music.interval) { clearInterval(music.interval); music.interval = null; }
@@ -7250,7 +7494,7 @@ window.CHICAGO = {
       }, 900);
       return;
     }
-    if (!ready()) return;
+    if (!ready()) { music.wantMode = mode; return; }   // remember: init will start us
     ensureMusicBuses();
     if (music.playing && music.mode === mode) return; // idempotent
     var t = now(), startAt = t + 0.06;
@@ -7278,7 +7522,7 @@ window.CHICAGO = {
   }
 
   function doSetMusic(on) { doSetMode('title', !!on); }
-  function doSetRaceMusic(on) { if (!ctx) return; doSetMode('race', !!on); }
+  function doSetRaceMusic(on) { doSetMode('race', !!on); }
 
   // --------------------------------------------------------------------------
   // Public API — every method wrapped so it can never throw
@@ -7696,7 +7940,7 @@ window.CHICAGO = {
       hud: $('hud'), speed: $('speed-num'), throttle: $('throttle-fill'),
       pos: $('pos-big'), posSuf: $('pos-suffix'), posTotal: $('pos-total'), lap: $('lap-line'),
       timer: $('timer-num'), cpFlash: $('checkpoint-flash'), wrong: $('wrongway'),
-      count: $('countdown'), tag: $('landmark-tag'),
+      count: $('countdown'), tag: $('landmark-tag'), vig: $('vignette'),
     };
   };
 
@@ -7750,6 +7994,11 @@ window.CHICAGO = {
   H.update = function (dt, boat, race) {
     const speed = Math.hypot(boat.vel.x, boat.vel.z);
     els.speed.textContent = Math.round(speed * 2.237);          // m/s → mph
+    // speed vignette: the edges close in as you approach (and boost past) top speed
+    if (els.vig) {
+      const f = RR.U.clamp((speed / boat.spec.top - 0.7) * 2.0, 0, 1) * 0.5 + boat.boostHeat * 0.2;
+      els.vig.style.opacity = f.toFixed(2);
+    }
     els.throttle.style.width = Math.round(boat.boostEnergy * 100) + '%';
     els.throttle.style.background = boat.boostHeat > 0.5
       ? 'linear-gradient(90deg,#ffc857,#ff3b30)'
@@ -8367,7 +8616,18 @@ window.CHICAGO = {
       if (player) { player.boostEnergy = Math.min(1, player.boostEnergy + 0.45); RR.Camera.kick(0.25); RR.HUD.flash('+BOOST'); }
     };
     RR.Race.onLap = () => { RR.Audio.checkpoint(); };
-    RR.Race.onPlayerFinish = (pos) => { RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.showPlacement(pos); };
+    RR.Race.onPlayerFinish = (pos) => {
+      RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.showPlacement(pos);
+      const g = raceState && raceState.finishGate;
+      if (g) {
+        if (RR.FX.confetti) RR.FX.confetti(g.x, 12, g.z, 260);
+        if (RR.Fireworks && RR.Fireworks.burstAt) {
+          RR.Fireworks.burstAt(g.x - 18, 26, g.z, [1, 0.82, 0.3]);
+          RR.Fireworks.burstAt(g.x + 16, 32, g.z + 8, null);
+          setTimeout(() => RR.Fireworks.burstAt && RR.Fireworks.burstAt(g.x, 30, g.z - 10, [0.42, 0.72, 1]), 450);
+        }
+      }
+    };
     RR.Race.onRaceOver = (results) => {
       mode = 'results';
       RR.HUD.show(false);

@@ -1,13 +1,17 @@
-/* River Racer — Chicago easter eggs: waving city flags, the famous Rat Hole sidewalk
-   imprint, and Buckingham Fountain's animated water jets. Static bits merge into one
-   draw call; only the flags and jets are live meshes (all on layer 1, skipped by the
-   planar-reflection pass). */
+/* River Racer — Chicago easter eggs: waving city flags (three fly from bascule
+   tender-house roofs over the racing line), the famous Rat Hole sidewalk imprint,
+   Buckingham Fountain's animated water jets, CTA "L" trains crossing the Wells St
+   and Lake St double-deck bridges, and a fireboat saluting racers near the river
+   mouth with arcing water plumes. Static bits merge into one draw call; the live
+   meshes all sit on layer 1 (skipped by the planar-reflection pass). */
 (function () {
   const E = { tags: [] };
   const U = () => RR.U;
   let rng;
   let flagMesh = null, flagMeta = [], flagBase = null, flagU = null;
   let mainJet = null;
+  const trains = [];             // CTA "L" trains crossing the double-deck bridges
+  let fb = null;                 // fireboat salute state
 
   function tint(geo, hex, jit) { RR.City.tintGeom(geo, hex, jit || 0, rng); return geo; }
 
@@ -51,12 +55,18 @@
       spots.push({ x: bf.x + dx, z: bf.z + dz, y: GY });             // fountain plaza corners
     }
     const main = RR.River.paths.main;
-    for (const f of [0.22, 0.42, 0.62]) {                            // riverwalk spots, south bank
-      const q = U().pathAt(main, main.len * f, {});
-      for (let off = q.w + 11; off < q.w + 32; off += 4) {
-        const px = q.x - q.tz * off, pz = q.z + q.tx * off;
-        if (RR.City.landClearance(px, pz) > 2) { spots.push({ x: px, z: pz, y: GY }); break; }
-      }
+    // three flags fly from bascule tender-house roofs where racers pass right under them
+    // (houses sit at along ±8.5, across ±(w+3.6) from the snapped bridge center)
+    for (const nm of ['LaSalle St', 'DuSable / Michigan Ave', 'State St']) {
+      const b = C.bridges.find((bb) => bb.name === nm);
+      if (!b || !RR.River.paths[b.branch]) continue;
+      const q = U().pathNearest(RR.River.paths[b.branch], b.x, b.z);
+      const acr = q.w + 3.6;
+      spots.push({
+        x: q.x + q.tx * 8.5 - q.tz * acr,
+        z: q.z + q.tz * 8.5 + q.tx * acr,
+        y: b.clearance + 10, deck: true,                             // pole base on the roof top
+      });
     }
 
     // one shared plane, cloned into a single merged mesh; vertices wave in the update hook
@@ -150,6 +160,72 @@
       }
     }
 
+    // ---------- CTA "L" trains: a stainless 3-car consist slides across each double-deck span ----------
+    for (const b of C.bridges) {
+      if (b.kind !== 'l') continue;                                  // Wells St + Lake St
+      const path = RR.River.paths[b.branch];
+      if (!path) continue;
+      const q = U().pathNearest(path, b.x, b.z);
+      const ax = -q.tz, az = q.tx;                                   // across-channel axis
+      const parts = [];
+      for (let k = -1; k <= 1; k++) {                                // three cars, small gaps
+        const co = k * 14.6;
+        const body = new THREE.BoxGeometry(14, 3, 2.6);
+        body.translate(co, 1.5, 0);
+        parts.push(tint(body, 0xc9ced4, 0.03));                      // stainless silver
+        for (const s of [-1, 1]) {                                   // dark window band each side
+          const band = new THREE.BoxGeometry(12.6, 0.95, 0.12);
+          band.translate(co, 1.95, s * 1.32);
+          parts.push(tint(band, 0x1c232b, 0));
+        }
+        const hump = new THREE.BoxGeometry(13.2, 0.35, 1.7);         // subtle roof hump
+        hump.translate(co, 3.12, 0);
+        parts.push(tint(hump, 0xaab0b6, 0));
+      }
+      const g = RR.City.mergeGeoms(parts);
+      g.rotateY(Math.atan2(-az, ax));                                // length axis onto the crossing axis
+      const m = new THREE.Mesh(g, RR.City.flatMaterial());
+      m.layers.set(1);
+      m.position.set(q.x, -1000, q.z);                               // parked hidden until it runs
+      scene.add(m);
+      trains.push({ mesh: m, cx: q.x, cz: q.z, ax, az, y: b.clearance + 8.6,
+        end: q.w + 55, run: false, dir: 1, s: 0, wait: 4 + rng() * 14 });
+    }
+
+    // ---------- FIREBOAT SALUTE: moored near the river mouth, arcing water plumes over the channel ----------
+    {
+      const q = U().pathAt(main, main.len - 320, {});
+      const off = q.w * 0.72;                                        // hugs the bank, out of the racing line
+      const bx = q.x - q.tz * off, bz = q.z + q.tx * off;
+      const grp = new THREE.Group();
+      const bm = (c) => new THREE.MeshLambertMaterial({ color: c });
+      const L = 12, W = 4;
+      const hull = new THREE.Mesh(new THREE.BoxGeometry(W, 1.7, L), bm(0xc22b1f));
+      const hp = hull.geometry.attributes.position;                  // pinch bow/stern like life.js
+      for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getZ(i)) > L * 0.42) hp.setX(i, hp.getX(i) * 0.4); }
+      hull.geometry.computeVertexNormals(); hull.position.y = 0.55; grp.add(hull);
+      const cabin = new THREE.Mesh(new THREE.BoxGeometry(W - 1.1, 1.5, 4.6), bm(0xf1efe7));
+      cabin.position.set(0, 2.1, -0.8); grp.add(cabin);
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 3.2, 5), bm(0x5b6066));
+      mast.position.set(0, 4.2, -1.6); grp.add(mast);
+      for (const s of [-1, 1]) {                                     // deck monitors the plumes fire from
+        const mon = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 1.1, 5), bm(0x8a2018));
+        mon.position.set(s * 1.1, 1.9, 2.2); grp.add(mon);
+      }
+      grp.rotation.y = Math.atan2(q.tx, q.tz);                       // bow points downstream
+      grp.position.set(bx, 0, bz);
+      grp.traverse((o) => o.layers.set(1));
+      scene.add(grp);
+      const cy = Math.cos(grp.rotation.y), sy = Math.sin(grp.rotation.y);
+      fb = { g: grp, x: bx, z: bz, ph: rng() * 9, n: [] };
+      for (const s of [-1, 1]) fb.n.push({                           // nozzle offsets + launch velocities
+        ox: s * 1.1 * cy + 2.2 * sy, oy: 2.5, oz: -s * 1.1 * sy + 2.2 * cy,
+        vx: q.tz * 5 + q.tx * s * 4.5,                               // out over the river, fanned fore/aft
+        vz: -q.tx * 5 + q.tz * s * 4.5,
+      });
+      E.tags.push({ name: 'FIREBOAT SALUTE', x: bx, z: bz, r2: 90 * 90 });
+    }
+
     if (flat.length) {
       const mesh = new THREE.Mesh(RR.City.mergeGeoms(flat), RR.City.flatMaterial());
       mesh.castShadow = true;
@@ -177,6 +253,31 @@
         mainJet.scale.y = 14 + 6 * Math.sin(t * 0.45);
         const br = 1 + 0.15 * Math.sin(t * 1.7);
         mainJet.scale.x = br; mainJet.scale.z = br;
+      }
+      // L trains slide across their spans at ~20 m/s, then hide and re-arm (14-24 s)
+      for (let i = 0; i < trains.length; i++) {
+        const tr = trains[i];
+        if (tr.run) {
+          tr.s += 20 * dt * tr.dir;
+          if (tr.s * tr.dir > tr.end) { tr.run = false; tr.wait = 14 + rng() * 10; tr.mesh.position.y = -1000; }
+          else tr.mesh.position.set(tr.cx + tr.ax * tr.s, tr.y, tr.cz + tr.az * tr.s);
+        } else {
+          tr.wait -= dt;
+          if (tr.wait <= 0) { tr.run = true; tr.dir = -tr.dir; tr.s = -tr.end * tr.dir; }
+        }
+      }
+      // fireboat bobs on the swell and keeps two arcing plumes going over the channel
+      if (fb) {
+        const wy = U().waterHeight(fb.x, fb.z, t, 1);
+        fb.g.position.y = wy;
+        fb.g.rotation.z = Math.sin(t * 0.7 + fb.ph) * 0.03;
+        if (RR.FX) for (let i = 0; i < 2; i++) {
+          if (Math.random() < 0.25) {
+            const n = fb.n[i];
+            RR.FX.spray(fb.x + n.ox, wy + n.oy, fb.z + n.oz,
+              n.vx, 7.5 + Math.random() * 1.5, n.vz, 3, 1.4, 1.4);
+          }
+        }
       }
     });
   };
