@@ -315,7 +315,11 @@
         let open = 0;
         if (cyc > 0.35 && cyc < 0.65) open = Math.sin(((cyc - 0.35) / 0.30) * Math.PI);
         L.hinge.quaternion.setFromAxisAngle(L.axis, L.s * MAX_LIFT * open);
-        if (L.opening) { L.opening.rising = open > L.opening.open + 1e-4; L.opening.open = open; }
+        if (L.opening) {
+          L.opening.rising = open > L.opening.open + 1e-4;
+          L.opening.open = open;
+          L.opening.warn = cyc > 0.26 && cyc < 0.65;   // gates drop ~3s before the leaves move
+        }
       }
     });
   };

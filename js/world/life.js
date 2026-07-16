@@ -305,9 +305,13 @@
     for (let i = 0; i < carData.length; i++) {
       const c = carData[i];
       let du = c.spd * c.dir * dt;
-      if (c.gate && c.gate.open > 0.02) {
-        if (Math.abs(c.u) < c.half + 1.5) du *= 1.7;               // caught on the span — clear it fast
-        else if (Math.abs(c.u + du) < c.half + 3.5) du = 0;        // otherwise wait at the barrier
+      if (c.gate && (c.gate.warn || c.gate.open > 0.02)) {
+        if (Math.abs(c.u) < c.half + 1.5) {
+          du *= 2.6;                                               // caught on the span — floor it
+          if (c.gate.open > 0.12) c.u = c.dir * (c.half + 2.0);    // leaves lifting: it made the far side
+        } else if (c.dir * c.u < 0 && Math.abs(c.u + du) < c.half + 4.5) {
+          du = 0;                                                  // approaching — wait at the barrier
+        }
       }
       c.u += du;
       if (c.u > c.half + 8) c.u = -(c.half + 8);
