@@ -187,12 +187,47 @@
       }
       const g = RR.City.mergeGeoms(parts);
       g.rotateY(Math.atan2(-az, ax));                                // length axis onto the crossing axis
-      const m = new THREE.Mesh(g, RR.City.flatMaterial());
+      const trainMat = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true });
+      const m = new THREE.Mesh(g, trainMat);
       m.layers.set(1);
       m.position.set(q.x, -1000, q.z);                               // parked hidden until it runs
       scene.add(m);
-      trains.push({ mesh: m, cx: q.x, cz: q.z, ax, az, y: b.clearance + 8.6,
-        end: q.w + 85, run: false, dir: 1, s: 0, wait: 4 + rng() * 14, cool: 0 });
+
+      // the elevated structure continues past both banks — girder deck, rails and steel
+      // bents over the street — so the train always rides visible track, never open air
+      const deckY = b.clearance + 7.6, rotY = Math.atan2(ax, az);
+      const reach = [];
+      for (const s of [-1, 1]) {
+        let L = q.w + 24;
+        while (L < q.w + 96 && RR.City.landClearance(q.x + ax * (L + 15) * s, q.z + az * (L + 15) * s) > 3) L += 15;
+        reach.push(L);
+        const extLen = L - q.w - 1;
+        const c0 = (q.w + 1 + extLen / 2) * s;
+        const deckG = new THREE.BoxGeometry(7, 1.3, extLen);
+        deckG.rotateY(rotY); deckG.translate(q.x + ax * c0, deckY, q.z + az * c0);
+        flat.push(tint(deckG, 0x3a3f45, 0.05));
+        for (const r of [-1.05, 1.05]) {                             // running rails
+          const rail = new THREE.BoxGeometry(0.18, 0.14, extLen);
+          rail.rotateY(rotY);
+          rail.translate(q.x + ax * c0 - az * r, deckY + 0.72, q.z + az * c0 + ax * r);
+          flat.push(tint(rail, 0x8a9096, 0));
+        }
+        for (let d = q.w + 10; d < L; d += 15) {                     // support bents down to the street
+          const px = q.x + ax * d * s, pz = q.z + az * d * s;
+          if (RR.City.landClearance(px, pz) < 2) continue;
+          const h = deckY - 0.6 - 6;
+          for (const r of [-2.6, 2.6]) {
+            const col = new THREE.CylinderGeometry(0.26, 0.34, h, 5);
+            col.translate(px - az * r, 6 + h / 2, pz + ax * r);
+            flat.push(tint(col, 0x2f343a, 0.05));
+          }
+          const cap = new THREE.BoxGeometry(6.6, 0.55, 1.0);
+          cap.rotateY(rotY); cap.translate(px, deckY - 0.85, pz);
+          flat.push(tint(cap, 0x2f343a, 0));
+        }
+      }
+      trains.push({ mesh: m, mat: trainMat, cx: q.x, cz: q.z, ax, az, y: b.clearance + 8.6,
+        min: -reach[0], max: reach[1], run: false, dir: 1, s: 0, wait: 4 + rng() * 14, cool: 0 });
     }
 
     // ---------- FIREBOAT SALUTE: moored near the river mouth, arcing water plumes over the channel ----------
@@ -377,13 +412,19 @@
         const tr = trains[i];
         if (tr.run) {
           tr.s += 19 * dt * tr.dir;
-          if (tr.s * tr.dir > tr.end) { tr.run = false; tr.wait = 16 + rng() * 12; tr.cool = 8; tr.mesh.position.y = -1000; }
-          else tr.mesh.position.set(tr.cx + tr.ax * tr.s, tr.y, tr.cz + tr.az * tr.s);
+          if (tr.dir > 0 ? tr.s > tr.max : tr.s < tr.min) {
+            tr.run = false; tr.wait = 16 + rng() * 12; tr.cool = 8; tr.mesh.position.y = -1000;
+          } else {
+            tr.mesh.position.set(tr.cx + tr.ax * tr.s, tr.y, tr.cz + tr.az * tr.s);
+            // ghost in/out only over the outer 14m of track, far from the river
+            const edge = Math.min(tr.s - tr.min, tr.max - tr.s);
+            tr.mat.opacity = U().clamp(edge / 14, 0, 1);
+          }
         } else {
           tr.wait -= dt;
           tr.cool = Math.max(0, tr.cool - dt);
           const near = pl && U().dist2(pl.pos.x, pl.pos.z, tr.cx, tr.cz) < 250 * 250;
-          if ((near && tr.cool <= 0) || tr.wait <= 0) { tr.run = true; tr.dir = -tr.dir; tr.s = -tr.end * tr.dir; }
+          if ((near && tr.cool <= 0) || tr.wait <= 0) { tr.run = true; tr.dir = -tr.dir; tr.s = tr.dir > 0 ? tr.min : tr.max; }
         }
       }
       // fireboat bobs on the swell and keeps two tall arcing plumes going over the channel
