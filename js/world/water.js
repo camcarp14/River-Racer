@@ -180,14 +180,17 @@
       const lx = -tz, lz = tx;
       const a = RR.River.waveAmp(path.x[i], path.z[i]);
       const lk = isLakePath ? RR.U.smoothstep(RR.River.lakeWestX - 150, RR.River.lakeWestX + 300, path.x[i]) : 0;
+      // the river ribbon dives under the lake sheet at its mouth so the seam never
+      // shows as a bright edge-on strip across the exit
+      const endFade = isLakePath ? Math.max(0, (i - (n - 5)) / 4) : 0;
       for (let l = 0; l < L; l++) {
         const f = l / (L - 1) * 2 - 1;      // -1, 0, 1
         const vi = i * L + l;
         verts[vi * 3] = path.x[i] + lx * wHalf * f;
-        verts[vi * 3 + 1] = 0;
+        verts[vi * 3 + 1] = -0.16 * endFade;
         verts[vi * 3 + 2] = path.z[i] + lz * wHalf * f;
         amp[vi] = a;
-        shore[vi] = Math.abs(f);
+        shore[vi] = Math.abs(f) * (1 - endFade);
         lake[vi] = lk;
       }
     }
@@ -237,9 +240,9 @@
     const amp = new Float32Array(cnt), shoreA = new Float32Array(cnt), lakeA = new Float32Array(cnt);
     for (let i = 0; i < cnt; i++) {
       const x = lg.attributes.position.getX(i), z = lg.attributes.position.getZ(i);
-      amp[i] = RR.U.lerp(1.2, 3.3, RR.U.smoothstep(R.lakeWestX, R.lakeWestX + 500, x));
+      amp[i] = RR.U.lerp(1.0, 3.3, RR.U.smoothstep(R.lakeWestX, R.lakeWestX + 420, x));
       shoreA[i] = 0;
-      lakeA[i] = RR.U.smoothstep(R.lakeWestX - 100, R.lakeWestX + 350, x);
+      lakeA[i] = RR.U.smoothstep(R.lakeWestX - 150, R.lakeWestX + 300, x);   // matches the river ribbon blend
     }
     lg.setAttribute('aAmp', new THREE.BufferAttribute(amp, 1));
     lg.setAttribute('aShore', new THREE.BufferAttribute(shoreA, 1));

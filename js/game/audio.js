@@ -218,7 +218,7 @@
       master.connect(comp);
       comp.connect(ctx.destination);
 
-      engineBus = gain(0.30); // engines (incl. spray) sit well under music + SFX
+      engineBus = gain(0.24); // engines (incl. spray) sit well under music + SFX
       engineBus.connect(master);
       fxBus = gain(0.9);
       fxBus.connect(master);
@@ -755,7 +755,7 @@
   function applyMode(mode) {
     if (mode === 'race') {
       music.stepDur = 60 / RACE_BPM / 4;
-      music.level = 0.34;                      // clearly over the quiet engines, under SFX peaks
+      music.level = 0.45;                      // the race soundtrack LEADS; engines sit under it
       music.padFilter.frequency.value = 1000;  // darker stabs
       music.padGain.gain.value = 0.6;
       music.bassFilter.frequency.value = 380;  // pure 808 sub
@@ -764,7 +764,7 @@
       music.kickGain.gain.value = 1.0;
     } else {
       music.stepDur = 60 / TITLE_BPM / 4;
-      music.level = 0.30;
+      music.level = 0.40;
       music.padFilter.frequency.value = 2200;  // warm piano brightness
       music.padGain.gain.value = 0.55;
       music.bassFilter.frequency.value = 700;
@@ -931,7 +931,14 @@
 
   function schedulerTick() {
     if (!ctx || !music.playing) return;
-    var ahead = ctx.currentTime + 0.2; // schedule 200ms ahead
+    // suspend guard: ONLY after a genuinely long gap (backgrounded tab) skip ahead instead
+    // of flooding past-due notes. Ordinary main-thread stalls ride on the wide lookahead.
+    if (music.nextTime < ctx.currentTime - 2.5) {
+      var missed = Math.ceil((ctx.currentTime - music.nextTime) / music.stepDur);
+      music.step = (music.step + missed) % music.stepsTotal;
+      music.nextTime = ctx.currentTime + 0.05;
+    }
+    var ahead = ctx.currentTime + 0.35; // schedule 350ms ahead (survives slow frames)
     while (music.nextTime < ahead) {
       scheduleStep(music.step, music.nextTime);
       music.nextTime += music.stepDur;

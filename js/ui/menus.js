@@ -31,7 +31,7 @@
         <div class="menu-item" data-i="1">TIME TRIAL</div>
         <div class="menu-item" data-i="2">HOW TO PLAY</div>
       </div>
-      <div class="menu-note">↑↓ SELECT &nbsp;·&nbsp; ENTER CONFIRM<br>BUILT ON THE REAL CHICAGO RIVER</div>
+      <div class="menu-note">↑↓ SELECT &nbsp;·&nbsp; ENTER CONFIRM &nbsp;·&nbsp; ♪ PRESS ANY KEY FOR SOUND<br>BUILT ON THE REAL CHICAGO RIVER</div>
     `);
     bindClicks([() => showVehicles(false), () => showVehicles(true), showHelp]);
     paintSel();

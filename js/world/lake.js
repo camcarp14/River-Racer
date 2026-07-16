@@ -287,10 +287,12 @@
       if (RR.City.landClearance(px3, zc) < 20) continue;
       boxAt(geoms2, 4.2, 0.08, 30.6, px3, CGY + 0.06, zc, 0xb9ac92);
     }
-    // seawall edge where the park meets Lake Michigan
+    // seawall edge where the park meets Lake Michigan — checked at BOTH ends AND the middle
+    // with a wide margin, so no segment ever stands across the river mouth
     for (let z0 = -940; z0 < 940; z0 += 40) {
       const zc = z0 + 20, wx = C.lake.openWaterX - 5;
-      if (RR.City.landClearance(wx, z0) < 2 || RR.City.landClearance(wx, z0 + 40) < 2) continue;
+      if (RR.City.landClearance(wx, z0) < 14 || RR.City.landClearance(wx, zc) < 14 ||
+          RR.City.landClearance(wx, z0 + 40) < 14) continue;
       boxAt(geoms2, 9, CGY + 1.4, 40.4, wx, (CGY + 1.4) / 2 - 0.8, zc, 0x9a988e);
     }
 

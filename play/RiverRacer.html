@@ -2647,14 +2647,17 @@ window.CHICAGO = {
       const lx = -tz, lz = tx;
       const a = RR.River.waveAmp(path.x[i], path.z[i]);
       const lk = isLakePath ? RR.U.smoothstep(RR.River.lakeWestX - 150, RR.River.lakeWestX + 300, path.x[i]) : 0;
+      // the river ribbon dives under the lake sheet at its mouth so the seam never
+      // shows as a bright edge-on strip across the exit
+      const endFade = isLakePath ? Math.max(0, (i - (n - 5)) / 4) : 0;
       for (let l = 0; l < L; l++) {
         const f = l / (L - 1) * 2 - 1;      // -1, 0, 1
         const vi = i * L + l;
         verts[vi * 3] = path.x[i] + lx * wHalf * f;
-        verts[vi * 3 + 1] = 0;
+        verts[vi * 3 + 1] = -0.16 * endFade;
         verts[vi * 3 + 2] = path.z[i] + lz * wHalf * f;
         amp[vi] = a;
-        shore[vi] = Math.abs(f);
+        shore[vi] = Math.abs(f) * (1 - endFade);
         lake[vi] = lk;
       }
     }
@@ -2704,9 +2707,9 @@ window.CHICAGO = {
     const amp = new Float32Array(cnt), shoreA = new Float32Array(cnt), lakeA = new Float32Array(cnt);
     for (let i = 0; i < cnt; i++) {
       const x = lg.attributes.position.getX(i), z = lg.attributes.position.getZ(i);
-      amp[i] = RR.U.lerp(1.2, 3.3, RR.U.smoothstep(R.lakeWestX, R.lakeWestX + 500, x));
+      amp[i] = RR.U.lerp(1.0, 3.3, RR.U.smoothstep(R.lakeWestX, R.lakeWestX + 420, x));
       shoreA[i] = 0;
-      lakeA[i] = RR.U.smoothstep(R.lakeWestX - 100, R.lakeWestX + 350, x);
+      lakeA[i] = RR.U.smoothstep(R.lakeWestX - 150, R.lakeWestX + 300, x);   // matches the river ribbon blend
     }
     lg.setAttribute('aAmp', new THREE.BufferAttribute(amp, 1));
     lg.setAttribute('aShore', new THREE.BufferAttribute(shoreA, 1));
@@ -2866,7 +2869,8 @@ window.CHICAGO = {
   function landClearance(x, z) {
     let best = Infinity;
     for (const key in RR.River.paths) {
-      if (key.startsWith('lake')) continue;
+      // every path counts — including lakeGuide, which carries the river mouth out to the
+      // basin. Skipping it once let a seawall stand straight across the lake exit.
       const p = RR.River.paths[key];
       const q = U().pathNearest(p, x, z);
       const c = q.dist - q.w - 2.5;           // 2.5m past the seawall still counts as water
@@ -3161,8 +3165,11 @@ window.CHICAGO = {
       for (let a = 0; a < Math.PI * 2; a += 0.04) {
         const rad = 2750 + bRng() * 1000;
         const bx = cx0 + Math.cos(a) * rad, bz = cz0 + Math.sin(a) * rad;
-        if (bx > C.lake.openWaterX + 150) continue;                      // leave the lake horizon open
         const w = 30 + bRng() * 64, d = 30 + bRng() * 64;
+        // leave the lake horizon open AND never stand in the water — the east arc of this
+        // ring used to plant a tan wall of towers straight across the river mouth
+        if (bx > C.lake.openWaterX - 60) continue;
+        if (landClearance(bx, bz) < Math.max(w, d) * 0.71 + 6) continue;
         const h = 44 + bRng() * bRng() * 250;
         const g = new THREE.BoxGeometry(w, h, d);
         g.translate(bx, h / 2, bz);
@@ -3896,7 +3903,10 @@ window.CHICAGO = {
 
   // ---- readable street-name sign atlas (one texture for all bridges) ----
   function displayName(n) {
-    if (n.indexOf('Michigan') >= 0) return 'MICHIGAN AVE';
+    if (n.indexOf('Michigan') >= 0) return 'DUSABLE BRIDGE';           // Michigan Ave's official name
+    if (n.indexOf('Lake Shore') >= 0) return 'DUSABLE LAKE SHORE DR';  // renamed in 2021
+    if (n.indexOf('Franklin') >= 0) return 'FRANKLIN ST';
+    if (n.indexOf('Ida B') >= 0) return 'IDA B. WELLS DR';
     return n.replace(/\s*\(.*\)\s*/g, '').replace(/–/g, '-').replace(/\//g, ' ')
             .replace(/\s+/g, ' ').trim().toUpperCase();
   }
@@ -4992,10 +5002,12 @@ window.CHICAGO = {
       if (RR.City.landClearance(px3, zc) < 20) continue;
       boxAt(geoms2, 4.2, 0.08, 30.6, px3, CGY + 0.06, zc, 0xb9ac92);
     }
-    // seawall edge where the park meets Lake Michigan
+    // seawall edge where the park meets Lake Michigan — checked at BOTH ends AND the middle
+    // with a wide margin, so no segment ever stands across the river mouth
     for (let z0 = -940; z0 < 940; z0 += 40) {
       const zc = z0 + 20, wx = C.lake.openWaterX - 5;
-      if (RR.City.landClearance(wx, z0) < 2 || RR.City.landClearance(wx, z0 + 40) < 2) continue;
+      if (RR.City.landClearance(wx, z0) < 14 || RR.City.landClearance(wx, zc) < 14 ||
+          RR.City.landClearance(wx, z0 + 40) < 14) continue;
       boxAt(geoms2, 9, CGY + 1.4, 40.4, wx, (CGY + 1.4) / 2 - 0.8, zc, 0x9a988e);
     }
 
@@ -6887,7 +6899,7 @@ window.CHICAGO = {
       master.connect(comp);
       comp.connect(ctx.destination);
 
-      engineBus = gain(0.30); // engines (incl. spray) sit well under music + SFX
+      engineBus = gain(0.24); // engines (incl. spray) sit well under music + SFX
       engineBus.connect(master);
       fxBus = gain(0.9);
       fxBus.connect(master);
@@ -7424,7 +7436,7 @@ window.CHICAGO = {
   function applyMode(mode) {
     if (mode === 'race') {
       music.stepDur = 60 / RACE_BPM / 4;
-      music.level = 0.34;                      // clearly over the quiet engines, under SFX peaks
+      music.level = 0.45;                      // the race soundtrack LEADS; engines sit under it
       music.padFilter.frequency.value = 1000;  // darker stabs
       music.padGain.gain.value = 0.6;
       music.bassFilter.frequency.value = 380;  // pure 808 sub
@@ -7433,7 +7445,7 @@ window.CHICAGO = {
       music.kickGain.gain.value = 1.0;
     } else {
       music.stepDur = 60 / TITLE_BPM / 4;
-      music.level = 0.30;
+      music.level = 0.40;
       music.padFilter.frequency.value = 2200;  // warm piano brightness
       music.padGain.gain.value = 0.55;
       music.bassFilter.frequency.value = 700;
@@ -7600,7 +7612,14 @@ window.CHICAGO = {
 
   function schedulerTick() {
     if (!ctx || !music.playing) return;
-    var ahead = ctx.currentTime + 0.2; // schedule 200ms ahead
+    // suspend guard: ONLY after a genuinely long gap (backgrounded tab) skip ahead instead
+    // of flooding past-due notes. Ordinary main-thread stalls ride on the wide lookahead.
+    if (music.nextTime < ctx.currentTime - 2.5) {
+      var missed = Math.ceil((ctx.currentTime - music.nextTime) / music.stepDur);
+      music.step = (music.step + missed) % music.stepsTotal;
+      music.nextTime = ctx.currentTime + 0.05;
+    }
+    var ahead = ctx.currentTime + 0.35; // schedule 350ms ahead (survives slow frames)
     while (music.nextTime < ahead) {
       scheduleStep(music.step, music.nextTime);
       music.nextTime += music.stepDur;
@@ -8328,7 +8347,7 @@ window.CHICAGO = {
         <div class="menu-item" data-i="1">TIME TRIAL</div>
         <div class="menu-item" data-i="2">HOW TO PLAY</div>
       </div>
-      <div class="menu-note">↑↓ SELECT &nbsp;·&nbsp; ENTER CONFIRM<br>BUILT ON THE REAL CHICAGO RIVER</div>
+      <div class="menu-note">↑↓ SELECT &nbsp;·&nbsp; ENTER CONFIRM &nbsp;·&nbsp; ♪ PRESS ANY KEY FOR SOUND<br>BUILT ON THE REAL CHICAGO RIVER</div>
     `);
     bindClicks([() => showVehicles(false), () => showVehicles(true), showHelp]);
     paintSel();

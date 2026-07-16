@@ -27,7 +27,10 @@
 
   // ---- readable street-name sign atlas (one texture for all bridges) ----
   function displayName(n) {
-    if (n.indexOf('Michigan') >= 0) return 'MICHIGAN AVE';
+    if (n.indexOf('Michigan') >= 0) return 'DUSABLE BRIDGE';           // Michigan Ave's official name
+    if (n.indexOf('Lake Shore') >= 0) return 'DUSABLE LAKE SHORE DR';  // renamed in 2021
+    if (n.indexOf('Franklin') >= 0) return 'FRANKLIN ST';
+    if (n.indexOf('Ida B') >= 0) return 'IDA B. WELLS DR';
     return n.replace(/\s*\(.*\)\s*/g, '').replace(/–/g, '-').replace(/\//g, ' ')
             .replace(/\s+/g, ' ').trim().toUpperCase();
   }

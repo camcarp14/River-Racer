@@ -138,7 +138,8 @@
   function landClearance(x, z) {
     let best = Infinity;
     for (const key in RR.River.paths) {
-      if (key.startsWith('lake')) continue;
+      // every path counts — including lakeGuide, which carries the river mouth out to the
+      // basin. Skipping it once let a seawall stand straight across the lake exit.
       const p = RR.River.paths[key];
       const q = U().pathNearest(p, x, z);
       const c = q.dist - q.w - 2.5;           // 2.5m past the seawall still counts as water
@@ -433,8 +434,11 @@
       for (let a = 0; a < Math.PI * 2; a += 0.04) {
         const rad = 2750 + bRng() * 1000;
         const bx = cx0 + Math.cos(a) * rad, bz = cz0 + Math.sin(a) * rad;
-        if (bx > C.lake.openWaterX + 150) continue;                      // leave the lake horizon open
         const w = 30 + bRng() * 64, d = 30 + bRng() * 64;
+        // leave the lake horizon open AND never stand in the water — the east arc of this
+        // ring used to plant a tan wall of towers straight across the river mouth
+        if (bx > C.lake.openWaterX - 60) continue;
+        if (landClearance(bx, bz) < Math.max(w, d) * 0.71 + 6) continue;
         const h = 44 + bRng() * bRng() * 250;
         const g = new THREE.BoxGeometry(w, h, d);
         g.translate(bx, h / 2, bz);
