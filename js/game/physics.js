@@ -15,6 +15,8 @@
       rpm: 0,
       visRoll: 0, visPitch: 0,
       radius: (mesh.userData.size ? mesh.userData.size.r : 2) * 0.7,
+      mass: spec.mass || 1,
+      bumpRecover: 0,
       hint: {},
       water: null,          // last waterQuery result snapshot
       wakePhase: Math.random() * 10,
@@ -155,24 +157,34 @@
       for (let j = i + 1; j < boats.length; j++) {
         const a = boats[i], b = boats[j];
         const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
-        const rr = (a.radius + b.radius) * 0.62;
+        const rr = (a.radius + b.radius) * 1.02;             // contact registers as the hulls visually touch
         const d2 = dx * dx + dz * dz;
         if (d2 < rr * rr && d2 > 1e-6) {
           const d = Math.sqrt(d2);
           const nx = dx / d, nz = dz / d;
-          const pen = (rr - d) * 0.5;
-          a.pos.x -= nx * pen; a.pos.z -= nz * pen;
-          b.pos.x += nx * pen; b.pos.z += nz * pen;
+          const ma = a.mass || 1, mb = b.mass || 1, inv = 1 / (ma + mb);
+          // positional separation — the lighter hull gives way more
+          const pen = rr - d;
+          a.pos.x -= nx * pen * (mb * inv); a.pos.z -= nz * pen * (mb * inv);
+          b.pos.x += nx * pen * (ma * inv); b.pos.z += nz * pen * (ma * inv);
           const rvx = b.vel.x - a.vel.x, rvz = b.vel.z - a.vel.z;
           const vn = rvx * nx + rvz * nz;
           if (vn < 0) {
-            const imp = -vn * 0.55;
-            a.vel.x -= nx * imp; a.vel.z -= nz * imp;
-            b.vel.x += nx * imp; b.vel.z += nz * imp;
-            const sev = Math.min(1, -vn / 14);
-            if (sev > 0.15) {
-              if (a.isPlayer && a.onBump) a.onBump(sev);
-              if (b.isPlayer && b.onBump) b.onBump(sev);
+            const e = 0.35;                                  // restitution: give the shove some pop
+            const jimp = -(1 + e) * vn * ma * mb * inv;
+            a.vel.x -= nx * jimp / ma; a.vel.z -= nz * jimp / ma;
+            b.vel.x += nx * jimp / mb; b.vel.z += nz * jimp / mb;
+            // lateral shove knocks a rival off their racing line on glancing hits
+            const tx = -nz, tz = nx, shove = (rvx * tx + rvz * tz) * 0.22;
+            a.vel.x -= tx * shove * (mb * inv); a.vel.z -= tz * shove * (mb * inv);
+            b.vel.x += tx * shove * (ma * inv); b.vel.z += tz * shove * (ma * inv);
+            // small yaw kick so a solid hit visibly spins them
+            const yaw = U().clamp(-vn * 0.015, 0, 0.4);
+            a.angVel -= yaw * (mb * inv); b.angVel += yaw * (ma * inv);
+            const sev = Math.min(1, -vn / 11);
+            if (sev > 0.1) {
+              if (a.onBump) a.onBump(sev, -nx, -nz);          // fire for BOTH; per-boat handler decides player vs AI
+              if (b.onBump) b.onBump(sev, nx, nz);
             }
           }
         }

@@ -7,31 +7,31 @@
     {
       id: 'jetski', name: 'RX BLACKHAWK', kind: 'jetski',
       desc: 'Sport jet ski. Whips around bridge piers like a startled duck. Fragile top end, absurd agility.',
-      top: 33, accel: 15.5, turn: 2.35, grip: 3.4, lean: 0.55, boost: 1.22,
+      top: 33, accel: 15.5, turn: 2.35, grip: 3.4, lean: 0.55, boost: 1.22, mass: 0.7,
       hull: 0x1b1e26, deck: 0xff3b30, accent: 0xffc857, seat: 0x22262e,
     },
     {
       id: 'speedboat', name: 'FORMULA 350 GT', kind: 'speedboat',
       desc: 'Offshore V-hull muscle. Monster straight-line pace, needs the whole channel to turn.',
-      top: 40, accel: 11.5, turn: 1.35, grip: 2.1, lean: 0.34, boost: 1.18,
+      top: 40, accel: 11.5, turn: 1.35, grip: 2.1, lean: 0.34, boost: 1.18, mass: 1.45,
       hull: 0x10315e, deck: 0xf2f4f6, accent: 0xff3b30, seat: 0x1a1d22,
     },
     {
       id: 'f1', name: 'F1H2O PROTOTYPE', kind: 'f1',
       desc: 'Tunnel-hull race cat. The fastest thing on the river — if you can keep it pointed straight.',
-      top: 46, accel: 14.0, turn: 1.75, grip: 2.9, lean: 0.22, boost: 1.25,
+      top: 46, accel: 14.0, turn: 1.75, grip: 2.9, lean: 0.22, boost: 1.25, mass: 0.9,
       hull: 0xffc857, deck: 0x14161c, accent: 0x0f8bd0, seat: 0x14161c,
     },
     {
       id: 'runabout', name: 'LAKESIDE QUEEN ’47', kind: 'runabout',
       desc: 'Varnished mahogany classic. Slowest in class, biggest heart. Style points are a currency.',
-      top: 29, accel: 9.0, turn: 1.55, grip: 2.5, lean: 0.30, boost: 1.15,
+      top: 29, accel: 9.0, turn: 1.55, grip: 2.5, lean: 0.30, boost: 1.15, mass: 1.2,
       hull: 0x6e3b1c, deck: 0x8a5224, accent: 0xe8e2d0, seat: 0x7a1f16,
     },
     {
       id: 'rescue', name: 'CFD MARINE 7-1', kind: 'speedboat',
       desc: 'Fire department rigid inflatable. Punchy, planted, and it bounces off seawalls with dignity.',
-      top: 36, accel: 13.0, turn: 1.85, grip: 3.0, lean: 0.28, boost: 1.2,
+      top: 36, accel: 13.0, turn: 1.85, grip: 3.0, lean: 0.28, boost: 1.2, mass: 1.35,
       hull: 0xd42a1e, deck: 0x1f242b, accent: 0xf5f6f7, seat: 0x14161c,
     },
   ];

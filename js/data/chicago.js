@@ -598,7 +598,7 @@ window.CHICAGO = {
   {
    "name": "Franklin–Orleans St",
    "x": -455.8,
-   "z": 155.6,
+   "z": 34.5,
    "branch": "main",
    "kind": "bascule",
    "clearance": 6
@@ -606,7 +606,7 @@ window.CHICAGO = {
   {
    "name": "Wells St",
    "x": -323.2,
-   "z": 144.5,
+   "z": 30.6,
    "branch": "main",
    "kind": "l",
    "clearance": 5.5
@@ -614,7 +614,7 @@ window.CHICAGO = {
   {
    "name": "LaSalle St",
    "x": -198.9,
-   "z": 144.5,
+   "z": 31.3,
    "branch": "main",
    "kind": "bascule",
    "clearance": 5.8
@@ -622,7 +622,7 @@ window.CHICAGO = {
   {
    "name": "Clark St",
    "x": -74.6,
-   "z": 133.4,
+   "z": 31.6,
    "branch": "main",
    "kind": "bascule",
    "clearance": 5.8
@@ -630,7 +630,7 @@ window.CHICAGO = {
   {
    "name": "Dearborn St",
    "x": 49.7,
-   "z": 133.4,
+   "z": 31.0,
    "branch": "main",
    "kind": "bascule",
    "clearance": 5.8
@@ -638,15 +638,15 @@ window.CHICAGO = {
   {
    "name": "State St",
    "x": 174,
-   "z": 133.4,
+   "z": 22.1,
    "branch": "main",
    "kind": "bascule",
    "clearance": 6
   },
   {
    "name": "Wabash Ave",
-   "x": 306.6,
-   "z": 122.2,
+   "x": 307.2,
+   "z": -73.7,
    "branch": "main",
    "kind": "bascule",
    "clearance": 5.8
@@ -1190,6 +1190,18 @@ window.CHICAGO = {
    "w": 150,
    "d": 40,
    "c": 11971996,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "111 N Canal (Ovative Group)",
+   "x": -795.6,
+   "z": 366.7,
+   "kind": "canal111",
+   "h": 96,
+   "w": 64,
+   "d": 46,
+   "c": 15886876,
    "dark": false,
    "gold": false
   }

@@ -66,6 +66,60 @@
     return g;
   }
 
+  // scrolling gold chevrons painted on the water + tall lit pylons, ONLY on the open-lake legs,
+  // so the course is unmistakable once it leaves the framed river canyon
+  function chevronTex() {
+    return RR.U.canvasTexture(64, 128, (c, w, h) => {
+      c.clearRect(0, 0, w, h);
+      c.strokeStyle = '#ffd24a'; c.lineWidth = 14; c.lineCap = 'round';
+      for (let k = -1; k < 3; k++) {
+        const y = k * (h / 2);
+        c.beginPath(); c.moveTo(6, y); c.lineTo(w / 2, y + h * 0.28); c.lineTo(w - 6, y); c.stroke();
+      }
+    });
+  }
+  function buildLakeMarkers(state) {
+    const route = state.route, pt = {};
+    const step = 12, halfW = 9;
+    const verts = [], uvs = []; let vlen = 0, prev = null;
+    for (let d = 0; d <= route.len; d += step) {
+      U().pathAt(route, route.loop ? d % route.len : d, pt);
+      if (!RR.River.inLake(pt.x, pt.z)) { prev = null; continue; }   // never lay the ribbon over the river channel
+      const w = Math.min(halfW, pt.w - 4);
+      const lx = pt.x - pt.tz * w, lz = pt.z + pt.tx * w;
+      const rx = pt.x + pt.tz * w, rz = pt.z - pt.tx * w;
+      if (prev) {
+        vlen += Math.hypot(pt.x - prev.x, pt.z - prev.z);
+        verts.push(prev.lx, 0.35, prev.lz, prev.rx, 0.35, prev.rz, lx, 0.35, lz,
+                   prev.rx, 0.35, prev.rz, rx, 0.35, rz, lx, 0.35, lz);
+        const v0 = prev.v, v1 = vlen / 24;
+        uvs.push(0, v0, 1, v0, 0, v1, 1, v0, 1, v1, 0, v1);
+      }
+      prev = { lx, lz, rx, rz, x: pt.x, z: pt.z, v: vlen / 24 };
+    }
+    if (verts.length) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      const tex = chevronTex(); tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      const ribbon = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+      ribbon.renderOrder = 2; ribbon.layers.set(1);
+      gateGroup.add(ribbon);
+      state.lakeRibbon = { tex };
+    }
+    for (const cp of state.checkpoints) {
+      if (!RR.River.inLake(cp.x, cp.z)) continue;
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 22, 8),
+        new THREE.MeshStandardMaterial({ color: 0x1b2733, emissive: 0xffc857, emissiveIntensity: 0.6, roughness: 0.5 }));
+      mast.position.set(cp.x, 11, cp.z);
+      const glow = new THREE.Mesh(new THREE.SphereGeometry(1.1, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffd24a }));
+      glow.position.set(cp.x, 22, cp.z);
+      gateGroup.add(mast, glow);
+      cp.pylonGlow = glow;
+    }
+  }
+
   function buildGates(state) {
     gateGroup = new THREE.Group();
     RR.Engine.scene.add(gateGroup);
@@ -126,6 +180,7 @@
     const strip = new THREE.Mesh(stripGeo, new THREE.MeshBasicMaterial({ map: stripTex, transparent: true, opacity: 0.8, depthWrite: false }));
     strip.rotation.y = ang; strip.position.set(pt.x, 0.35, pt.z); strip.renderOrder = 2;
     gateGroup.add(strip);
+    buildLakeMarkers(state);
     state.finishD = fd;
     state.finishGate = { x: pt.x, z: pt.z };
     state.finishFlags = finishFlags;
@@ -296,7 +351,9 @@
       cps[i].L.position.y = y; cps[i].R.position.y = y;
       cps[i].L.rotation.x = Math.sin(t * 1.3 + i) * 0.08;
       cps[i].R.rotation.x = Math.sin(t * 1.5 + i * 2) * 0.08;
+      if (cps[i].pylonGlow) cps[i].pylonGlow.scale.setScalar(1 + Math.sin(t * 6) * (active ? 0.5 : 0.15));
     }
+    if (S.lakeRibbon) S.lakeRibbon.tex.offset.y = -(t * 0.4) % 1;   // chevrons scroll toward the finish
   };
 
   RACE.routeForAI = function () { return { path: S.route }; };

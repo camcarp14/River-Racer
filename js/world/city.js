@@ -189,27 +189,33 @@
     groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping;
     const groundMat = new THREE.MeshLambertMaterial({ map: groundTex, color: 0x9aa0a6 });
 
-    // apron ribbons: from just behind the seawall out to ~52m, following each channel exactly
+    // apron ribbons: from just behind the seawall out to ~130m, following each channel exactly.
+    // Every rib is keep-out gated (inner + outer corner must be dry land) so the strip never
+    // sweeps over the neighbouring branches' water at the Wolf Point confluence, and it is
+    // sampled at every resample point so it hugs concave bends instead of chording across them.
+    const openX = C.lake.openWaterX;
     const apronGeoms = [];
     for (const key in RR.River.paths) {
       if (key.startsWith('lake')) continue;
       const p = RR.River.paths[key];
       for (const s of [-1, 1]) {
         const verts = [], uvs = [], idx = [];
-        let vi = 0;
-        for (let i = 0; i < p.n; i += 3) {
+        let vi = 0, prevOK = false;
+        for (let i = 0; i < p.n; i++) {
           const i0 = Math.max(0, i - 1), i1 = Math.min(p.n - 1, i + 1);
           let tx = p.x[i1] - p.x[i0], tz = p.z[i1] - p.z[i0];
           const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
           const inner = p.w[i] + 9, outer = p.w[i] + 130;   // upper street sits behind the lower promenade
           const ix = p.x[i] - tz * inner * s, iz = p.z[i] + tx * inner * s;
           const ox = p.x[i] - tz * outer * s, oz = p.z[i] + tx * outer * s;
+          const ok = landClearance(ix, iz) > 0 && landClearance(ox, oz) > 0 && ix < openX - 6 && ox < openX - 6;
           verts.push(ix, GROUND_Y, iz, ox, GROUND_Y, oz);
           uvs.push(ix / 32, iz / 32, ox / 32, oz / 32);
-          if (vi >= 2) {
+          if (vi >= 2 && ok && prevOK) {
             if (s === 1) idx.push(vi - 2, vi - 1, vi, vi - 1, vi + 1, vi);
             else idx.push(vi - 2, vi, vi - 1, vi - 1, vi, vi + 1);
           }
+          prevOK = ok;
           vi += 2;
         }
         const g = new THREE.BufferGeometry();
@@ -393,14 +399,18 @@
         const dLoop = Math.hypot(bx - cx0, bz - cz0);
         if (dLoop > 3100) continue;
 
-        // occasional pocket park right at the water (much rarer now)
+        // occasional pocket park right at the water (much rarer now).
+        // Size the lawn to the local clearance so a waterside block never overhangs the channel.
         if (clear < 45 && rng() < 0.1) {
-          const tile = new THREE.PlaneGeometry(BLOCK - 8, BLOCK - 8);
-          tile.rotateX(-Math.PI / 2); tile.translate(bx, GROUND_Y + 0.02, bz);
-          tintGeom(tile, 0x4f7a3e, 0.14, rng); detailGeoms.push(tile);
-          for (let t = 0; t < 5 + (rng() * 5 | 0); t++) {
-            const tx = bx + (rng() - 0.5) * (BLOCK - 16), tz = bz + (rng() - 0.5) * (BLOCK - 16);
-            if (landClearance(tx, tz) > 3) treeAt(dressGeoms, tx, tz, 0.9 + rng() * 0.4);
+          const ps = Math.min(BLOCK - 8, clear * 2 - 4);
+          if (ps >= 20) {
+            const tile = new THREE.PlaneGeometry(ps, ps);
+            tile.rotateX(-Math.PI / 2); tile.translate(bx, GROUND_Y + 0.02, bz);
+            tintGeom(tile, 0x4f7a3e, 0.14, rng); detailGeoms.push(tile);
+            for (let t = 0; t < 5 + (rng() * 5 | 0); t++) {
+              const tx = bx + (rng() - 0.5) * (ps - 8), tz = bz + (rng() - 0.5) * (ps - 8);
+              if (landClearance(tx, tz) > 3) treeAt(dressGeoms, tx, tz, 0.9 + rng() * 0.4);
+            }
           }
           continue;
         }

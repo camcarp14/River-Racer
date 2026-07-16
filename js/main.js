@@ -93,11 +93,18 @@
         if (b.isPlayer) { RR.Audio.splash(imp); RR.Camera.kick(imp * 0.5); }
       };
       b.onLaunch = () => { if (b.isPlayer) RR.Audio.seagull(); };
-      b.onBump = (sev) => { RR.Audio.thud(sev * 0.8); RR.Camera.kick(sev * 0.5); };
+      b.onBump = (sev, nx, nz) => {
+        RR.FX.splashBurst(b.pos.x, b.pos.y, b.pos.z, sev * 0.6);
+        if (b.isPlayer) { RR.Audio.thud(sev * 0.9); RR.Camera.kick(sev * 0.7); }
+        else { b.bumpRecover = Math.max(b.bumpRecover || 0, 0.30 + sev * 0.55); }  // a solid hit rattles the AI
+      };
     }
 
     RR.Race.onCount = (n) => { RR.HUD.countdown(n); if (n > 0) RR.Audio.countdownBeep(false); else { RR.Audio.countdownBeep(true); RR.Audio.airhorn(); } };
-    RR.Race.onCheckpoint = (n, total) => { RR.HUD.checkpointFlash(n, total); RR.Audio.checkpoint(); };
+    RR.Race.onCheckpoint = (n, total) => {
+      RR.HUD.checkpointFlash(n, total); RR.Audio.checkpoint();
+      if (player) { player.boostEnergy = Math.min(1, player.boostEnergy + 0.6); RR.Camera.kick(0.25); RR.HUD.flash('BOOST REFILLED'); }
+    };
     RR.Race.onLap = () => { RR.Audio.checkpoint(); };
     RR.Race.onPlayerFinish = (pos) => { RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); };
     RR.Race.onRaceOver = (results) => {
@@ -137,7 +144,13 @@
   window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyC' && mode === 'race') RR.Camera.cycle();
     if (e.code === 'KeyR' && mode === 'race') resetToCourse();
-    if (e.code === 'KeyN' && RR.Theme) { const m = RR.Theme.toggle(); if (RR.HUD && RR.HUD.flash) RR.HUD.flash(m === 'night' ? 'NIGHT' : 'DAY'); }
+    if (e.code === 'KeyN' && RR.Theme) { const m = RR.Theme.toggle(); if (RR.HUD && RR.HUD.flash) RR.HUD.flash(m.toUpperCase()); }
+    if (e.code === 'KeyG' && RR.Theme && RR.Theme.toggleGreenRiver) {
+      const on = RR.Theme.toggleGreenRiver();
+      if (RR.HUD && RR.HUD.flash) RR.HUD.flash(on ? 'RIVER DYED GREEN' : 'RIVER RESTORED');
+    }
+    if (e.code === 'KeyP' && (mode === 'race' || mode === 'photo')) togglePhotoMode();
+    if (e.code === 'Escape' && mode === 'photo') togglePhotoMode();
     if (e.code === 'Escape' && mode === 'race') { mode = 'paused'; RR.Menus.showPause(); }
     RR.Audio.init(); RR.Audio.resume();
   }, { once: false });
@@ -146,6 +159,18 @@
   // ---------- per-frame ----------
   const aiCtl = { throttle: 0, brake: 0, steer: 0, boost: false };
   let tagCooldown = 0;
+  let photoAngle = 0;
+
+  // freeze the sim and swing a slow cinematic camera around the boat for screenshots
+  function togglePhotoMode() {
+    if (mode === 'race') {
+      mode = 'photo'; RR.HUD.show(false); RR.Audio.stopEngine();
+      if (RR.HUD.flash) RR.HUD.flash('PHOTO MODE');
+    } else if (mode === 'photo') {
+      mode = 'race'; RR.HUD.show(true);
+      if (player) { RR.Audio.startEngine(player.spec.kind); RR.Camera.snapTo(player); }
+    }
+  }
 
   function update(dt, t) {
     if (RR.Life) RR.Life.update(dt, t);          // crowds + traffic animate in every scene
@@ -155,6 +180,17 @@
       // attract flythrough behind the menus
       const main = RR.River.paths.main;
       if (main) RR.Camera.flyover(dt, main);
+      RR.Race.animateGates && raceState && RR.Race.animateGates(t);
+      return;
+    }
+    if (mode === 'photo') {
+      if (!player) return;
+      photoAngle += dt * 0.25;                       // slow orbit; world keeps shimmering (Life/Fireworks/water run above)
+      const r = 15 + Math.sin(t * 0.2) * 4, cy = player.pos.y + 5.5;
+      const cam = RR.Engine.camera;
+      cam.up.set(0, 1, 0);
+      cam.position.set(player.pos.x + Math.sin(photoAngle) * r, cy, player.pos.z + Math.cos(photoAngle) * r);
+      cam.lookAt(player.pos.x, player.pos.y + 1, player.pos.z);
       RR.Race.animateGates && raceState && RR.Race.animateGates(t);
       return;
     }
@@ -178,6 +214,34 @@
     }
 
     RR.Physics.collidePairs(boats);
+
+    // drawbridge warning: a bascule leaf rising just ahead sounds its horn + scatters gulls
+    if (racing && RR.Bridges && RR.Bridges.openings) {
+      for (const o of RR.Bridges.openings) {
+        const near = RR.U.dist2(player.pos.x, player.pos.z, o.x, o.z) < 95 * 95;
+        if (near && o.rising && !o._warned) {
+          o._warned = true; RR.Audio.airhorn(); RR.Audio.seagull();
+          for (let k = 0; k < 6; k++) RR.FX.spray(o.x + (Math.random() - 0.5) * 14, 7 + Math.random() * 3, o.z + (Math.random() - 0.5) * 14,
+            (Math.random() - 0.5) * 6, 3, (Math.random() - 0.5) * 6, 1, 3, 1);
+        }
+        if (!o.rising) o._warned = false;                 // re-arm once the leaf settles
+      }
+    }
+    // passing wake: a taxi/tour boat sweeping close abeam at speed rocks the player
+    if (RR.Life && RR.Life.craft) {
+      for (const c of RR.Life.craft) {
+        const cx = c.g.position.x, cz = c.g.position.z;
+        const d2 = RR.U.dist2(player.pos.x, player.pos.z, cx, cz);
+        if (d2 < 22 * 22 && d2 > 1 && c.spd > 3) {
+          const dd = Math.sqrt(d2), dx = (player.pos.x - cx) / dd, dz = (player.pos.z - cz) / dd;
+          const push = (1 - dd / 22) * c.spd * 0.06;
+          player.vel.x += dx * push * dt * 8; player.vel.z += dz * push * dt * 8;
+          player.visRoll += (dx * Math.cos(player.heading) - dz * Math.sin(player.heading)) * push * 0.02;
+          if (Math.random() < 0.22) RR.FX.spray(player.pos.x, player.pos.y + 0.1, player.pos.z, dx * 3, 1.5, dz * 3, 1, 2, 1);
+        }
+      }
+    }
+
     for (const b of boats) RR.Physics.applyVisual(b);
 
     // feed boat positions to the water shader for bow-wave foam

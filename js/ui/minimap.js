@@ -70,10 +70,8 @@
       ctx.fill();
     }
 
-    // route ahead: bright line
+    // route ahead: bright line with a dark casing so it reads over open lake water too
     const route = race.route;
-    ctx.strokeStyle = 'rgba(255,200,87,0.9)';
-    ctx.lineWidth = 2;
     ctx.beginPath();
     let started = false;
     const inLapD = route.loop ? player.routeD % route.len : player.routeD;
@@ -83,7 +81,9 @@
       const [x, y] = tf(a.x, a.z, cx, cz, scale);
       if (started) ctx.lineTo(x, y); else { ctx.moveTo(x, y); started = true; }
     }
-    ctx.stroke();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(10,20,30,0.75)'; ctx.lineWidth = 6; ctx.stroke();     // casing
+    ctx.strokeStyle = 'rgba(255,205,90,0.95)'; ctx.lineWidth = 3; ctx.stroke();   // bright core
 
     // checkpoints
     for (let i = player.nextCp; i < Math.min(player.nextCp + 3, race.checkpoints.length); i++) {
@@ -105,7 +105,8 @@
     const px = W / 2, py = Hh * 0.58;
     ctx.save();
     ctx.translate(px, py);
-    ctx.rotate(Math.atan2(Math.sin(player.heading), -Math.cos(player.heading)) + Math.PI);
+    // north-up: world +z is down, boat forward = (sin h, cos h); the up-pointing glyph needs θ = π − heading
+    ctx.rotate(Math.PI - player.heading);
     ctx.fillStyle = '#fff';
     ctx.strokeStyle = 'rgba(0,0,0,0.5)';
     ctx.beginPath();

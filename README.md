@@ -10,7 +10,7 @@ Arcade boat racing down the **real Chicago River** and out into **Lake Michigan*
 
 **From the repo:** open `index.html` in any browser.
 
-The river **mirrors the skyline** with real planar reflections, the golden hour **blooms**, boats kick up **bow-wave foam**, **bascule bridges raise and lower**, and water taxis and tour boats cruise the channels. Tap **N** to ride the clock through **day → sunset → night**: the sky burns orange over the west branch at dusk, then the whole city lights up — thousands of windows and street lamps glowing and reflecting on the black water, while **fireworks arc up over Navy Pier** and burst into colored peonies on the horizon. The renderer scales quality dynamically to hold frame rate.
+The river **mirrors the skyline** with real planar reflections, the golden hour **blooms**, boats kick up **bow-wave foam**, and **bascule bridges raise and lower** — gun it under one as its warning horn sounds and gulls scatter off the deck. You **shove rival racers off their line**, **dodge the yellow water taxis and white Wendella tour boats** working the channel, and blast through checkpoint gates to top up your boost. Tap **N** to ride the clock through **day → sunset → night**: the sky burns orange at dusk, then the whole city lights up — thousands of windows and street lamps glowing on the black water, the **Navy Pier wheel** blazing with color-cycling LEDs, and **fireworks** bursting over the pier. Hit **G** to dye the whole river **St. Patrick's-Day green**, or **P** for a cinematic photo-mode orbit. The renderer scales quality dynamically to hold frame rate.
 
 ## The map is real
 
@@ -24,7 +24,7 @@ Along the banks, modeled from their actual footprints and heights:
 - **28 bridges** in their real order, each with its **street-name sign** (WELLS ST, WABASH AVE, LAKE SHORE DR…), cream-limestone tender houses with verdigris roofs, baluster railings and lamp posts: the bascule spans of the Loop, Wells and Lake St double-deckers carrying the L, the DuSable/Michigan Ave bridge with four tender houses, and the **Kinzie St rail bridge permanently saluting the sky**. Several **bascule bridges raise and lower** their leaves on their own cycles.
 - The real **multi-level Chicago Riverwalk**: a lower promenade at the water's edge with quay walls and railings, stepped up to the street, threaded with its themed "rooms" — café pavilions under canopies, umbrella plazas, the stepped **River Theater**, floating gardens and kayak docks — plus docked **architecture-tour boats** and water taxis.
 - A **living city**: crowds of people and cyclists stroll the promenades and **cars stream across every bridge**, all GPU-instanced. Lamp posts, benches, planters, street trees and pocket parks line the upper level — with strict keep-out so nothing but the bridges ever crosses the water.
-- The **Chicago Harbor Lock** (real 24 m chamber — a genuine pinch at speed), **Navy Pier** with a turning **Centennial Wheel**, the **Chicago Harbor Lighthouse**, and a **living harbor**: a marina of moored sailboats, yachts under sail, nav buoys, a lake freighter, and the Gold Coast and Museum Campus skylines low on the far shore.
+- The **Chicago Harbor Lock** (real 24 m chamber — a genuine pinch at speed), a built-out **Navy Pier** — Pier Park, Festival Hall, the domed ballroom, a carousel and string-lit promenade — crowned by the **Centennial Wheel**: a proper Ferris wheel with a double steel rim, hub, and hanging gondolas that spins on its true axle and blazes with color-cycling LEDs at night. Plus the **Chicago Harbor Lighthouse** and a **living harbor**: moored sailboats, yachts under sail, nav buoys, a lake freighter, and the Gold Coast and Museum Campus skylines low on the far shore. Out on the open water, a **glowing chevron ribbon and lit pylons** mark the racing line so you never lose the course.
 
 ## Courses
 
@@ -49,6 +49,8 @@ Five hulls with genuinely different physics: a whippy **sport jet ski**, an offs
 | `Shift` | Trim boost (watch the meter) |
 | `C` | Camera (chase / close / hull) |
 | `N` | Time of day (day / sunset / night) |
+| `G` | Dye the river green (St. Patrick's Day) |
+| `P` | Photo mode (orbit camera, HUD off) |
 | `R` | Reset to course |
 | `Esc` | Pause |
 

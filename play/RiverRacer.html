@@ -95,7 +95,7 @@
   <div id="wrongway">WRONG WAY!</div>
   <div id="countdown"></div>
   <div id="landmark-tag"></div>
-  <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake<br><b>SHIFT</b> trim boost &nbsp;<b>C</b> camera &nbsp;<b>N</b> time of day &nbsp;<b>R</b> reset &nbsp;<b>ESC</b> pause</div>
+  <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake<br><b>SHIFT</b> trim boost &nbsp;<b>C</b> camera &nbsp;<b>N</b> time of day &nbsp;<b>G</b> green river &nbsp;<b>P</b> photo &nbsp;<b>R</b> reset &nbsp;<b>ESC</b> pause</div>
 </div>
 
 <div id="menu"></div>
@@ -863,7 +863,7 @@ window.CHICAGO = {
   {
    "name": "Franklin–Orleans St",
    "x": -455.8,
-   "z": 155.6,
+   "z": 34.5,
    "branch": "main",
    "kind": "bascule",
    "clearance": 6
@@ -871,7 +871,7 @@ window.CHICAGO = {
   {
    "name": "Wells St",
    "x": -323.2,
-   "z": 144.5,
+   "z": 30.6,
    "branch": "main",
    "kind": "l",
    "clearance": 5.5
@@ -879,7 +879,7 @@ window.CHICAGO = {
   {
    "name": "LaSalle St",
    "x": -198.9,
-   "z": 144.5,
+   "z": 31.3,
    "branch": "main",
    "kind": "bascule",
    "clearance": 5.8
@@ -887,7 +887,7 @@ window.CHICAGO = {
   {
    "name": "Clark St",
    "x": -74.6,
-   "z": 133.4,
+   "z": 31.6,
    "branch": "main",
    "kind": "bascule",
    "clearance": 5.8
@@ -895,7 +895,7 @@ window.CHICAGO = {
   {
    "name": "Dearborn St",
    "x": 49.7,
-   "z": 133.4,
+   "z": 31.0,
    "branch": "main",
    "kind": "bascule",
    "clearance": 5.8
@@ -903,15 +903,15 @@ window.CHICAGO = {
   {
    "name": "State St",
    "x": 174,
-   "z": 133.4,
+   "z": 22.1,
    "branch": "main",
    "kind": "bascule",
    "clearance": 6
   },
   {
    "name": "Wabash Ave",
-   "x": 306.6,
-   "z": 122.2,
+   "x": 307.2,
+   "z": -73.7,
    "branch": "main",
    "kind": "bascule",
    "clearance": 5.8
@@ -1457,6 +1457,18 @@ window.CHICAGO = {
    "c": 11971996,
    "dark": false,
    "gold": false
+  },
+  {
+   "name": "111 N Canal (Ovative Group)",
+   "x": -795.6,
+   "z": 366.7,
+   "kind": "canal111",
+   "h": 96,
+   "w": 64,
+   "d": 46,
+   "c": 15886876,
+   "dark": false,
+   "gold": false
   }
  ],
  "generic": {
@@ -1839,7 +1851,9 @@ window.CHICAGO = {
 /* River Racer — day / night theming. Swaps lights, fog, sky, water colours, the
    buildings' lit-window glow and the street-lamp lights. Toggle with N. */
 (function () {
-  const T = { mode: 'day', lamps: [], _mesh: null };
+  const T = { mode: 'day', lamps: [], _mesh: null, greenRiver: false };
+  // St. Patrick's Day dye — vivid emerald, applied to the river uniforms only (the lake stays blue)
+  const GREEN_DEEP = 0x0a5c2a, GREEN_SHALLOW = 0x14b34a;
 
   // world builders call this with each lamp globe position so night can light them up
   T.addLamp = function (x, y, z, c) { T.lamps.push([x, y, z, c || 0xffe6b0]); };
@@ -1915,12 +1929,26 @@ window.CHICAGO = {
     RR.City.material().emissiveIntensity = P.emissive;
     if (T._mesh) T._mesh.visible = P.lamps;
     if (RR.Fireworks) RR.Fireworks.setActive(P.fireworks);
+
+    // re-apply the St. Patrick's Day dye last so it survives every day/sunset/night switch
+    if (T.greenRiver && RR.Water && RR.Water.material) {
+      const u = RR.Water.material.uniforms;
+      const dim = mode === 'night' ? 0.45 : 1;
+      u.uDeepRiver.value.setHex(GREEN_DEEP).multiplyScalar(dim);
+      u.uShallowRiver.value.setHex(GREEN_SHALLOW).multiplyScalar(dim);
+    }
   };
 
   T.toggle = function () {
     const i = (ORDER.indexOf(T.mode) + 1) % ORDER.length;
     T.apply(ORDER[i]);
     return T.mode;
+  };
+
+  T.toggleGreenRiver = function () {
+    T.greenRiver = !T.greenRiver;
+    T.apply(T.mode);
+    return T.greenRiver;
   };
 
   RR.Theme = T;
@@ -2775,27 +2803,33 @@ window.CHICAGO = {
     groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping;
     const groundMat = new THREE.MeshLambertMaterial({ map: groundTex, color: 0x9aa0a6 });
 
-    // apron ribbons: from just behind the seawall out to ~52m, following each channel exactly
+    // apron ribbons: from just behind the seawall out to ~130m, following each channel exactly.
+    // Every rib is keep-out gated (inner + outer corner must be dry land) so the strip never
+    // sweeps over the neighbouring branches' water at the Wolf Point confluence, and it is
+    // sampled at every resample point so it hugs concave bends instead of chording across them.
+    const openX = C.lake.openWaterX;
     const apronGeoms = [];
     for (const key in RR.River.paths) {
       if (key.startsWith('lake')) continue;
       const p = RR.River.paths[key];
       for (const s of [-1, 1]) {
         const verts = [], uvs = [], idx = [];
-        let vi = 0;
-        for (let i = 0; i < p.n; i += 3) {
+        let vi = 0, prevOK = false;
+        for (let i = 0; i < p.n; i++) {
           const i0 = Math.max(0, i - 1), i1 = Math.min(p.n - 1, i + 1);
           let tx = p.x[i1] - p.x[i0], tz = p.z[i1] - p.z[i0];
           const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
           const inner = p.w[i] + 9, outer = p.w[i] + 130;   // upper street sits behind the lower promenade
           const ix = p.x[i] - tz * inner * s, iz = p.z[i] + tx * inner * s;
           const ox = p.x[i] - tz * outer * s, oz = p.z[i] + tx * outer * s;
+          const ok = landClearance(ix, iz) > 0 && landClearance(ox, oz) > 0 && ix < openX - 6 && ox < openX - 6;
           verts.push(ix, GROUND_Y, iz, ox, GROUND_Y, oz);
           uvs.push(ix / 32, iz / 32, ox / 32, oz / 32);
-          if (vi >= 2) {
+          if (vi >= 2 && ok && prevOK) {
             if (s === 1) idx.push(vi - 2, vi - 1, vi, vi - 1, vi + 1, vi);
             else idx.push(vi - 2, vi, vi - 1, vi - 1, vi, vi + 1);
           }
+          prevOK = ok;
           vi += 2;
         }
         const g = new THREE.BufferGeometry();
@@ -2979,14 +3013,18 @@ window.CHICAGO = {
         const dLoop = Math.hypot(bx - cx0, bz - cz0);
         if (dLoop > 3100) continue;
 
-        // occasional pocket park right at the water (much rarer now)
+        // occasional pocket park right at the water (much rarer now).
+        // Size the lawn to the local clearance so a waterside block never overhangs the channel.
         if (clear < 45 && rng() < 0.1) {
-          const tile = new THREE.PlaneGeometry(BLOCK - 8, BLOCK - 8);
-          tile.rotateX(-Math.PI / 2); tile.translate(bx, GROUND_Y + 0.02, bz);
-          tintGeom(tile, 0x4f7a3e, 0.14, rng); detailGeoms.push(tile);
-          for (let t = 0; t < 5 + (rng() * 5 | 0); t++) {
-            const tx = bx + (rng() - 0.5) * (BLOCK - 16), tz = bz + (rng() - 0.5) * (BLOCK - 16);
-            if (landClearance(tx, tz) > 3) treeAt(dressGeoms, tx, tz, 0.9 + rng() * 0.4);
+          const ps = Math.min(BLOCK - 8, clear * 2 - 4);
+          if (ps >= 20) {
+            const tile = new THREE.PlaneGeometry(ps, ps);
+            tile.rotateX(-Math.PI / 2); tile.translate(bx, GROUND_Y + 0.02, bz);
+            tintGeom(tile, 0x4f7a3e, 0.14, rng); detailGeoms.push(tile);
+            for (let t = 0; t < 5 + (rng() * 5 | 0); t++) {
+              const tx = bx + (rng() - 0.5) * (ps - 8), tz = bz + (rng() - 0.5) * (ps - 8);
+              if (landClearance(tx, tz) > 3) treeAt(dressGeoms, tx, tz, 0.9 + rng() * 0.4);
+            }
           }
           continue;
         }
@@ -3574,6 +3612,14 @@ window.CHICAGO = {
       if (l.h > 150) flat.push(box(l.w * 0.5, 4, l.d * 0.5, l.x, GY() + l.h, l.z, 0x6b7176));
     },
 
+    // 111 N Canal — the user's office. Solid, unmistakable orange (flat material = pure vertex
+    // colour, no muting window texture), with a recessed river-facing glass core + a bright cap.
+    canal111(l, glass, flat) {
+      flat.push(box(l.w, l.h, l.d, l.x, GY(), l.z, l.c));                          // saturated orange mass
+      glass.push(box(l.w * 0.62, l.h * 0.9, 2, l.x, GY() + l.h * 0.05, l.z + l.d * 0.5, l.c));  // glassy river face
+      flat.push(box(l.w * 1.05, 3.5, l.d * 1.05, l.x, GY() + l.h, l.z, 0xff7a2a));  // rooftop parapet pops from the air
+    },
+
     boxstone(l, glass, flat) {
       glass.push(box(l.w, l.h, l.d, l.x, GY(), l.z, l.c));
       flat.push(box(l.w * 1.04, 2.5, l.d * 1.04, l.x, GY() + l.h, l.z, 0x8f8672));
@@ -3760,10 +3806,16 @@ window.CHICAGO = {
         if (RR.Theme) RR.Theme.addLamp(gx + tx * d * 0.55, cl + 5.6, gz + tz * d * 0.55, 0xffe6b0);
       }
     }
-    function addSigns(y) {
-      const w = Math.min(2 * half * 0.62, 13), h = w / 5.2;
-      signQuad(S, cx - tx * 7.2, y, cz - tz * 7.2, -tx, -tz, w, h, cellUV);   // faces upstream
-      signQuad(S, cx + tx * 7.2, y, cz + tz * 7.2, tx, tz, w, h, cellUV);     // faces downstream
+    // name plates mounted on a post at each bank abutment — readable on approach, never floating
+    // over the channel, and clear of the bascule leaves (which pivot at the bank and rise mid-channel).
+    function addBankSigns(y) {
+      const w = Math.min(2 * half * 0.5, 8), h = w / 5.2;
+      for (const sp of [{ s: 1, nx: -tx, nz: -tz }, { s: -1, nx: tx, nz: tz }]) {
+        const acr = (half + 3) * sp.s;
+        const bx = cx - tz * acr, bz = cz + tx * acr;
+        cylAt(0.17, y + 0.8, 0, acr, (y + 0.8) / 2, 0x272b30, 6);   // support post from the abutment up to the plate
+        signQuad(S, bx, y, bz, sp.nx, sp.nz, w, h, cellUV);
+      }
     }
 
     // abutment piers on both banks (all bridge kinds)
@@ -3785,7 +3837,10 @@ window.CHICAGO = {
       RR.City.tintGeom(leaf, 0x555a5e, 0.08, rng); geoms.push(leaf);
       cylAt(2.6, 22, 0, half + 5, 11, 0x555a5e, 4);       // counterweight tower
       at(7, 4, 7, 0, half + 5, 24, 0x4a4e52, true);
-      addSigns(cl > 50 ? 12 : cl + 3.0);
+      // name plates on the counterweight tower — never floating over the permanently-raised gap
+      { const tw = Math.min(2 * half * 0.5, 8), th = tw / 5.2, tacr = half + 5;
+        signQuad(S, cx - tz * tacr, 13, cz + tx * tacr, -tx, -tz, tw, th, cellUV);
+        signQuad(S, cx - tz * tacr, 13, cz + tx * tacr, tx, tz, tw, th, cellUV); }
       addPierObstacles(cx, cz, tx, tz, half);
       return;
     }
@@ -3795,7 +3850,7 @@ window.CHICAGO = {
     const anim = (bridge.kind === 'bascule' || bridge.kind === 'bascule2') && ANIMATED[bridge.name];
 
     // each half of the deck as a leaf that pivots up at its bank (bascule bridge opening)
-    function buildLeaf(s) {
+    function buildLeaf(s, opening) {
       const parts = [];
       const gap = 1.3, acrossLen = half - gap, cAcross = ((gap + half) / 2) * s;
       function piece(aSize, h, alongSize, alongC, oy, color, jit) {
@@ -3821,11 +3876,13 @@ window.CHICAGO = {
       hinge.position.set(px, py, pz);
       hinge.add(mesh);
       RR.Engine.scene.add(hinge);
-      animLeaves.push({ hinge, axis: new THREE.Vector3(tx, 0, tz).normalize(), s, phase: ((cx * 0.7 + cz) % 100) / 100 });
+      animLeaves.push({ hinge, axis: new THREE.Vector3(tx, 0, tz).normalize(), s, phase: ((cx * 0.7 + cz) % 100) / 100, opening });
     }
 
     if (anim) {
-      buildLeaf(1); buildLeaf(-1);
+      const opening = { x: cx, z: cz, open: 0, rising: false };   // polled by main.js for the drawbridge horn
+      B.openings.push(opening);
+      buildLeaf(1, opening); buildLeaf(-1, null);
     } else {
       cross(deckW, 1.6, span, 0, cl + 0.8, bridge.kind === 'deck' ? CONC : RED);
       for (const s of [-1, 1]) cross(2.2, 0.4, span, s * (deckW / 2 - 1.1), cl + 1.8, 0x8a8880, 0.05);
@@ -3855,18 +3912,18 @@ window.CHICAGO = {
         for (let a = -half; a <= half; a += 6) cylAt(0.3, 6.0, s * 5.4, a, cl + 4.6, RED_DK, 4);
         cross(0.5, 0.5, span, s * 5.4, cl + 7.5, 0x3a3f45);
       }
-      addSigns(cl + 3.4);
+      addBankSigns(cl + 3.6);
     } else if (bridge.kind === 'deck') {
       // Lake Shore Drive: steel through-truss
       for (const s of [-1, 1]) cross(1.2, 7, span, s * 9.5, cl + 5.4, 0x6a7076);
       cross(20, 1.2, 8, 0, cl + 9.2, 0x6a7076);
       for (let a = -half; a <= half; a += 8) for (const s of [-1, 1]) cylAt(0.35, 7, s * 9.5, a, cl + 5.4, 0x5a6066, 4);
-      addSigns(cl + 3.6);
+      addBankSigns(cl + 3.8);
     } else {
       // bascule tender houses
       const houses = bridge.kind === 'bascule2' ? [[-1, -1], [-1, 1], [1, -1], [1, 1]] : [[-1, -1], [1, 1]];
       for (const [a, b2] of houses) tenderHouse(a * 8.5, b2 * (half + 3.6));
-      addSigns(cl + 3.3);
+      addBankSigns(cl + 3.6);
     }
 
     addPierObstacles(cx, cz, tx, tz, half);
@@ -3876,6 +3933,7 @@ window.CHICAGO = {
     rng = U().mulberry(4242);
     animLeaves = [];
     decks = [];
+    B.openings = [];
     const bridges = window.CHICAGO.bridges;
     const S = { geoms: [], sv: [], suv: [], sidx: [], atlas: buildSignAtlas(bridges) };
     bridges.forEach((b, i) => build(b, i, S));
@@ -3903,6 +3961,7 @@ window.CHICAGO = {
         let open = 0;
         if (cyc > 0.35 && cyc < 0.65) open = Math.sin(((cyc - 0.35) / 0.30) * Math.PI);
         L.hinge.quaternion.setFromAxisAngle(L.axis, L.s * MAX_LIFT * open);
+        if (L.opening) { L.opening.rising = open > L.opening.open + 1e-4; L.opening.open = open; }
       }
     });
   };
@@ -4006,40 +4065,79 @@ window.CHICAGO = {
       np.tip.x + pux * 17 - puz * (np.width / 2), np.tip.z + puz * 17 + pux * (np.width / 2),
       np.tip.x + pux * 17 + puz * (np.width / 2), np.tip.z + puz * 17 - pux * (np.width / 2), 2.5);
 
-    // ---------- Centennial Wheel (animated — its own meshes) ----------
+    // ---------- Pier Park deck + halls + carousel + Gateway fountain + string lights ----------
     const wheelDist = plen * (np.wheel && np.wheel.frac ? np.wheel.frac : 0.22);
-    const wcx = np.root.x + pux * wheelDist;
-    const wcz = np.root.z + puz * wheelDist;
-    const wh = (np.wheel && np.wheel.h ? np.wheel.h : 60) * 0.5;
+    const wcx = np.root.x + pux * wheelDist, wcz = np.root.z + puz * wheelDist;
+    boxAt(geoms, np.width * 0.7, 1.2, plen * 0.30, pcx - pux * plen * 0.02, 3.2 + 0.6, pcz - puz * plen * 0.02, 0x8fae86, pang); // amusement deck
+    boxAt(geoms, np.width * 0.6, 13, plen * 0.20, pcx + pux * plen * 0.20, 3.2 + 6.5, pcz + puz * plen * 0.20, 0xc7b59a, pang);   // Festival Hall
+    const carX = np.root.x + pux * (wheelDist + 55), carZ = np.root.z + puz * (wheelDist + 55);
+    boxAt(geoms, 16, 4, 16, carX, 3.2 + 2, carZ, 0xd8cbb0);
+    const canopy = new THREE.ConeGeometry(9, 5, 12); canopy.translate(carX, 3.2 + 8, carZ);
+    RR.City.tintGeom(canopy, 0xcf4436, 0, rng); geoms.push(canopy);                                                            // carousel canopy
+    const fring = new THREE.TorusGeometry(14, 2, 6, 20); fring.rotateX(Math.PI / 2);
+    fring.translate(np.root.x - pux * 30, GY + 1, np.root.z - puz * 30);
+    RR.City.tintGeom(fring, 0x9aa7b0, 0, rng); geoms.push(fring);                                                              // Gateway fountain ring
+    for (let i = 1; i < 10; i++) {                                                                                             // promenade string-light poles
+      const f = i / 10, bx = np.root.x + pux * plen * f, bz = np.root.z + puz * plen * f;
+      for (const s of [-1, 1]) {
+        const lx = bx - puz * s * (np.width * 0.42), lz = bz + pux * s * (np.width * 0.42);
+        boxAt(geoms, 0.6, 9, 0.6, lx, 3.2 + 4.5, lz, 0x555a60);
+        if (RR.Theme) RR.Theme.addLamp(lx, 3.2 + 9.2, lz, 0xffe6b0);
+      }
+    }
+
+    // ---------- Centennial Wheel: orientation group + inner spinner + hung gondolas ----------
+    const WR = (np.wheel && np.wheel.h ? np.wheel.h : 60) * 0.5;   // ~30m radius (real wheel ~196ft)
+    const NG = 20;                                                  // gondolas (scaled from the real 42)
+    const hubY = 3.2 + WR + 6;
+    const steelMat = new THREE.MeshStandardMaterial({ color: 0xeef2f6, roughness: 0.35, metalness: 0.5 });
+    const cableMat = new THREE.MeshStandardMaterial({ color: 0xc4ccd4, roughness: 0.5, metalness: 0.4 });
+    const gondMat = new THREE.MeshStandardMaterial({ color: 0x2f6fb0, roughness: 0.35, metalness: 0.2 });
+
     const wheelGroup = new THREE.Group();
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(wh, 1.1, 8, 36),
-      new THREE.MeshStandardMaterial({ color: 0xdde3e8, roughness: 0.4, metalness: 0.3 }));
-    wheelGroup.add(rim);
-    const spokeMat = new THREE.MeshStandardMaterial({ color: 0xaeb6bc, roughness: 0.5 });
-    for (let i = 0; i < 12; i++) {
-      const sp = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, wh * 2, 5), spokeMat);
-      sp.rotation.z = (i / 12) * Math.PI;
-      wheelGroup.add(sp);
-    }
-    const podMat = new THREE.MeshStandardMaterial({ color: 0x2c6fb0, roughness: 0.35 });
-    const pods = [];
-    for (let i = 0; i < 12; i++) {
-      const pod = new THREE.Mesh(new THREE.SphereGeometry(1.9, 8, 6), podMat);
-      pods.push(pod);
-      wheelGroup.add(pod);
-    }
-    wheelGroup.position.set(wcx, 3.2 + wh + 6, wcz);
-    wheelGroup.rotation.y = pang + Math.PI / 2;    // wheel plane along the pier
+    wheelGroup.position.set(wcx, hubY, wcz);
+    wheelGroup.rotation.y = pang + Math.PI / 2;                     // broadside to the river; axle = wheel-local Z
     scene.add(wheelGroup);
-    // A-frame legs
-    const legMat = new THREE.MeshStandardMaterial({ color: 0xc6ccd2, roughness: 0.5 });
-    for (const s of [-1, 1]) {
-      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.3, wh + 8, 6), legMat);
-      leg.position.set(wcx + pux * s * wh * 0.4, (wh + 8) / 2 + 3.2, wcz + puz * s * wh * 0.4);
-      leg.rotation.z = s * 0.25;
-      scene.add(leg);
+
+    const spinner = new THREE.Group();                             // everything that turns
+    wheelGroup.add(spinner);
+    for (const zc of [-3, 3]) {                                     // double rim
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(WR, 0.7, 8, 48), steelMat);
+      ring.position.z = zc; spinner.add(ring);
     }
-    wheel = { group: wheelGroup, pods, r: wh };
+    for (let i = 0; i < NG; i++) {                                  // rim cross-braces + radial spoke cables
+      const a = (i / NG) * Math.PI * 2;
+      const br = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 6, 5), steelMat);
+      br.rotation.x = Math.PI / 2; br.position.set(Math.cos(a) * WR, Math.sin(a) * WR, 0); spinner.add(br);
+      for (const zc of [-3, 3]) {
+        const sp = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, WR, 4), cableMat);
+        sp.position.set(Math.cos(a) * WR / 2, Math.sin(a) * WR / 2, zc);
+        sp.rotation.z = a - Math.PI / 2; spinner.add(sp);
+      }
+    }
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 8, 12), steelMat);
+    hub.rotation.x = Math.PI / 2; spinner.add(hub);                 // axle along local Z
+
+    const gonds = [];                                              // hung from the NON-spinning group → stay upright
+    for (let i = 0; i < NG; i++) {
+      const g = new THREE.Group();
+      const bail = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 2.2, 4), steelMat); bail.position.y = -1.1;
+      const cabin = new THREE.Mesh(new THREE.BoxGeometry(4.2, 3.4, 4.4), gondMat); cabin.position.y = -2.6;
+      g.add(bail); g.add(cabin); wheelGroup.add(g); gonds.push(g);
+    }
+
+    // splayed steel supports from the deck up to the axle ends (wheelGroup-local frame)
+    function strut(ax, ay, az, bx, by, bz, rad) {
+      const ddx = bx - ax, ddy = by - ay, ddz = bz - az, len = Math.hypot(ddx, ddy, ddz);
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad * 1.3, len, 6), steelMat);
+      m.position.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2);
+      m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(ddx, ddy, ddz).normalize());
+      wheelGroup.add(m);
+    }
+    const baseY = 3.2 - hubY;                                       // deck level in wheel-local coords
+    for (const zc of [-6, 6]) for (const s of [-1, 1]) strut(s * WR * 0.7, baseY, zc, 0, 0, Math.sign(zc) * 4, 1.0);
+
+    wheel = { spinner, gonds, r: WR, N: NG, mats: [steelMat, cableMat, gondMat] };
 
     // ---------- Chicago Harbor Lighthouse ----------
     const lh = lake.lighthouse;
@@ -4089,15 +4187,20 @@ window.CHICAGO = {
     mesh.receiveShadow = true;
     scene.add(mesh);
 
-    // wheel rotation + pods hang level; lighthouse beacon pulses at dusk-ish rhythm
+    // wheel spins about its true axle, gondolas hang level, LEDs glow at night; beacon pulses
     RR.Engine.onUpdate((dt, t) => {
-      wheel.group.rotation.x += dt * 0.12;
-      const rot = wheel.group.rotation.x;
-      for (let i = 0; i < wheel.pods.length; i++) {
-        const a = rot + (i / wheel.pods.length) * Math.PI * 2;
-        wheel.pods[i].position.set(0, Math.cos(a) * wheel.r, Math.sin(a) * wheel.r);
-        wheel.pods[i].rotation.x = -rot;
+      const w = wheel;
+      w.spinner.rotation.z += dt * 0.12;                         // real in-plane spin about the axle
+      const base = w.spinner.rotation.z;
+      for (let i = 0; i < w.N; i++) {
+        const a = base + (i / w.N) * Math.PI * 2;
+        w.gonds[i].position.set(Math.cos(a) * w.r, Math.sin(a) * w.r, 0);   // upright (non-spinning parent)
       }
+      const lit = RR.Theme && RR.Theme.mode === 'night' ? 1 : (RR.Theme && RR.Theme.mode === 'sunset' ? 0.35 : 0);
+      const hue = (t * 0.05) % 1;
+      w.mats[0].emissive.setHSL(hue, 0.6, 0.5); w.mats[0].emissiveIntensity = lit * 1.4;   // rim
+      w.mats[1].emissive.setHSL(hue, 0.6, 0.5); w.mats[1].emissiveIntensity = lit * 0.8;   // spokes
+      w.mats[2].emissive.setHex(0x2f6fb0); w.mats[2].emissiveIntensity = lit * 0.9;        // gondolas
       LK._beacon.intensity = 1.4 + Math.sin(t * 2.4) * 1.4;
     });
   };
@@ -4418,55 +4521,88 @@ window.CHICAGO = {
 
     // ---------- live river traffic: taxis, a tour boat, kayakers you weave past ----------
     riverCraft = [];
+    const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
     function craftMesh(kind) {
       const g = new THREE.Group();
       if (kind === 'kayak') {
-        const k = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.25, 4.6, 6),
-          new THREE.MeshLambertMaterial({ color: [0xe0a53a, 0x36a852, 0xd8412f][(rng() * 3) | 0] }));
-        k.rotation.z = Math.PI / 2; g.add(k);
-        const fig = new THREE.Mesh(mergedFigure(), new THREE.MeshLambertMaterial({ color: 0x2f5aa0 }));
-        fig.scale.set(0.8, 0.7, 0.8); fig.position.y = 0.35; g.add(fig);
-      } else {
-        const taxi = kind === 'taxi';
-        const L = taxi ? 11 : 23, W = taxi ? 4 : 6;
-        const hull = new THREE.Mesh(new THREE.BoxGeometry(W, 1.7, L),
-          new THREE.MeshLambertMaterial({ color: taxi ? 0xf0c020 : 0x22508a }));
+        const hull = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 5.0, 8),
+          mat([0xe0a53a, 0x36a852, 0xd8412f, 0x2f6ec0][(rng() * 4) | 0]));
+        hull.rotation.z = Math.PI / 2;
+        const hp = hull.geometry.attributes.position;              // pinch both ends to points
+        for (let i = 0; i < hp.count; i++) { const ax = Math.abs(hp.getX(i)); if (ax > 2.0) { const k = 1 - (ax - 2.0) / 0.6 * 0.9; hp.setY(i, hp.getY(i) * k); hp.setZ(i, hp.getZ(i) * k); } }
+        hull.geometry.computeVertexNormals(); hull.scale.y = 0.55; hull.position.y = 0.28; g.add(hull);
+        const rim = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.06, 5, 10), mat(0x20242a));
+        rim.rotation.x = Math.PI / 2; rim.position.set(0.3, 0.42, 0); g.add(rim);       // cockpit rim
+        const fig = new THREE.Mesh(mergedFigure(), mat(0xdedad0));
+        fig.scale.set(0.75, 0.62, 0.75); fig.position.set(0.3, 0.30, 0); g.add(fig);
+        const paddle = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 2.6), mat(0x6b4a2a));
+        paddle.rotation.x = 0.35; paddle.position.set(0.3, 0.95, 0); g.add(paddle);
+      } else if (kind === 'taxi') {
+        // Chicago Water Taxi — low bright-yellow commuter ferry, black trim, enclosed cabin
+        const L = 11, W = 4;
+        const hull = new THREE.Mesh(new THREE.BoxGeometry(W, 1.6, L), mat(0xf2c200));
         const hp = hull.geometry.attributes.position;
-        for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getZ(i)) > L * 0.4) hp.setX(i, hp.getX(i) * 0.4); }
+        for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getZ(i)) > L * 0.42) hp.setX(i, hp.getX(i) * 0.4); }
         hull.geometry.computeVertexNormals(); hull.position.y = 0.55; g.add(hull);
-        const deck = new THREE.Mesh(new THREE.BoxGeometry(W - 0.6, 0.3, L - 3), new THREE.MeshLambertMaterial({ color: 0xe8e6de }));
-        deck.position.y = 1.45; g.add(deck);
-        if (!taxi) {
-          const can = new THREE.Mesh(new THREE.BoxGeometry(W - 0.4, 0.16, L - 6), new THREE.MeshLambertMaterial({ color: 0xcf3b2f }));
-          can.position.y = 3.3; g.add(can);
-          for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-            const p = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.9, 5), new THREE.MeshLambertMaterial({ color: 0x8a8f94 }));
-            p.position.set(sx * (W / 2 - 0.5), 2.3, sz * (L / 2 - 3)); g.add(p);
-          }
-        } else {
-          const cab = new THREE.Mesh(new THREE.BoxGeometry(W - 1, 1.1, 3.5), new THREE.MeshLambertMaterial({ color: 0x2b2f36 }));
-          cab.position.set(0, 2.1, -1); g.add(cab);
+        const stripe = new THREE.Mesh(new THREE.BoxGeometry(W + 0.06, 0.34, L - 1.2), mat(0x141414)); stripe.position.y = 1.28; g.add(stripe);
+        const cabin = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 1.5, L - 3.2), mat(0xf2c200)); cabin.position.set(0, 2.25, -0.4); g.add(cabin);
+        const win = new THREE.Mesh(new THREE.BoxGeometry(W - 0.44, 0.7, L - 3.6), mat(0x10202b)); win.position.set(0, 2.35, -0.4); g.add(win);
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(W - 0.3, 0.18, L - 3.0), mat(0x141414)); roof.position.set(0, 3.05, -0.4); g.add(roof);
+      } else {
+        // Wendella architecture tour boat — WHITE hull, blue trim, windowed lower lounge,
+        // open upper deck of seats under a canopy, forward wheelhouse
+        const L = 23, W = 6;
+        const hull = new THREE.Mesh(new THREE.BoxGeometry(W, 1.7, L), mat(0xf1efe7));
+        const hp = hull.geometry.attributes.position;
+        for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getZ(i)) > L * 0.42) hp.setX(i, hp.getX(i) * 0.4); }
+        hull.geometry.computeVertexNormals(); hull.position.y = 0.6; g.add(hull);
+        const stripe = new THREE.Mesh(new THREE.BoxGeometry(W + 0.06, 0.4, L - 1.4), mat(0x1b4f92)); stripe.position.y = 1.35; g.add(stripe);
+        const lounge = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 1.3, L - 4.5), mat(0xeceae2)); lounge.position.set(0, 2.2, -0.3); g.add(lounge);
+        const lwin = new THREE.Mesh(new THREE.BoxGeometry(W - 0.44, 0.55, L - 5), mat(0x14252f)); lwin.position.set(0, 2.25, -0.3); g.add(lwin);
+        const upper = new THREE.Mesh(new THREE.BoxGeometry(W - 0.6, 0.22, L - 4.5), mat(0xdedad0)); upper.position.set(0, 3.0, -0.3); g.add(upper);
+        for (let zz = -L * 0.32; zz <= L * 0.28; zz += 1.6) {
+          const bench = new THREE.Mesh(new THREE.BoxGeometry(W - 1.2, 0.35, 0.5), mat(0x27548f)); bench.position.set(0, 3.35, zz); g.add(bench);
         }
+        const awn = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 0.14, L - 8), mat(0x2a5aa0)); awn.position.set(0, 4.5, -0.3); g.add(awn);
+        for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+          const p = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.5, 5), mat(0xd7d3c8));
+          p.position.set(sx * (W / 2 - 0.6), 3.75, sz * ((L - 8) / 2 - 0.5)); g.add(p);
+        }
+        const house = new THREE.Mesh(new THREE.BoxGeometry(W - 1.6, 1.1, 2.4), mat(0xeceae2)); house.position.set(0, 3.6, -L * 0.34); g.add(house);
+        const hwin = new THREE.Mesh(new THREE.BoxGeometry(W - 1.5, 0.5, 2.5), mat(0x14252f)); hwin.position.set(0, 3.75, -L * 0.34); g.add(hwin);
       }
       g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.layers.set(1); } });
       RR.Engine.scene.add(g);
       return g;
     }
     const traffic = [
-      { key: 'main', kind: 'tour', off: 0.5, spd: 6, dir: 1 },
+      { key: 'main', kind: 'tour', off: 0.45, spd: 6, dir: 1 },
+      { key: 'main', kind: 'tour', off: -0.5, spd: 5, dir: -1 },
       { key: 'main', kind: 'taxi', off: -0.55, spd: 9, dir: 1 },
+      { key: 'main', kind: 'taxi', off: 0.55, spd: 8, dir: -1 },
       { key: 'main', kind: 'kayak', off: -0.62, spd: 2.5, dir: 1 },
       { key: 'main', kind: 'kayak', off: -0.66, spd: 2.5, dir: 1 },
-      { key: 'south', kind: 'taxi', off: 0.5, spd: 8, dir: 1 },
+      { key: 'south', kind: 'tour', off: 0.4, spd: 6, dir: 1 },
+      { key: 'south', kind: 'taxi', off: -0.5, spd: 8, dir: -1 },
       { key: 'north', kind: 'taxi', off: -0.5, spd: 8, dir: -1 },
     ];
     for (const t of traffic) {
       const p = RR.River.paths[t.key]; if (!p) continue;
-      const obst = { x: 0, z: 0, r: t.kind === 'tour' ? 5 : t.kind === 'taxi' ? 3 : 1.5 };
-      RR.River.obstacles.push(obst);
-      riverCraft.push({ g: craftMesh(t.kind), p, d: rng() * p.len, off: t.off, spd: t.spd, dir: t.dir, ph: rng() * 9, obst });
+      const big = t.kind !== 'kayak';
+      let obst = null, seg = null, halfLen = 0;
+      if (big) {
+        const L = t.kind === 'tour' ? 23 : 11, W = t.kind === 'tour' ? 6 : 4;
+        halfLen = L * 0.44;                                            // reach the tapered bow/stern
+        seg = { ax: 0, az: 0, bx: 0, bz: 0, pad: W * 0.5 + 0.6 };      // moving capsule; hitObstacle resolves it as one
+        RR.River.walls.push(seg);
+      } else {
+        obst = { x: 0, z: 0, r: 1.5 };
+        RR.River.obstacles.push(obst);
+      }
+      riverCraft.push({ g: craftMesh(t.kind), p, d: rng() * p.len, off: t.off, spd: t.spd, dir: t.dir, ph: rng() * 9, obst, seg, halfLen });
     }
 
+    LIFE.craft = riverCraft;                 // main.js reads this for the passing-wake rock
     LIFE._ready = true;
   };
 
@@ -4526,7 +4662,10 @@ window.CHICAGO = {
       c.g.position.set(x, y, z);
       c.g.rotation.y = Math.atan2(a.tx * c.dir, a.tz * c.dir);
       c.g.rotation.z = Math.sin(t * 0.8 + c.ph) * 0.04 * amp;
-      c.obst.x = x; c.obst.z = z;                        // keep the collision blob under it
+      if (c.seg) {                                       // drive the moving capsule's bow/stern endpoints
+        c.seg.ax = x - a.tx * c.halfLen; c.seg.az = z - a.tz * c.halfLen;
+        c.seg.bx = x + a.tx * c.halfLen; c.seg.bz = z + a.tz * c.halfLen;
+      } else if (c.obst) { c.obst.x = x; c.obst.z = z; }
     }
   };
 
@@ -4646,31 +4785,31 @@ window.CHICAGO = {
     {
       id: 'jetski', name: 'RX BLACKHAWK', kind: 'jetski',
       desc: 'Sport jet ski. Whips around bridge piers like a startled duck. Fragile top end, absurd agility.',
-      top: 33, accel: 15.5, turn: 2.35, grip: 3.4, lean: 0.55, boost: 1.22,
+      top: 33, accel: 15.5, turn: 2.35, grip: 3.4, lean: 0.55, boost: 1.22, mass: 0.7,
       hull: 0x1b1e26, deck: 0xff3b30, accent: 0xffc857, seat: 0x22262e,
     },
     {
       id: 'speedboat', name: 'FORMULA 350 GT', kind: 'speedboat',
       desc: 'Offshore V-hull muscle. Monster straight-line pace, needs the whole channel to turn.',
-      top: 40, accel: 11.5, turn: 1.35, grip: 2.1, lean: 0.34, boost: 1.18,
+      top: 40, accel: 11.5, turn: 1.35, grip: 2.1, lean: 0.34, boost: 1.18, mass: 1.45,
       hull: 0x10315e, deck: 0xf2f4f6, accent: 0xff3b30, seat: 0x1a1d22,
     },
     {
       id: 'f1', name: 'F1H2O PROTOTYPE', kind: 'f1',
       desc: 'Tunnel-hull race cat. The fastest thing on the river — if you can keep it pointed straight.',
-      top: 46, accel: 14.0, turn: 1.75, grip: 2.9, lean: 0.22, boost: 1.25,
+      top: 46, accel: 14.0, turn: 1.75, grip: 2.9, lean: 0.22, boost: 1.25, mass: 0.9,
       hull: 0xffc857, deck: 0x14161c, accent: 0x0f8bd0, seat: 0x14161c,
     },
     {
       id: 'runabout', name: 'LAKESIDE QUEEN ’47', kind: 'runabout',
       desc: 'Varnished mahogany classic. Slowest in class, biggest heart. Style points are a currency.',
-      top: 29, accel: 9.0, turn: 1.55, grip: 2.5, lean: 0.30, boost: 1.15,
+      top: 29, accel: 9.0, turn: 1.55, grip: 2.5, lean: 0.30, boost: 1.15, mass: 1.2,
       hull: 0x6e3b1c, deck: 0x8a5224, accent: 0xe8e2d0, seat: 0x7a1f16,
     },
     {
       id: 'rescue', name: 'CFD MARINE 7-1', kind: 'speedboat',
       desc: 'Fire department rigid inflatable. Punchy, planted, and it bounces off seawalls with dignity.',
-      top: 36, accel: 13.0, turn: 1.85, grip: 3.0, lean: 0.28, boost: 1.2,
+      top: 36, accel: 13.0, turn: 1.85, grip: 3.0, lean: 0.28, boost: 1.2, mass: 1.35,
       hull: 0xd42a1e, deck: 0x1f242b, accent: 0xf5f6f7, seat: 0x14161c,
     },
   ];
@@ -4912,6 +5051,8 @@ window.CHICAGO = {
       rpm: 0,
       visRoll: 0, visPitch: 0,
       radius: (mesh.userData.size ? mesh.userData.size.r : 2) * 0.7,
+      mass: spec.mass || 1,
+      bumpRecover: 0,
       hint: {},
       water: null,          // last waterQuery result snapshot
       wakePhase: Math.random() * 10,
@@ -5052,24 +5193,34 @@ window.CHICAGO = {
       for (let j = i + 1; j < boats.length; j++) {
         const a = boats[i], b = boats[j];
         const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
-        const rr = (a.radius + b.radius) * 0.62;
+        const rr = (a.radius + b.radius) * 1.02;             // contact registers as the hulls visually touch
         const d2 = dx * dx + dz * dz;
         if (d2 < rr * rr && d2 > 1e-6) {
           const d = Math.sqrt(d2);
           const nx = dx / d, nz = dz / d;
-          const pen = (rr - d) * 0.5;
-          a.pos.x -= nx * pen; a.pos.z -= nz * pen;
-          b.pos.x += nx * pen; b.pos.z += nz * pen;
+          const ma = a.mass || 1, mb = b.mass || 1, inv = 1 / (ma + mb);
+          // positional separation — the lighter hull gives way more
+          const pen = rr - d;
+          a.pos.x -= nx * pen * (mb * inv); a.pos.z -= nz * pen * (mb * inv);
+          b.pos.x += nx * pen * (ma * inv); b.pos.z += nz * pen * (ma * inv);
           const rvx = b.vel.x - a.vel.x, rvz = b.vel.z - a.vel.z;
           const vn = rvx * nx + rvz * nz;
           if (vn < 0) {
-            const imp = -vn * 0.55;
-            a.vel.x -= nx * imp; a.vel.z -= nz * imp;
-            b.vel.x += nx * imp; b.vel.z += nz * imp;
-            const sev = Math.min(1, -vn / 14);
-            if (sev > 0.15) {
-              if (a.isPlayer && a.onBump) a.onBump(sev);
-              if (b.isPlayer && b.onBump) b.onBump(sev);
+            const e = 0.35;                                  // restitution: give the shove some pop
+            const jimp = -(1 + e) * vn * ma * mb * inv;
+            a.vel.x -= nx * jimp / ma; a.vel.z -= nz * jimp / ma;
+            b.vel.x += nx * jimp / mb; b.vel.z += nz * jimp / mb;
+            // lateral shove knocks a rival off their racing line on glancing hits
+            const tx = -nz, tz = nx, shove = (rvx * tx + rvz * tz) * 0.22;
+            a.vel.x -= tx * shove * (mb * inv); a.vel.z -= tz * shove * (mb * inv);
+            b.vel.x += tx * shove * (ma * inv); b.vel.z += tz * shove * (ma * inv);
+            // small yaw kick so a solid hit visibly spins them
+            const yaw = U().clamp(-vn * 0.015, 0, 0.4);
+            a.angVel -= yaw * (mb * inv); b.angVel += yaw * (ma * inv);
+            const sev = Math.min(1, -vn / 11);
+            if (sev > 0.1) {
+              if (a.onBump) a.onBump(sev, -nx, -nz);          // fire for BOTH; per-boat handler decides player vs AI
+              if (b.onBump) b.onBump(sev, nx, nz);
             }
           }
         }
@@ -5118,6 +5269,7 @@ window.CHICAGO = {
     const b = pilot.boat;
     const route = pilot.route;
     const speed = Math.hypot(b.vel.x, b.vel.z);
+    b.bumpRecover = Math.max(0, (b.bumpRecover || 0) - dt);   // rattled for a beat after a hard bump
 
     // progress along route (race.js keeps b.routeD updated); loops wrap the lookahead
     const look = 16 + speed * 1.15;
@@ -5167,6 +5319,9 @@ window.CHICAGO = {
       pilot.ctl.steer = -Math.sign(err || 1);
       if (pilot.stuckTimer > 2.6) pilot.stuckTimer = 0;
     }
+
+    // a fresh bump saps steering authority + throttle, so a good shove actually costs them track
+    if (b.bumpRecover > 0) { pilot.ctl.steer *= 0.30; pilot.ctl.throttle *= 0.65; }
 
     return pilot.ctl;
   };
@@ -6313,6 +6468,60 @@ window.CHICAGO = {
     return g;
   }
 
+  // scrolling gold chevrons painted on the water + tall lit pylons, ONLY on the open-lake legs,
+  // so the course is unmistakable once it leaves the framed river canyon
+  function chevronTex() {
+    return RR.U.canvasTexture(64, 128, (c, w, h) => {
+      c.clearRect(0, 0, w, h);
+      c.strokeStyle = '#ffd24a'; c.lineWidth = 14; c.lineCap = 'round';
+      for (let k = -1; k < 3; k++) {
+        const y = k * (h / 2);
+        c.beginPath(); c.moveTo(6, y); c.lineTo(w / 2, y + h * 0.28); c.lineTo(w - 6, y); c.stroke();
+      }
+    });
+  }
+  function buildLakeMarkers(state) {
+    const route = state.route, pt = {};
+    const step = 12, halfW = 9;
+    const verts = [], uvs = []; let vlen = 0, prev = null;
+    for (let d = 0; d <= route.len; d += step) {
+      U().pathAt(route, route.loop ? d % route.len : d, pt);
+      if (!RR.River.inLake(pt.x, pt.z)) { prev = null; continue; }   // never lay the ribbon over the river channel
+      const w = Math.min(halfW, pt.w - 4);
+      const lx = pt.x - pt.tz * w, lz = pt.z + pt.tx * w;
+      const rx = pt.x + pt.tz * w, rz = pt.z - pt.tx * w;
+      if (prev) {
+        vlen += Math.hypot(pt.x - prev.x, pt.z - prev.z);
+        verts.push(prev.lx, 0.35, prev.lz, prev.rx, 0.35, prev.rz, lx, 0.35, lz,
+                   prev.rx, 0.35, prev.rz, rx, 0.35, rz, lx, 0.35, lz);
+        const v0 = prev.v, v1 = vlen / 24;
+        uvs.push(0, v0, 1, v0, 0, v1, 1, v0, 1, v1, 0, v1);
+      }
+      prev = { lx, lz, rx, rz, x: pt.x, z: pt.z, v: vlen / 24 };
+    }
+    if (verts.length) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      const tex = chevronTex(); tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      const ribbon = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+      ribbon.renderOrder = 2; ribbon.layers.set(1);
+      gateGroup.add(ribbon);
+      state.lakeRibbon = { tex };
+    }
+    for (const cp of state.checkpoints) {
+      if (!RR.River.inLake(cp.x, cp.z)) continue;
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 22, 8),
+        new THREE.MeshStandardMaterial({ color: 0x1b2733, emissive: 0xffc857, emissiveIntensity: 0.6, roughness: 0.5 }));
+      mast.position.set(cp.x, 11, cp.z);
+      const glow = new THREE.Mesh(new THREE.SphereGeometry(1.1, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffd24a }));
+      glow.position.set(cp.x, 22, cp.z);
+      gateGroup.add(mast, glow);
+      cp.pylonGlow = glow;
+    }
+  }
+
   function buildGates(state) {
     gateGroup = new THREE.Group();
     RR.Engine.scene.add(gateGroup);
@@ -6373,6 +6582,7 @@ window.CHICAGO = {
     const strip = new THREE.Mesh(stripGeo, new THREE.MeshBasicMaterial({ map: stripTex, transparent: true, opacity: 0.8, depthWrite: false }));
     strip.rotation.y = ang; strip.position.set(pt.x, 0.35, pt.z); strip.renderOrder = 2;
     gateGroup.add(strip);
+    buildLakeMarkers(state);
     state.finishD = fd;
     state.finishGate = { x: pt.x, z: pt.z };
     state.finishFlags = finishFlags;
@@ -6543,7 +6753,9 @@ window.CHICAGO = {
       cps[i].L.position.y = y; cps[i].R.position.y = y;
       cps[i].L.rotation.x = Math.sin(t * 1.3 + i) * 0.08;
       cps[i].R.rotation.x = Math.sin(t * 1.5 + i * 2) * 0.08;
+      if (cps[i].pylonGlow) cps[i].pylonGlow.scale.setScalar(1 + Math.sin(t * 6) * (active ? 0.5 : 0.15));
     }
+    if (S.lakeRibbon) S.lakeRibbon.tex.offset.y = -(t * 0.4) % 1;   // chevrons scroll toward the finish
   };
 
   RACE.routeForAI = function () { return { path: S.route }; };
@@ -6710,10 +6922,8 @@ window.CHICAGO = {
       ctx.fill();
     }
 
-    // route ahead: bright line
+    // route ahead: bright line with a dark casing so it reads over open lake water too
     const route = race.route;
-    ctx.strokeStyle = 'rgba(255,200,87,0.9)';
-    ctx.lineWidth = 2;
     ctx.beginPath();
     let started = false;
     const inLapD = route.loop ? player.routeD % route.len : player.routeD;
@@ -6723,7 +6933,9 @@ window.CHICAGO = {
       const [x, y] = tf(a.x, a.z, cx, cz, scale);
       if (started) ctx.lineTo(x, y); else { ctx.moveTo(x, y); started = true; }
     }
-    ctx.stroke();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(10,20,30,0.75)'; ctx.lineWidth = 6; ctx.stroke();     // casing
+    ctx.strokeStyle = 'rgba(255,205,90,0.95)'; ctx.lineWidth = 3; ctx.stroke();   // bright core
 
     // checkpoints
     for (let i = player.nextCp; i < Math.min(player.nextCp + 3, race.checkpoints.length); i++) {
@@ -6745,7 +6957,8 @@ window.CHICAGO = {
     const px = W / 2, py = Hh * 0.58;
     ctx.save();
     ctx.translate(px, py);
-    ctx.rotate(Math.atan2(Math.sin(player.heading), -Math.cos(player.heading)) + Math.PI);
+    // north-up: world +z is down, boat forward = (sin h, cos h); the up-pointing glyph needs θ = π − heading
+    ctx.rotate(Math.PI - player.heading);
     ctx.fillStyle = '#fff';
     ctx.strokeStyle = 'rgba(0,0,0,0.5)';
     ctx.beginPath();
@@ -7150,11 +7363,18 @@ window.CHICAGO = {
         if (b.isPlayer) { RR.Audio.splash(imp); RR.Camera.kick(imp * 0.5); }
       };
       b.onLaunch = () => { if (b.isPlayer) RR.Audio.seagull(); };
-      b.onBump = (sev) => { RR.Audio.thud(sev * 0.8); RR.Camera.kick(sev * 0.5); };
+      b.onBump = (sev, nx, nz) => {
+        RR.FX.splashBurst(b.pos.x, b.pos.y, b.pos.z, sev * 0.6);
+        if (b.isPlayer) { RR.Audio.thud(sev * 0.9); RR.Camera.kick(sev * 0.7); }
+        else { b.bumpRecover = Math.max(b.bumpRecover || 0, 0.30 + sev * 0.55); }  // a solid hit rattles the AI
+      };
     }
 
     RR.Race.onCount = (n) => { RR.HUD.countdown(n); if (n > 0) RR.Audio.countdownBeep(false); else { RR.Audio.countdownBeep(true); RR.Audio.airhorn(); } };
-    RR.Race.onCheckpoint = (n, total) => { RR.HUD.checkpointFlash(n, total); RR.Audio.checkpoint(); };
+    RR.Race.onCheckpoint = (n, total) => {
+      RR.HUD.checkpointFlash(n, total); RR.Audio.checkpoint();
+      if (player) { player.boostEnergy = Math.min(1, player.boostEnergy + 0.6); RR.Camera.kick(0.25); RR.HUD.flash('BOOST REFILLED'); }
+    };
     RR.Race.onLap = () => { RR.Audio.checkpoint(); };
     RR.Race.onPlayerFinish = (pos) => { RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); };
     RR.Race.onRaceOver = (results) => {
@@ -7194,7 +7414,13 @@ window.CHICAGO = {
   window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyC' && mode === 'race') RR.Camera.cycle();
     if (e.code === 'KeyR' && mode === 'race') resetToCourse();
-    if (e.code === 'KeyN' && RR.Theme) { const m = RR.Theme.toggle(); if (RR.HUD && RR.HUD.flash) RR.HUD.flash(m === 'night' ? 'NIGHT' : 'DAY'); }
+    if (e.code === 'KeyN' && RR.Theme) { const m = RR.Theme.toggle(); if (RR.HUD && RR.HUD.flash) RR.HUD.flash(m.toUpperCase()); }
+    if (e.code === 'KeyG' && RR.Theme && RR.Theme.toggleGreenRiver) {
+      const on = RR.Theme.toggleGreenRiver();
+      if (RR.HUD && RR.HUD.flash) RR.HUD.flash(on ? 'RIVER DYED GREEN' : 'RIVER RESTORED');
+    }
+    if (e.code === 'KeyP' && (mode === 'race' || mode === 'photo')) togglePhotoMode();
+    if (e.code === 'Escape' && mode === 'photo') togglePhotoMode();
     if (e.code === 'Escape' && mode === 'race') { mode = 'paused'; RR.Menus.showPause(); }
     RR.Audio.init(); RR.Audio.resume();
   }, { once: false });
@@ -7203,6 +7429,18 @@ window.CHICAGO = {
   // ---------- per-frame ----------
   const aiCtl = { throttle: 0, brake: 0, steer: 0, boost: false };
   let tagCooldown = 0;
+  let photoAngle = 0;
+
+  // freeze the sim and swing a slow cinematic camera around the boat for screenshots
+  function togglePhotoMode() {
+    if (mode === 'race') {
+      mode = 'photo'; RR.HUD.show(false); RR.Audio.stopEngine();
+      if (RR.HUD.flash) RR.HUD.flash('PHOTO MODE');
+    } else if (mode === 'photo') {
+      mode = 'race'; RR.HUD.show(true);
+      if (player) { RR.Audio.startEngine(player.spec.kind); RR.Camera.snapTo(player); }
+    }
+  }
 
   function update(dt, t) {
     if (RR.Life) RR.Life.update(dt, t);          // crowds + traffic animate in every scene
@@ -7212,6 +7450,17 @@ window.CHICAGO = {
       // attract flythrough behind the menus
       const main = RR.River.paths.main;
       if (main) RR.Camera.flyover(dt, main);
+      RR.Race.animateGates && raceState && RR.Race.animateGates(t);
+      return;
+    }
+    if (mode === 'photo') {
+      if (!player) return;
+      photoAngle += dt * 0.25;                       // slow orbit; world keeps shimmering (Life/Fireworks/water run above)
+      const r = 15 + Math.sin(t * 0.2) * 4, cy = player.pos.y + 5.5;
+      const cam = RR.Engine.camera;
+      cam.up.set(0, 1, 0);
+      cam.position.set(player.pos.x + Math.sin(photoAngle) * r, cy, player.pos.z + Math.cos(photoAngle) * r);
+      cam.lookAt(player.pos.x, player.pos.y + 1, player.pos.z);
       RR.Race.animateGates && raceState && RR.Race.animateGates(t);
       return;
     }
@@ -7235,6 +7484,34 @@ window.CHICAGO = {
     }
 
     RR.Physics.collidePairs(boats);
+
+    // drawbridge warning: a bascule leaf rising just ahead sounds its horn + scatters gulls
+    if (racing && RR.Bridges && RR.Bridges.openings) {
+      for (const o of RR.Bridges.openings) {
+        const near = RR.U.dist2(player.pos.x, player.pos.z, o.x, o.z) < 95 * 95;
+        if (near && o.rising && !o._warned) {
+          o._warned = true; RR.Audio.airhorn(); RR.Audio.seagull();
+          for (let k = 0; k < 6; k++) RR.FX.spray(o.x + (Math.random() - 0.5) * 14, 7 + Math.random() * 3, o.z + (Math.random() - 0.5) * 14,
+            (Math.random() - 0.5) * 6, 3, (Math.random() - 0.5) * 6, 1, 3, 1);
+        }
+        if (!o.rising) o._warned = false;                 // re-arm once the leaf settles
+      }
+    }
+    // passing wake: a taxi/tour boat sweeping close abeam at speed rocks the player
+    if (RR.Life && RR.Life.craft) {
+      for (const c of RR.Life.craft) {
+        const cx = c.g.position.x, cz = c.g.position.z;
+        const d2 = RR.U.dist2(player.pos.x, player.pos.z, cx, cz);
+        if (d2 < 22 * 22 && d2 > 1 && c.spd > 3) {
+          const dd = Math.sqrt(d2), dx = (player.pos.x - cx) / dd, dz = (player.pos.z - cz) / dd;
+          const push = (1 - dd / 22) * c.spd * 0.06;
+          player.vel.x += dx * push * dt * 8; player.vel.z += dz * push * dt * 8;
+          player.visRoll += (dx * Math.cos(player.heading) - dz * Math.sin(player.heading)) * push * 0.02;
+          if (Math.random() < 0.22) RR.FX.spray(player.pos.x, player.pos.y + 0.1, player.pos.z, dx * 3, 1.5, dz * 3, 1, 2, 1);
+        }
+      }
+    }
+
     for (const b of boats) RR.Physics.applyVisual(b);
 
     // feed boat positions to the water shader for bow-wave foam

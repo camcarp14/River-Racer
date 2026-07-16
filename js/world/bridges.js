@@ -126,10 +126,16 @@
         if (RR.Theme) RR.Theme.addLamp(gx + tx * d * 0.55, cl + 5.6, gz + tz * d * 0.55, 0xffe6b0);
       }
     }
-    function addSigns(y) {
-      const w = Math.min(2 * half * 0.62, 13), h = w / 5.2;
-      signQuad(S, cx - tx * 7.2, y, cz - tz * 7.2, -tx, -tz, w, h, cellUV);   // faces upstream
-      signQuad(S, cx + tx * 7.2, y, cz + tz * 7.2, tx, tz, w, h, cellUV);     // faces downstream
+    // name plates mounted on a post at each bank abutment — readable on approach, never floating
+    // over the channel, and clear of the bascule leaves (which pivot at the bank and rise mid-channel).
+    function addBankSigns(y) {
+      const w = Math.min(2 * half * 0.5, 8), h = w / 5.2;
+      for (const sp of [{ s: 1, nx: -tx, nz: -tz }, { s: -1, nx: tx, nz: tz }]) {
+        const acr = (half + 3) * sp.s;
+        const bx = cx - tz * acr, bz = cz + tx * acr;
+        cylAt(0.17, y + 0.8, 0, acr, (y + 0.8) / 2, 0x272b30, 6);   // support post from the abutment up to the plate
+        signQuad(S, bx, y, bz, sp.nx, sp.nz, w, h, cellUV);
+      }
     }
 
     // abutment piers on both banks (all bridge kinds)
@@ -151,7 +157,10 @@
       RR.City.tintGeom(leaf, 0x555a5e, 0.08, rng); geoms.push(leaf);
       cylAt(2.6, 22, 0, half + 5, 11, 0x555a5e, 4);       // counterweight tower
       at(7, 4, 7, 0, half + 5, 24, 0x4a4e52, true);
-      addSigns(cl > 50 ? 12 : cl + 3.0);
+      // name plates on the counterweight tower — never floating over the permanently-raised gap
+      { const tw = Math.min(2 * half * 0.5, 8), th = tw / 5.2, tacr = half + 5;
+        signQuad(S, cx - tz * tacr, 13, cz + tx * tacr, -tx, -tz, tw, th, cellUV);
+        signQuad(S, cx - tz * tacr, 13, cz + tx * tacr, tx, tz, tw, th, cellUV); }
       addPierObstacles(cx, cz, tx, tz, half);
       return;
     }
@@ -161,7 +170,7 @@
     const anim = (bridge.kind === 'bascule' || bridge.kind === 'bascule2') && ANIMATED[bridge.name];
 
     // each half of the deck as a leaf that pivots up at its bank (bascule bridge opening)
-    function buildLeaf(s) {
+    function buildLeaf(s, opening) {
       const parts = [];
       const gap = 1.3, acrossLen = half - gap, cAcross = ((gap + half) / 2) * s;
       function piece(aSize, h, alongSize, alongC, oy, color, jit) {
@@ -187,11 +196,13 @@
       hinge.position.set(px, py, pz);
       hinge.add(mesh);
       RR.Engine.scene.add(hinge);
-      animLeaves.push({ hinge, axis: new THREE.Vector3(tx, 0, tz).normalize(), s, phase: ((cx * 0.7 + cz) % 100) / 100 });
+      animLeaves.push({ hinge, axis: new THREE.Vector3(tx, 0, tz).normalize(), s, phase: ((cx * 0.7 + cz) % 100) / 100, opening });
     }
 
     if (anim) {
-      buildLeaf(1); buildLeaf(-1);
+      const opening = { x: cx, z: cz, open: 0, rising: false };   // polled by main.js for the drawbridge horn
+      B.openings.push(opening);
+      buildLeaf(1, opening); buildLeaf(-1, null);
     } else {
       cross(deckW, 1.6, span, 0, cl + 0.8, bridge.kind === 'deck' ? CONC : RED);
       for (const s of [-1, 1]) cross(2.2, 0.4, span, s * (deckW / 2 - 1.1), cl + 1.8, 0x8a8880, 0.05);
@@ -221,18 +232,18 @@
         for (let a = -half; a <= half; a += 6) cylAt(0.3, 6.0, s * 5.4, a, cl + 4.6, RED_DK, 4);
         cross(0.5, 0.5, span, s * 5.4, cl + 7.5, 0x3a3f45);
       }
-      addSigns(cl + 3.4);
+      addBankSigns(cl + 3.6);
     } else if (bridge.kind === 'deck') {
       // Lake Shore Drive: steel through-truss
       for (const s of [-1, 1]) cross(1.2, 7, span, s * 9.5, cl + 5.4, 0x6a7076);
       cross(20, 1.2, 8, 0, cl + 9.2, 0x6a7076);
       for (let a = -half; a <= half; a += 8) for (const s of [-1, 1]) cylAt(0.35, 7, s * 9.5, a, cl + 5.4, 0x5a6066, 4);
-      addSigns(cl + 3.6);
+      addBankSigns(cl + 3.8);
     } else {
       // bascule tender houses
       const houses = bridge.kind === 'bascule2' ? [[-1, -1], [-1, 1], [1, -1], [1, 1]] : [[-1, -1], [1, 1]];
       for (const [a, b2] of houses) tenderHouse(a * 8.5, b2 * (half + 3.6));
-      addSigns(cl + 3.3);
+      addBankSigns(cl + 3.6);
     }
 
     addPierObstacles(cx, cz, tx, tz, half);
@@ -242,6 +253,7 @@
     rng = U().mulberry(4242);
     animLeaves = [];
     decks = [];
+    B.openings = [];
     const bridges = window.CHICAGO.bridges;
     const S = { geoms: [], sv: [], suv: [], sidx: [], atlas: buildSignAtlas(bridges) };
     bridges.forEach((b, i) => build(b, i, S));
@@ -269,6 +281,7 @@
         let open = 0;
         if (cyc > 0.35 && cyc < 0.65) open = Math.sin(((cyc - 0.35) / 0.30) * Math.PI);
         L.hinge.quaternion.setFromAxisAngle(L.axis, L.s * MAX_LIFT * open);
+        if (L.opening) { L.opening.rising = open > L.opening.open + 1e-4; L.opening.open = open; }
       }
     });
   };

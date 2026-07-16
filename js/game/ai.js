@@ -24,6 +24,7 @@
     const b = pilot.boat;
     const route = pilot.route;
     const speed = Math.hypot(b.vel.x, b.vel.z);
+    b.bumpRecover = Math.max(0, (b.bumpRecover || 0) - dt);   // rattled for a beat after a hard bump
 
     // progress along route (race.js keeps b.routeD updated); loops wrap the lookahead
     const look = 16 + speed * 1.15;
@@ -73,6 +74,9 @@
       pilot.ctl.steer = -Math.sign(err || 1);
       if (pilot.stuckTimer > 2.6) pilot.stuckTimer = 0;
     }
+
+    // a fresh bump saps steering authority + throttle, so a good shove actually costs them track
+    if (b.bumpRecover > 0) { pilot.ctl.steer *= 0.30; pilot.ctl.throttle *= 0.65; }
 
     return pilot.ctl;
   };

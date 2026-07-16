@@ -142,55 +142,88 @@
 
     // ---------- live river traffic: taxis, a tour boat, kayakers you weave past ----------
     riverCraft = [];
+    const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
     function craftMesh(kind) {
       const g = new THREE.Group();
       if (kind === 'kayak') {
-        const k = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.25, 4.6, 6),
-          new THREE.MeshLambertMaterial({ color: [0xe0a53a, 0x36a852, 0xd8412f][(rng() * 3) | 0] }));
-        k.rotation.z = Math.PI / 2; g.add(k);
-        const fig = new THREE.Mesh(mergedFigure(), new THREE.MeshLambertMaterial({ color: 0x2f5aa0 }));
-        fig.scale.set(0.8, 0.7, 0.8); fig.position.y = 0.35; g.add(fig);
-      } else {
-        const taxi = kind === 'taxi';
-        const L = taxi ? 11 : 23, W = taxi ? 4 : 6;
-        const hull = new THREE.Mesh(new THREE.BoxGeometry(W, 1.7, L),
-          new THREE.MeshLambertMaterial({ color: taxi ? 0xf0c020 : 0x22508a }));
+        const hull = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 5.0, 8),
+          mat([0xe0a53a, 0x36a852, 0xd8412f, 0x2f6ec0][(rng() * 4) | 0]));
+        hull.rotation.z = Math.PI / 2;
+        const hp = hull.geometry.attributes.position;              // pinch both ends to points
+        for (let i = 0; i < hp.count; i++) { const ax = Math.abs(hp.getX(i)); if (ax > 2.0) { const k = 1 - (ax - 2.0) / 0.6 * 0.9; hp.setY(i, hp.getY(i) * k); hp.setZ(i, hp.getZ(i) * k); } }
+        hull.geometry.computeVertexNormals(); hull.scale.y = 0.55; hull.position.y = 0.28; g.add(hull);
+        const rim = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.06, 5, 10), mat(0x20242a));
+        rim.rotation.x = Math.PI / 2; rim.position.set(0.3, 0.42, 0); g.add(rim);       // cockpit rim
+        const fig = new THREE.Mesh(mergedFigure(), mat(0xdedad0));
+        fig.scale.set(0.75, 0.62, 0.75); fig.position.set(0.3, 0.30, 0); g.add(fig);
+        const paddle = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 2.6), mat(0x6b4a2a));
+        paddle.rotation.x = 0.35; paddle.position.set(0.3, 0.95, 0); g.add(paddle);
+      } else if (kind === 'taxi') {
+        // Chicago Water Taxi — low bright-yellow commuter ferry, black trim, enclosed cabin
+        const L = 11, W = 4;
+        const hull = new THREE.Mesh(new THREE.BoxGeometry(W, 1.6, L), mat(0xf2c200));
         const hp = hull.geometry.attributes.position;
-        for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getZ(i)) > L * 0.4) hp.setX(i, hp.getX(i) * 0.4); }
+        for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getZ(i)) > L * 0.42) hp.setX(i, hp.getX(i) * 0.4); }
         hull.geometry.computeVertexNormals(); hull.position.y = 0.55; g.add(hull);
-        const deck = new THREE.Mesh(new THREE.BoxGeometry(W - 0.6, 0.3, L - 3), new THREE.MeshLambertMaterial({ color: 0xe8e6de }));
-        deck.position.y = 1.45; g.add(deck);
-        if (!taxi) {
-          const can = new THREE.Mesh(new THREE.BoxGeometry(W - 0.4, 0.16, L - 6), new THREE.MeshLambertMaterial({ color: 0xcf3b2f }));
-          can.position.y = 3.3; g.add(can);
-          for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-            const p = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.9, 5), new THREE.MeshLambertMaterial({ color: 0x8a8f94 }));
-            p.position.set(sx * (W / 2 - 0.5), 2.3, sz * (L / 2 - 3)); g.add(p);
-          }
-        } else {
-          const cab = new THREE.Mesh(new THREE.BoxGeometry(W - 1, 1.1, 3.5), new THREE.MeshLambertMaterial({ color: 0x2b2f36 }));
-          cab.position.set(0, 2.1, -1); g.add(cab);
+        const stripe = new THREE.Mesh(new THREE.BoxGeometry(W + 0.06, 0.34, L - 1.2), mat(0x141414)); stripe.position.y = 1.28; g.add(stripe);
+        const cabin = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 1.5, L - 3.2), mat(0xf2c200)); cabin.position.set(0, 2.25, -0.4); g.add(cabin);
+        const win = new THREE.Mesh(new THREE.BoxGeometry(W - 0.44, 0.7, L - 3.6), mat(0x10202b)); win.position.set(0, 2.35, -0.4); g.add(win);
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(W - 0.3, 0.18, L - 3.0), mat(0x141414)); roof.position.set(0, 3.05, -0.4); g.add(roof);
+      } else {
+        // Wendella architecture tour boat — WHITE hull, blue trim, windowed lower lounge,
+        // open upper deck of seats under a canopy, forward wheelhouse
+        const L = 23, W = 6;
+        const hull = new THREE.Mesh(new THREE.BoxGeometry(W, 1.7, L), mat(0xf1efe7));
+        const hp = hull.geometry.attributes.position;
+        for (let i = 0; i < hp.count; i++) { if (Math.abs(hp.getZ(i)) > L * 0.42) hp.setX(i, hp.getX(i) * 0.4); }
+        hull.geometry.computeVertexNormals(); hull.position.y = 0.6; g.add(hull);
+        const stripe = new THREE.Mesh(new THREE.BoxGeometry(W + 0.06, 0.4, L - 1.4), mat(0x1b4f92)); stripe.position.y = 1.35; g.add(stripe);
+        const lounge = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 1.3, L - 4.5), mat(0xeceae2)); lounge.position.set(0, 2.2, -0.3); g.add(lounge);
+        const lwin = new THREE.Mesh(new THREE.BoxGeometry(W - 0.44, 0.55, L - 5), mat(0x14252f)); lwin.position.set(0, 2.25, -0.3); g.add(lwin);
+        const upper = new THREE.Mesh(new THREE.BoxGeometry(W - 0.6, 0.22, L - 4.5), mat(0xdedad0)); upper.position.set(0, 3.0, -0.3); g.add(upper);
+        for (let zz = -L * 0.32; zz <= L * 0.28; zz += 1.6) {
+          const bench = new THREE.Mesh(new THREE.BoxGeometry(W - 1.2, 0.35, 0.5), mat(0x27548f)); bench.position.set(0, 3.35, zz); g.add(bench);
         }
+        const awn = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 0.14, L - 8), mat(0x2a5aa0)); awn.position.set(0, 4.5, -0.3); g.add(awn);
+        for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+          const p = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.5, 5), mat(0xd7d3c8));
+          p.position.set(sx * (W / 2 - 0.6), 3.75, sz * ((L - 8) / 2 - 0.5)); g.add(p);
+        }
+        const house = new THREE.Mesh(new THREE.BoxGeometry(W - 1.6, 1.1, 2.4), mat(0xeceae2)); house.position.set(0, 3.6, -L * 0.34); g.add(house);
+        const hwin = new THREE.Mesh(new THREE.BoxGeometry(W - 1.5, 0.5, 2.5), mat(0x14252f)); hwin.position.set(0, 3.75, -L * 0.34); g.add(hwin);
       }
       g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.layers.set(1); } });
       RR.Engine.scene.add(g);
       return g;
     }
     const traffic = [
-      { key: 'main', kind: 'tour', off: 0.5, spd: 6, dir: 1 },
+      { key: 'main', kind: 'tour', off: 0.45, spd: 6, dir: 1 },
+      { key: 'main', kind: 'tour', off: -0.5, spd: 5, dir: -1 },
       { key: 'main', kind: 'taxi', off: -0.55, spd: 9, dir: 1 },
+      { key: 'main', kind: 'taxi', off: 0.55, spd: 8, dir: -1 },
       { key: 'main', kind: 'kayak', off: -0.62, spd: 2.5, dir: 1 },
       { key: 'main', kind: 'kayak', off: -0.66, spd: 2.5, dir: 1 },
-      { key: 'south', kind: 'taxi', off: 0.5, spd: 8, dir: 1 },
+      { key: 'south', kind: 'tour', off: 0.4, spd: 6, dir: 1 },
+      { key: 'south', kind: 'taxi', off: -0.5, spd: 8, dir: -1 },
       { key: 'north', kind: 'taxi', off: -0.5, spd: 8, dir: -1 },
     ];
     for (const t of traffic) {
       const p = RR.River.paths[t.key]; if (!p) continue;
-      const obst = { x: 0, z: 0, r: t.kind === 'tour' ? 5 : t.kind === 'taxi' ? 3 : 1.5 };
-      RR.River.obstacles.push(obst);
-      riverCraft.push({ g: craftMesh(t.kind), p, d: rng() * p.len, off: t.off, spd: t.spd, dir: t.dir, ph: rng() * 9, obst });
+      const big = t.kind !== 'kayak';
+      let obst = null, seg = null, halfLen = 0;
+      if (big) {
+        const L = t.kind === 'tour' ? 23 : 11, W = t.kind === 'tour' ? 6 : 4;
+        halfLen = L * 0.44;                                            // reach the tapered bow/stern
+        seg = { ax: 0, az: 0, bx: 0, bz: 0, pad: W * 0.5 + 0.6 };      // moving capsule; hitObstacle resolves it as one
+        RR.River.walls.push(seg);
+      } else {
+        obst = { x: 0, z: 0, r: 1.5 };
+        RR.River.obstacles.push(obst);
+      }
+      riverCraft.push({ g: craftMesh(t.kind), p, d: rng() * p.len, off: t.off, spd: t.spd, dir: t.dir, ph: rng() * 9, obst, seg, halfLen });
     }
 
+    LIFE.craft = riverCraft;                 // main.js reads this for the passing-wake rock
     LIFE._ready = true;
   };
 
@@ -250,7 +283,10 @@
       c.g.position.set(x, y, z);
       c.g.rotation.y = Math.atan2(a.tx * c.dir, a.tz * c.dir);
       c.g.rotation.z = Math.sin(t * 0.8 + c.ph) * 0.04 * amp;
-      c.obst.x = x; c.obst.z = z;                        // keep the collision blob under it
+      if (c.seg) {                                       // drive the moving capsule's bow/stern endpoints
+        c.seg.ax = x - a.tx * c.halfLen; c.seg.az = z - a.tz * c.halfLen;
+        c.seg.bx = x + a.tx * c.halfLen; c.seg.bz = z + a.tz * c.halfLen;
+      } else if (c.obst) { c.obst.x = x; c.obst.z = z; }
     }
   };
 

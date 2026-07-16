@@ -1,7 +1,9 @@
 /* River Racer — day / night theming. Swaps lights, fog, sky, water colours, the
    buildings' lit-window glow and the street-lamp lights. Toggle with N. */
 (function () {
-  const T = { mode: 'day', lamps: [], _mesh: null };
+  const T = { mode: 'day', lamps: [], _mesh: null, greenRiver: false };
+  // St. Patrick's Day dye — vivid emerald, applied to the river uniforms only (the lake stays blue)
+  const GREEN_DEEP = 0x0a5c2a, GREEN_SHALLOW = 0x14b34a;
 
   // world builders call this with each lamp globe position so night can light them up
   T.addLamp = function (x, y, z, c) { T.lamps.push([x, y, z, c || 0xffe6b0]); };
@@ -77,12 +79,26 @@
     RR.City.material().emissiveIntensity = P.emissive;
     if (T._mesh) T._mesh.visible = P.lamps;
     if (RR.Fireworks) RR.Fireworks.setActive(P.fireworks);
+
+    // re-apply the St. Patrick's Day dye last so it survives every day/sunset/night switch
+    if (T.greenRiver && RR.Water && RR.Water.material) {
+      const u = RR.Water.material.uniforms;
+      const dim = mode === 'night' ? 0.45 : 1;
+      u.uDeepRiver.value.setHex(GREEN_DEEP).multiplyScalar(dim);
+      u.uShallowRiver.value.setHex(GREEN_SHALLOW).multiplyScalar(dim);
+    }
   };
 
   T.toggle = function () {
     const i = (ORDER.indexOf(T.mode) + 1) % ORDER.length;
     T.apply(ORDER[i]);
     return T.mode;
+  };
+
+  T.toggleGreenRiver = function () {
+    T.greenRiver = !T.greenRiver;
+    T.apply(T.mode);
+    return T.greenRiver;
   };
 
   RR.Theme = T;

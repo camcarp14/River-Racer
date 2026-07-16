@@ -254,6 +254,14 @@
       if (l.h > 150) flat.push(box(l.w * 0.5, 4, l.d * 0.5, l.x, GY() + l.h, l.z, 0x6b7176));
     },
 
+    // 111 N Canal — the user's office. Solid, unmistakable orange (flat material = pure vertex
+    // colour, no muting window texture), with a recessed river-facing glass core + a bright cap.
+    canal111(l, glass, flat) {
+      flat.push(box(l.w, l.h, l.d, l.x, GY(), l.z, l.c));                          // saturated orange mass
+      glass.push(box(l.w * 0.62, l.h * 0.9, 2, l.x, GY() + l.h * 0.05, l.z + l.d * 0.5, l.c));  // glassy river face
+      flat.push(box(l.w * 1.05, 3.5, l.d * 1.05, l.x, GY() + l.h, l.z, 0xff7a2a));  // rooftop parapet pops from the air
+    },
+
     boxstone(l, glass, flat) {
       glass.push(box(l.w, l.h, l.d, l.x, GY(), l.z, l.c));
       flat.push(box(l.w * 1.04, 2.5, l.d * 1.04, l.x, GY() + l.h, l.z, 0x8f8672));

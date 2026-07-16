@@ -79,13 +79,14 @@ const lakeLoop = [
 // kinds: bascule | l (double-deck w/ transit) | deck (fixed high girder) | lift | railraised
 const BRIDGES = [
   // Main Stem, west → east
-  { name: 'Franklin–Orleans St', lat: 41.8866, lon: -87.6355, br: 'main', kind: 'bascule', cl: 6.0 },
-  { name: 'Wells St', lat: 41.8867, lon: -87.6339, br: 'main', kind: 'l', cl: 5.5 },
-  { name: 'LaSalle St', lat: 41.8867, lon: -87.6324, br: 'main', kind: 'bascule', cl: 5.8 },
-  { name: 'Clark St', lat: 41.8868, lon: -87.6309, br: 'main', kind: 'bascule', cl: 5.8 },
-  { name: 'Dearborn St', lat: 41.8868, lon: -87.6294, br: 'main', kind: 'bascule', cl: 5.8 },
-  { name: 'State St', lat: 41.8868, lon: -87.6279, br: 'main', kind: 'bascule', cl: 6.0 },
-  { name: 'Wabash Ave', lat: 41.8869, lon: -87.6263, br: 'main', kind: 'bascule', cl: 5.8 },
+  // lat corrected onto the GIS centerline so the builder snaps to the true crossing (was ~110-150m off)
+  { name: 'Franklin–Orleans St', lat: 41.8877, lon: -87.6355, br: 'main', kind: 'bascule', cl: 6.0 },
+  { name: 'Wells St', lat: 41.8877, lon: -87.6339, br: 'main', kind: 'l', cl: 5.5 },
+  { name: 'LaSalle St', lat: 41.8877, lon: -87.6324, br: 'main', kind: 'bascule', cl: 5.8 },
+  { name: 'Clark St', lat: 41.8877, lon: -87.6309, br: 'main', kind: 'bascule', cl: 5.8 },
+  { name: 'Dearborn St', lat: 41.8877, lon: -87.6294, br: 'main', kind: 'bascule', cl: 5.8 },
+  { name: 'State St', lat: 41.8878, lon: -87.6279, br: 'main', kind: 'bascule', cl: 6.0 },
+  { name: 'Wabash Ave', lat: 41.8887, lon: -87.6263, br: 'main', kind: 'bascule', cl: 5.8 },
   { name: 'DuSable / Michigan Ave', lat: 41.8889, lon: -87.6244, br: 'main', kind: 'bascule2', cl: 6.2 },
   { name: 'Columbus Dr', lat: 41.8889, lon: -87.6205, br: 'main', kind: 'bascule', cl: 6.4 },
   { name: 'Lake Shore Dr', lat: 41.8888, lon: -87.6136, br: 'main', kind: 'deck', cl: 9.5 },
@@ -149,6 +150,8 @@ const LANDMARKS = [
   { name: 'Salesforce Tower', lat: 41.8873, lon: -87.6368, kind: 'boxglass', h: 253, w: 48, d: 36, c: 0xa9bcc4 },
   // North Branch
   { name: 'Old Montgomery Ward', lat: 41.8963, lon: -87.6422, kind: 'boxstone', h: 32, w: 150, d: 40, c: 0xb6ad9c },
+  // Fulton River District, west bank of the South Branch — the user's office, an unmistakable orange slab
+  { name: '111 N Canal (Ovative Group)', lat: 41.8847, lon: -87.6396, kind: 'canal111', h: 96, w: 64, d: 46, c: 0xf26a1c },
 ];
 
 // ---------- assemble ----------
