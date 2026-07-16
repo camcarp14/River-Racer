@@ -74,8 +74,12 @@
     clearBoats();
     const N = timeTrial ? 1 : 6;
     const catalog = RR.Boats.CATALOG;
+    // one-design racing: every rival runs the SAME hull as you (fair fight, pure skill),
+    // each in its own livery so you can tell the field apart at speed
+    const LIVERY = [0xd8dce0, 0x2f8f4f, 0x8a2fb0, 0xe07820, 0x16303f];
     for (let i = 0; i < N; i++) {
-      const spec = i === 0 ? catalog[vehicleIdx] : catalog[(vehicleIdx + 1 + i) % catalog.length];
+      const base = catalog[vehicleIdx];
+      const spec = i === 0 ? base : Object.assign({}, base, { hull: LIVERY[(i - 1) % LIVERY.length] });
       const mesh = RR.Boats.build(spec);
       RR.Engine.scene.add(mesh);
       const b = RR.Physics.createBoat(spec, mesh);

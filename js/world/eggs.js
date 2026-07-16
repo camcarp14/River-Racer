@@ -192,7 +192,7 @@
       m.position.set(q.x, -1000, q.z);                               // parked hidden until it runs
       scene.add(m);
       trains.push({ mesh: m, cx: q.x, cz: q.z, ax, az, y: b.clearance + 8.6,
-        end: q.w + 55, run: false, dir: 1, s: 0, wait: 4 + rng() * 14 });
+        end: q.w + 85, run: false, dir: 1, s: 0, wait: 4 + rng() * 14, cool: 0 });
     }
 
     // ---------- FIREBOAT SALUTE: moored near the river mouth, arcing water plumes over the channel ----------
@@ -368,16 +368,22 @@
         const br = 1 + 0.15 * Math.sin(t * 1.7);
         mainJet.scale.x = br; mainJet.scale.z = br;
       }
-      // L trains slide across their spans at ~20 m/s, then hide and re-arm (14-24 s)
+      // L trains: guaranteed to run whenever a racer closes in on their bridge (plus an
+      // idle ambient schedule). Long approach runs mean they're always seen mid-motion,
+      // never popping in — and a short cooldown keeps repeat passes believable.
+      const raceS = RR.Race.state && RR.Race.state();
+      const pl = raceS && raceS.player;
       for (let i = 0; i < trains.length; i++) {
         const tr = trains[i];
         if (tr.run) {
-          tr.s += 20 * dt * tr.dir;
-          if (tr.s * tr.dir > tr.end) { tr.run = false; tr.wait = 14 + rng() * 10; tr.mesh.position.y = -1000; }
+          tr.s += 19 * dt * tr.dir;
+          if (tr.s * tr.dir > tr.end) { tr.run = false; tr.wait = 16 + rng() * 12; tr.cool = 8; tr.mesh.position.y = -1000; }
           else tr.mesh.position.set(tr.cx + tr.ax * tr.s, tr.y, tr.cz + tr.az * tr.s);
         } else {
           tr.wait -= dt;
-          if (tr.wait <= 0) { tr.run = true; tr.dir = -tr.dir; tr.s = -tr.end * tr.dir; }
+          tr.cool = Math.max(0, tr.cool - dt);
+          const near = pl && U().dist2(pl.pos.x, pl.pos.z, tr.cx, tr.cz) < 250 * 250;
+          if ((near && tr.cool <= 0) || tr.wait <= 0) { tr.run = true; tr.dir = -tr.dir; tr.s = -tr.end * tr.dir; }
         }
       }
       // fireboat bobs on the swell and keeps two tall arcing plumes going over the channel

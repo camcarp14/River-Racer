@@ -151,7 +151,7 @@
   const DIFFS = [
     { name: 'ROOKIE', v: 0.7, desc: 'Rivals cruise the scenic route. A friendly Sunday on the river.' },
     { name: 'SKIPPER', v: 1.0, desc: 'A fair fight from Wolf Point to the lighthouse.' },
-    { name: 'LEGEND', v: 1.3, desc: 'They run the perfect line, never lift, and show no mercy.' },
+    { name: 'LEGEND', v: 1.45, desc: 'They run the perfect line, never lift, and show no mercy.' },
   ];
   function showDifficulty() {
     screen = 'difficulty';

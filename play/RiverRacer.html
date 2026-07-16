@@ -4483,7 +4483,7 @@ window.CHICAGO = {
       m.position.set(q.x, -1000, q.z);                               // parked hidden until it runs
       scene.add(m);
       trains.push({ mesh: m, cx: q.x, cz: q.z, ax, az, y: b.clearance + 8.6,
-        end: q.w + 55, run: false, dir: 1, s: 0, wait: 4 + rng() * 14 });
+        end: q.w + 85, run: false, dir: 1, s: 0, wait: 4 + rng() * 14, cool: 0 });
     }
 
     // ---------- FIREBOAT SALUTE: moored near the river mouth, arcing water plumes over the channel ----------
@@ -4659,16 +4659,22 @@ window.CHICAGO = {
         const br = 1 + 0.15 * Math.sin(t * 1.7);
         mainJet.scale.x = br; mainJet.scale.z = br;
       }
-      // L trains slide across their spans at ~20 m/s, then hide and re-arm (14-24 s)
+      // L trains: guaranteed to run whenever a racer closes in on their bridge (plus an
+      // idle ambient schedule). Long approach runs mean they're always seen mid-motion,
+      // never popping in — and a short cooldown keeps repeat passes believable.
+      const raceS = RR.Race.state && RR.Race.state();
+      const pl = raceS && raceS.player;
       for (let i = 0; i < trains.length; i++) {
         const tr = trains[i];
         if (tr.run) {
-          tr.s += 20 * dt * tr.dir;
-          if (tr.s * tr.dir > tr.end) { tr.run = false; tr.wait = 14 + rng() * 10; tr.mesh.position.y = -1000; }
+          tr.s += 19 * dt * tr.dir;
+          if (tr.s * tr.dir > tr.end) { tr.run = false; tr.wait = 16 + rng() * 12; tr.cool = 8; tr.mesh.position.y = -1000; }
           else tr.mesh.position.set(tr.cx + tr.ax * tr.s, tr.y, tr.cz + tr.az * tr.s);
         } else {
           tr.wait -= dt;
-          if (tr.wait <= 0) { tr.run = true; tr.dir = -tr.dir; tr.s = -tr.end * tr.dir; }
+          tr.cool = Math.max(0, tr.cool - dt);
+          const near = pl && U().dist2(pl.pos.x, pl.pos.z, tr.cx, tr.cz) < 250 * 250;
+          if ((near && tr.cool <= 0) || tr.wait <= 0) { tr.run = true; tr.dir = -tr.dir; tr.s = -tr.end * tr.dir; }
         }
       }
       // fireboat bobs on the swell and keeps two tall arcing plumes going over the channel
@@ -6274,14 +6280,15 @@ window.CHICAGO = {
     // corner anticipation: angle between near and far tangents
     const bend = Math.abs(U().wrapAngle(Math.atan2(ptFar.tx, ptFar.tz) - Math.atan2(pt.tx, pt.tz)));
 
-    // steer toward lookahead point offset into our lane, with a lazy sine wobble
-    const wobble = Math.sin(t * 0.6 + pilot.wobbleSeed) * 0.14;
+    // steer toward lookahead point offset into our lane, with a lazy sine wobble.
+    // Better pilots wobble less and correct harder — legends hold a surgical line.
+    const wobble = Math.sin(t * 0.6 + pilot.wobbleSeed) * (0.205 - pilot.diff * 0.06);
     const laneOff = (pilot.lane + wobble) * Math.max(4, pt.w - 8);
     const tx = pt.x - pt.tz * laneOff;
     const tz = pt.z + pt.tx * laneOff;
     const desired = Math.atan2(tx - b.pos.x, tz - b.pos.z);
     let err = U().wrapAngle(desired - b.heading);
-    pilot.ctl.steer = U().clamp(err * 2.2, -1, 1);
+    pilot.ctl.steer = U().clamp(err * (1.9 + pilot.diff * 0.5), -1, 1);
 
     // throttle: full unless a bend looms; brake hard only for hairpins
     let th = 1;
@@ -6297,10 +6304,10 @@ window.CHICAGO = {
     if (rubber < 0) th *= 1 + rubber * Math.max(0, 1.15 - pilot.diff) * 0.35;
     pilot.ctl.throttle = U().clamp(th, 0, 1);
 
-    // opportunistic boost on straights, more when behind
+    // opportunistic boost on straights, more when behind; legends burn it earlier and harder
     pilot.boostTimer -= dt;
     pilot.ctl.boost = false;
-    if (pilot.boostTimer <= 0 && bend < 0.2 && b.boostEnergy > 0.5) {
+    if (pilot.boostTimer <= 0 && bend < 0.2 && b.boostEnergy > (pilot.diff > 1.2 ? 0.35 : 0.5)) {
       if (rubber > -0.2 || Math.random() < pilot.aggression * 0.3) pilot.ctl.boost = true;
       if (b.boostEnergy < 0.15) pilot.boostTimer = 4 + Math.random() * 5;
     }
@@ -8467,7 +8474,7 @@ window.CHICAGO = {
   const DIFFS = [
     { name: 'ROOKIE', v: 0.7, desc: 'Rivals cruise the scenic route. A friendly Sunday on the river.' },
     { name: 'SKIPPER', v: 1.0, desc: 'A fair fight from Wolf Point to the lighthouse.' },
-    { name: 'LEGEND', v: 1.3, desc: 'They run the perfect line, never lift, and show no mercy.' },
+    { name: 'LEGEND', v: 1.45, desc: 'They run the perfect line, never lift, and show no mercy.' },
   ];
   function showDifficulty() {
     screen = 'difficulty';
@@ -8724,8 +8731,12 @@ window.CHICAGO = {
     clearBoats();
     const N = timeTrial ? 1 : 6;
     const catalog = RR.Boats.CATALOG;
+    // one-design racing: every rival runs the SAME hull as you (fair fight, pure skill),
+    // each in its own livery so you can tell the field apart at speed
+    const LIVERY = [0xd8dce0, 0x2f8f4f, 0x8a2fb0, 0xe07820, 0x16303f];
     for (let i = 0; i < N; i++) {
-      const spec = i === 0 ? catalog[vehicleIdx] : catalog[(vehicleIdx + 1 + i) % catalog.length];
+      const base = catalog[vehicleIdx];
+      const spec = i === 0 ? base : Object.assign({}, base, { hull: LIVERY[(i - 1) % LIVERY.length] });
       const mesh = RR.Boats.build(spec);
       RR.Engine.scene.add(mesh);
       const b = RR.Physics.createBoat(spec, mesh);

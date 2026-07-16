@@ -37,14 +37,15 @@
     // corner anticipation: angle between near and far tangents
     const bend = Math.abs(U().wrapAngle(Math.atan2(ptFar.tx, ptFar.tz) - Math.atan2(pt.tx, pt.tz)));
 
-    // steer toward lookahead point offset into our lane, with a lazy sine wobble
-    const wobble = Math.sin(t * 0.6 + pilot.wobbleSeed) * 0.14;
+    // steer toward lookahead point offset into our lane, with a lazy sine wobble.
+    // Better pilots wobble less and correct harder — legends hold a surgical line.
+    const wobble = Math.sin(t * 0.6 + pilot.wobbleSeed) * (0.205 - pilot.diff * 0.06);
     const laneOff = (pilot.lane + wobble) * Math.max(4, pt.w - 8);
     const tx = pt.x - pt.tz * laneOff;
     const tz = pt.z + pt.tx * laneOff;
     const desired = Math.atan2(tx - b.pos.x, tz - b.pos.z);
     let err = U().wrapAngle(desired - b.heading);
-    pilot.ctl.steer = U().clamp(err * 2.2, -1, 1);
+    pilot.ctl.steer = U().clamp(err * (1.9 + pilot.diff * 0.5), -1, 1);
 
     // throttle: full unless a bend looms; brake hard only for hairpins
     let th = 1;
@@ -60,10 +61,10 @@
     if (rubber < 0) th *= 1 + rubber * Math.max(0, 1.15 - pilot.diff) * 0.35;
     pilot.ctl.throttle = U().clamp(th, 0, 1);
 
-    // opportunistic boost on straights, more when behind
+    // opportunistic boost on straights, more when behind; legends burn it earlier and harder
     pilot.boostTimer -= dt;
     pilot.ctl.boost = false;
-    if (pilot.boostTimer <= 0 && bend < 0.2 && b.boostEnergy > 0.5) {
+    if (pilot.boostTimer <= 0 && bend < 0.2 && b.boostEnergy > (pilot.diff > 1.2 ? 0.35 : 0.5)) {
       if (rubber > -0.2 || Math.random() < pilot.aggression * 0.3) pilot.ctl.boost = true;
       if (b.boostEnergy < 0.15) pilot.boostTimer = 4 + Math.random() * 5;
     }
