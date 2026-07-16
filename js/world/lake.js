@@ -19,6 +19,7 @@
     const C = window.CHICAGO;
     const lake = C.lake;
     const geoms = [];
+    const geoms2 = [];           // Lake Shore Drive + lakefront park (kept separate: it's a big second batch)
     const GY = 2.2;              // the lakefront sits near water level, not up at the downtown street grid
 
     // ---------- Chicago Harbor Lock: concrete chamber walls + gate machinery ----------
@@ -71,15 +72,43 @@
     for (const s of [-1, 1]) {
       boxAt(geoms, 12, 26, 12, np.root.x + pux * 20 - puz * s * np.width * 0.32, 3.2 + 13, np.root.z + puz * 20 + pux * s * np.width * 0.32, 0xa86448, pang);
     }
-    // exhibition sheds along the pier
+    // exhibition sheds along the pier, with a continuous dark window ribbon
     boxAt(geoms, np.width * 0.55, 12, plen * 0.42, pcx - pux * plen * 0.08, 3.2 + 6, pcz - puz * plen * 0.08, 0xcabfa8, pang);
-    // Grand Ballroom at the tip: half-cylinder vault
-    const ball = new THREE.CylinderGeometry(np.width * 0.34, np.width * 0.34, 70, 14, 1, false, 0, Math.PI);
-    ball.rotateZ(Math.PI / 2);
-    ball.rotateY(pang + Math.PI / 2);
-    ball.translate(np.tip.x - pux * 45, 3.2 + 4, np.tip.z - puz * 45);
-    RR.City.tintGeom(ball, 0xc2b490, 0, rng);
-    geoms.push(ball);
+    boxAt(geoms, np.width * 0.55 + 0.3, 2.4, plen * 0.42 - 6, pcx - pux * plen * 0.08, 3.2 + 7.2, pcz - puz * plen * 0.08, 0x22333d, pang);
+    // Grand Ballroom at the tip: hall + drum + dome seated ON the deck (was a giant floating vault)
+    const bx = np.tip.x - pux * 45, bz = np.tip.z - puz * 45;
+    boxAt(geoms, np.width * 0.44, 8, 36, bx, 3.2 + 4, bz, 0xc8b894, pang);
+    boxAt(geoms, np.width * 0.44 + 0.3, 1.8, 30, bx, 3.2 + 5.4, bz, 0x22333d, pang);   // window ribbon
+    const drum = new THREE.CylinderGeometry(16.5, 18.5, 8, 14);
+    drum.translate(bx, 3.2 + 12, bz);
+    RR.City.tintGeom(drum, 0xc2b490, 0, rng); geoms.push(drum);
+    const dome = new THREE.SphereGeometry(16.5, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+    dome.translate(bx, 3.2 + 16, bz);
+    RR.City.tintGeom(dome, 0xaf9f7e, 0, rng); geoms.push(dome);
+    // east twin brick towers flanking the ballroom, like the real pier head
+    for (const s of [-1, 1]) {
+      const twx = np.tip.x - pux * 12 - puz * s * (np.width * 0.3);
+      const twz = np.tip.z - puz * 12 + pux * s * (np.width * 0.3);
+      boxAt(geoms, 7, 17, 7, twx, 3.2 + 8.5, twz, 0xa86448, pang);
+      const cap = new THREE.ConeGeometry(5.2, 4.2, 4);
+      cap.rotateY(pang + Math.PI / 4);
+      cap.translate(twx, 3.2 + 19, twz);
+      RR.City.tintGeom(cap, 0x3f5a3a, 0, rng); geoms.push(cap);
+    }
+    // wooden pilings + dock ledge along both faces so the pier reads like a working wharf
+    for (const s of [-1, 1]) {
+      const ledge = new THREE.BoxGeometry(2.6, 0.8, plen * 0.92);
+      ledge.rotateY(pang);
+      ledge.translate(pcx - puz * s * (np.width / 2 + 1.2), 1.1, pcz + pux * s * (np.width / 2 + 1.2));
+      RR.City.tintGeom(ledge, 0x8d8272, 0.06, rng); geoms.push(ledge);
+      for (let d = 30; d < plen - 20; d += 22) {
+        const px2 = np.root.x + pux * d - puz * s * (np.width / 2 + 2.4);
+        const pz2 = np.root.z + puz * d + pux * s * (np.width / 2 + 2.4);
+        const pile = new THREE.CylinderGeometry(0.42, 0.5, 3.6, 5);
+        pile.translate(px2, 1.2, pz2);
+        RR.City.tintGeom(pile, 0x4a3c2c, 0.08, rng); geoms.push(pile);
+      }
+    }
 
     // pier collision: north face, south face, tip cap
     for (const s of [-1, 1]) {
@@ -96,6 +125,7 @@
     const wcx = np.root.x + pux * wheelDist, wcz = np.root.z + puz * wheelDist;
     boxAt(geoms, np.width * 0.7, 1.2, plen * 0.30, pcx - pux * plen * 0.02, 3.2 + 0.6, pcz - puz * plen * 0.02, 0x8fae86, pang); // amusement deck
     boxAt(geoms, np.width * 0.6, 13, plen * 0.20, pcx + pux * plen * 0.20, 3.2 + 6.5, pcz + puz * plen * 0.20, 0xc7b59a, pang);   // Festival Hall
+    boxAt(geoms, np.width * 0.6 + 0.3, 2.2, plen * 0.20 - 5, pcx + pux * plen * 0.20, 3.2 + 7.6, pcz + puz * plen * 0.20, 0x22333d, pang);
     const carX = np.root.x + pux * (wheelDist + 55), carZ = np.root.z + puz * (wheelDist + 55);
     boxAt(geoms, 16, 4, 16, carX, 3.2 + 2, carZ, 0xd8cbb0);
     const canopy = new THREE.ConeGeometry(9, 5, 12); canopy.translate(carX, 3.2 + 8, carZ);
@@ -208,10 +238,72 @@
       RR.River.addWall(bw.ax, bw.az, bw.bx, bw.bz, 4.5);
     }
 
+    // ---------- Lake Shore Drive: elevated viaduct running N–S from the Link Bridge ----------
+    // The roadway picks up at both ends of the Lake Shore Dr crossing and runs the lakefront.
+    const LX = 1359, RD_TOP = 9.5 + 1.6;            // centerline + deck-top height matching the bridge
+    const landOK = (x, z) => RR.City.landClearance(x, z) > 3;
+    for (let z0 = -940; z0 < 940; z0 += 40) {
+      const zc = z0 + 20;
+      if (!landOK(LX, z0) || !landOK(LX, zc) || !landOK(LX, z0 + 40)) continue;   // the bridge spans the river
+      boxAt(geoms2, 20, 1.2, 40.4, LX, RD_TOP - 0.6, zc, 0x63676d);
+      boxAt(geoms2, 20, 0.06, 0.7, LX, RD_TOP + 0.01, zc, 0xdfe3e6);              // lane dash
+      for (const s of [-1, 1]) {
+        boxAt(geoms2, 0.5, 1.0, 40.4, LX + s * 9.9, RD_TOP + 0.5, zc, 0x9aa0a6);  // guardrails
+        boxAt(geoms2, 3.4, RD_TOP - 1.2, 3.0, LX + s * 6.5, (RD_TOP - 1.2) / 2, zc, 0x8b8880);  // piers
+      }
+      if ((z0 / 40) % 2 === 0) {
+        boxAt(geoms2, 0.5, 6, 0.5, LX, RD_TOP + 3, zc, 0x555a60);                 // median light poles
+        if (RR.Theme) RR.Theme.addLamp(LX, RD_TOP + 6.4, zc, 0xffd9a0);
+      }
+    }
+
+    // ---------- lakefront park between the Drive and the seawall (DuSable Harbor front) ----------
+    const CGY = RR.City.GROUND_Y;
+    function parkTree(x, z, s) {
+      const trunk = new THREE.CylinderGeometry(0.22 * s, 0.32 * s, 2.6 * s, 5);
+      trunk.translate(x, CGY + 1.3 * s, z);
+      RR.City.tintGeom(trunk, 0x4a3524, 0, rng); geoms2.push(trunk);
+      const crown = new THREE.SphereGeometry((2.0 + rng() * 1.4) * s, 7, 6);
+      crown.scale(1, 0.82, 1); crown.translate(x, CGY + (3.9 + rng()) * s, z);
+      RR.City.tintGeom(crown, 0x3f7238, 0.12, rng); geoms2.push(crown);
+    }
+    for (let gx2 = LX + 16; gx2 < C.lake.openWaterX - 14; gx2 += 36) {
+      for (let gz2 = -940; gz2 < 940; gz2 += 36) {
+        const cx2 = gx2 + 18, cz2 = gz2 + 18;
+        if (RR.City.landClearance(cx2, cz2) < 27) continue;                       // keep the lawn off the water
+        const lawn = new THREE.PlaneGeometry(36, 36);
+        lawn.rotateX(-Math.PI / 2); lawn.translate(cx2, CGY + 0.02, cz2);
+        RR.City.tintGeom(lawn, 0x4f7a3e, 0.12, rng); geoms2.push(lawn);
+        if (rng() < 0.75) parkTree(cx2 + (rng() - 0.5) * 24, cz2 + (rng() - 0.5) * 24, 0.85 + rng() * 0.5);
+        if (rng() < 0.3) {
+          boxAt(geoms2, 0.4, 4.6, 0.4, cx2 + (rng() - 0.5) * 20, CGY + 2.3, cz2 + (rng() - 0.5) * 20, 0x555a60);
+          if (RR.Theme) RR.Theme.addLamp(cx2, CGY + 4.8, cz2, 0xffe6b0);
+        }
+      }
+    }
+    // lakefront trail: a light path weaving down the park
+    for (let z0 = -930; z0 < 930; z0 += 30) {
+      const zc = z0 + 15, px3 = LX + 52 + Math.sin(z0 * 0.006) * 14;
+      if (RR.City.landClearance(px3, zc) < 20) continue;
+      boxAt(geoms2, 4.2, 0.08, 30.6, px3, CGY + 0.06, zc, 0xb9ac92);
+    }
+    // seawall edge where the park meets Lake Michigan
+    for (let z0 = -940; z0 < 940; z0 += 40) {
+      const zc = z0 + 20, wx = C.lake.openWaterX - 5;
+      if (RR.City.landClearance(wx, z0) < 2 || RR.City.landClearance(wx, z0 + 40) < 2) continue;
+      boxAt(geoms2, 9, CGY + 1.4, 40.4, wx, (CGY + 1.4) / 2 - 0.8, zc, 0x9a988e);
+    }
+
     const mesh = new THREE.Mesh(RR.City.mergeGeoms(geoms), RR.City.flatMaterial());
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     scene.add(mesh);
+    if (geoms2.length) {
+      const mesh2 = new THREE.Mesh(RR.City.mergeGeoms(geoms2), RR.City.flatMaterial());
+      mesh2.castShadow = true;
+      mesh2.receiveShadow = true;
+      scene.add(mesh2);
+    }
 
     // wheel spins about its true axle, gondolas hang level, LEDs glow at night; beacon pulses
     RR.Engine.onUpdate((dt, t) => {

@@ -127,6 +127,32 @@
     });
   }
 
+  // ---------- difficulty ----------
+  let difficulty = (() => { try { return parseFloat(localStorage.getItem('rr_diff')) || 1; } catch (e) { return 1; } })();
+  MENU.difficulty = () => difficulty;
+  const DIFFS = [
+    { name: 'ROOKIE', v: 0.7, desc: 'Rivals cruise the scenic route. A friendly Sunday on the river.' },
+    { name: 'SKIPPER', v: 1.0, desc: 'A fair fight from Wolf Point to the lighthouse.' },
+    { name: 'LEGEND', v: 1.3, desc: 'They run the perfect line, never lift, and show no mercy.' },
+  ];
+  function showDifficulty() {
+    screen = 'difficulty';
+    sel = Math.max(0, DIFFS.findIndex((d) => d.v === difficulty));
+    const rows = DIFFS.map((d, i) => `<div class="menu-item" data-i="${i}">${d.name}</div>`).join('');
+    html(`
+      <div id="select-title">HOW TOUGH ARE THE RIVALS?</div>
+      <div id="select-sub">↑↓ SELECT · ENTER RACE · BKSP BACK</div>
+      <div class="menu-list">${rows}</div>
+      <div class="menu-note" id="diff-desc" style="max-width:520px;">${DIFFS[sel].desc}</div>
+    `);
+    bindClicks(DIFFS.map((d) => () => {
+      difficulty = d.v;
+      try { localStorage.setItem('rr_diff', String(d.v)); } catch (e) { /* fine */ }
+      launch();
+    }));
+    paintSel();
+  }
+
   // ---------- course select ----------
   function showCourses() {
     screen = 'course'; sel = courseIdx;
@@ -146,7 +172,7 @@
       <div id="select-sub">←→ SELECT · ENTER RACE · BKSP BACK</div>
       <div id="cards">${cards}</div>
     `);
-    bindCards(RR.Race.COURSES.length, (i) => { courseIdx = i; launch(); });
+    bindCards(RR.Race.COURSES.length, (i) => { courseIdx = i; timeTrial ? launch() : showDifficulty(); });
     drawCourseCards();
     paintSel();
   }
@@ -259,18 +285,21 @@
     root.querySelectorAll('.menu-item, .card').forEach((el) => {
       el.classList.toggle('sel', +el.dataset.i === sel);
     });
+    const dd = $('diff-desc');
+    if (dd && screen === 'difficulty' && DIFFS[sel]) dd.textContent = DIFFS[sel].desc;
   }
 
   window.addEventListener('keydown', (e) => {
     if (screen === 'none') return;
     RR.Audio.init();
-    const vertical = screen === 'title' || screen === 'results' || screen === 'pause' || screen === 'help';
+    const vertical = screen === 'title' || screen === 'results' || screen === 'pause' || screen === 'help' || screen === 'difficulty';
     if ((vertical && e.code === 'ArrowUp') || (!vertical && e.code === 'ArrowLeft')) { sel = (sel - 1 + actions.length) % actions.length; RR.Audio.uiMove(); paintSel(); }
     else if ((vertical && e.code === 'ArrowDown') || (!vertical && e.code === 'ArrowRight')) { sel = (sel + 1) % actions.length; RR.Audio.uiMove(); paintSel(); }
     else if (e.code === 'Enter' || e.code === 'Space') { RR.Audio.uiSelect(); if (actions[sel]) actions[sel](); }
     else if (e.code === 'Backspace' || e.code === 'Escape') {
       if (screen === 'vehicle' || screen === 'help') showTitle();
       else if (screen === 'course') showVehicles(timeTrial);
+      else if (screen === 'difficulty') showCourses();
       else if (screen === 'pause') { MENU.hide(); if (MENU.onResume) MENU.onResume(); }
       e.preventDefault();
     }

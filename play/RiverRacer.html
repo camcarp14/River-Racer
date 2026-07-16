@@ -35,6 +35,12 @@
   #timer small { display: block; font-size: 10px; letter-spacing: 3px; color: var(--chi-blue); text-align: center; }
   #checkpoint-flash { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); font-size: 28px; font-weight: 800; font-style: italic; color: var(--gold); text-shadow: 0 0 22px rgba(255,200,87,.9); opacity: 0; transition: opacity .25s; }
   #wrongway { position: absolute; left: 50%; top: 32%; transform: translateX(-50%); font-size: 40px; font-weight: 900; color: var(--chi-red); text-shadow: 0 0 24px rgba(255,59,48,.8); display: none; animation: blink .5s steps(1) infinite; }
+  #placement { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; pointer-events: none; z-index: 12; }
+  #placement.on { display: flex; }
+  #placement-big { font-size: 150px; font-weight: 900; font-style: italic; letter-spacing: 4px; text-shadow: 0 8px 44px rgba(0,0,0,.65); animation: placepop .75s cubic-bezier(.2,2.2,.4,1) both; }
+  #placement-sub { font-size: 26px; font-weight: 700; letter-spacing: 10px; color: #e8f4fa; text-shadow: 0 3px 16px rgba(0,0,0,.6); animation: placesub .5s ease-out .35s both; }
+  @keyframes placepop { 0% { transform: scale(.1) rotate(-9deg); opacity: 0; } 60% { transform: scale(1.18) rotate(2deg); opacity: 1; } 100% { transform: scale(1) rotate(0); opacity: 1; } }
+  @keyframes placesub { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
   @keyframes blink { 50% { opacity: .15; } }
   #countdown { position: absolute; left: 50%; top: 38%; transform: translate(-50%,-50%); font-size: 140px; font-weight: 900; font-style: italic; color: #fff; text-shadow: 0 0 40px rgba(126,200,227,.9), 0 6px 0 rgba(0,0,0,.35); display: none; }
   #minimap { position: absolute; right: 22px; top: 18px; width: 200px; height: 260px; border-radius: 12px; border: 1px solid rgba(126,200,227,.35); background: var(--hud-bg); }
@@ -93,6 +99,7 @@
   <div id="speedo" class="hud-panel"><div id="speed-num">0</div><div id="speed-unit">MPH</div><div id="throttle-bar"><div id="throttle-fill"></div></div></div>
   <div id="checkpoint-flash"></div>
   <div id="wrongway">WRONG WAY HOMIE</div>
+  <div id="placement"><div id="placement-big"></div><div id="placement-sub"></div></div>
   <div id="countdown"></div>
   <div id="landmark-tag"></div>
   <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake<br><b>SHIFT</b> boost &nbsp;<b>C</b> camera &nbsp;<b>N</b> time of day &nbsp;<b>G</b> green river &nbsp;<b>P</b> photo &nbsp;<b>R</b> reset &nbsp;<b>ESC</b> pause</div>
@@ -3961,6 +3968,14 @@ window.CHICAGO = {
       for (const s of [-1, 1]) cross(1.2, 7, span, s * 9.5, cl + 5.4, 0x6a7076);
       cross(20, 1.2, 8, 0, cl + 9.2, 0x6a7076);
       for (let a = -half; a <= half; a += 8) for (const s of [-1, 1]) cylAt(0.35, 7, s * 9.5, a, cl + 5.4, 0x5a6066, 4);
+      if (bridge.name.indexOf('Lake Shore') >= 0) {
+        // the Link Bridge's four monumental Art-Moderne pylons
+        for (const sA of [-1, 1]) for (const sB of [-1, 1]) {
+          at(7, 17, 10, sA * (deckW / 2 + 4.5), sB * (half + 6), 8.5, 0xb9b4a6, true);
+          at(8, 2, 11, sA * (deckW / 2 + 4.5), sB * (half + 6), 18, 0x9a968c, true);
+          if (RR.Theme) RR.Theme.addLamp(cx + tx * sA * (deckW / 2 + 4.5) - tz * sB * (half + 6), 19.6, cz + tz * sA * (deckW / 2 + 4.5) + tx * sB * (half + 6), 0xffe6b0);
+        }
+      }
       addSigns(cl + 3.6);
     } else {
       // bascule tender houses
@@ -4124,6 +4139,7 @@ window.CHICAGO = {
     const C = window.CHICAGO;
     const lake = C.lake;
     const geoms = [];
+    const geoms2 = [];           // Lake Shore Drive + lakefront park (kept separate: it's a big second batch)
     const GY = 2.2;              // the lakefront sits near water level, not up at the downtown street grid
 
     // ---------- Chicago Harbor Lock: concrete chamber walls + gate machinery ----------
@@ -4176,15 +4192,43 @@ window.CHICAGO = {
     for (const s of [-1, 1]) {
       boxAt(geoms, 12, 26, 12, np.root.x + pux * 20 - puz * s * np.width * 0.32, 3.2 + 13, np.root.z + puz * 20 + pux * s * np.width * 0.32, 0xa86448, pang);
     }
-    // exhibition sheds along the pier
+    // exhibition sheds along the pier, with a continuous dark window ribbon
     boxAt(geoms, np.width * 0.55, 12, plen * 0.42, pcx - pux * plen * 0.08, 3.2 + 6, pcz - puz * plen * 0.08, 0xcabfa8, pang);
-    // Grand Ballroom at the tip: half-cylinder vault
-    const ball = new THREE.CylinderGeometry(np.width * 0.34, np.width * 0.34, 70, 14, 1, false, 0, Math.PI);
-    ball.rotateZ(Math.PI / 2);
-    ball.rotateY(pang + Math.PI / 2);
-    ball.translate(np.tip.x - pux * 45, 3.2 + 4, np.tip.z - puz * 45);
-    RR.City.tintGeom(ball, 0xc2b490, 0, rng);
-    geoms.push(ball);
+    boxAt(geoms, np.width * 0.55 + 0.3, 2.4, plen * 0.42 - 6, pcx - pux * plen * 0.08, 3.2 + 7.2, pcz - puz * plen * 0.08, 0x22333d, pang);
+    // Grand Ballroom at the tip: hall + drum + dome seated ON the deck (was a giant floating vault)
+    const bx = np.tip.x - pux * 45, bz = np.tip.z - puz * 45;
+    boxAt(geoms, np.width * 0.44, 8, 36, bx, 3.2 + 4, bz, 0xc8b894, pang);
+    boxAt(geoms, np.width * 0.44 + 0.3, 1.8, 30, bx, 3.2 + 5.4, bz, 0x22333d, pang);   // window ribbon
+    const drum = new THREE.CylinderGeometry(16.5, 18.5, 8, 14);
+    drum.translate(bx, 3.2 + 12, bz);
+    RR.City.tintGeom(drum, 0xc2b490, 0, rng); geoms.push(drum);
+    const dome = new THREE.SphereGeometry(16.5, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+    dome.translate(bx, 3.2 + 16, bz);
+    RR.City.tintGeom(dome, 0xaf9f7e, 0, rng); geoms.push(dome);
+    // east twin brick towers flanking the ballroom, like the real pier head
+    for (const s of [-1, 1]) {
+      const twx = np.tip.x - pux * 12 - puz * s * (np.width * 0.3);
+      const twz = np.tip.z - puz * 12 + pux * s * (np.width * 0.3);
+      boxAt(geoms, 7, 17, 7, twx, 3.2 + 8.5, twz, 0xa86448, pang);
+      const cap = new THREE.ConeGeometry(5.2, 4.2, 4);
+      cap.rotateY(pang + Math.PI / 4);
+      cap.translate(twx, 3.2 + 19, twz);
+      RR.City.tintGeom(cap, 0x3f5a3a, 0, rng); geoms.push(cap);
+    }
+    // wooden pilings + dock ledge along both faces so the pier reads like a working wharf
+    for (const s of [-1, 1]) {
+      const ledge = new THREE.BoxGeometry(2.6, 0.8, plen * 0.92);
+      ledge.rotateY(pang);
+      ledge.translate(pcx - puz * s * (np.width / 2 + 1.2), 1.1, pcz + pux * s * (np.width / 2 + 1.2));
+      RR.City.tintGeom(ledge, 0x8d8272, 0.06, rng); geoms.push(ledge);
+      for (let d = 30; d < plen - 20; d += 22) {
+        const px2 = np.root.x + pux * d - puz * s * (np.width / 2 + 2.4);
+        const pz2 = np.root.z + puz * d + pux * s * (np.width / 2 + 2.4);
+        const pile = new THREE.CylinderGeometry(0.42, 0.5, 3.6, 5);
+        pile.translate(px2, 1.2, pz2);
+        RR.City.tintGeom(pile, 0x4a3c2c, 0.08, rng); geoms.push(pile);
+      }
+    }
 
     // pier collision: north face, south face, tip cap
     for (const s of [-1, 1]) {
@@ -4201,6 +4245,7 @@ window.CHICAGO = {
     const wcx = np.root.x + pux * wheelDist, wcz = np.root.z + puz * wheelDist;
     boxAt(geoms, np.width * 0.7, 1.2, plen * 0.30, pcx - pux * plen * 0.02, 3.2 + 0.6, pcz - puz * plen * 0.02, 0x8fae86, pang); // amusement deck
     boxAt(geoms, np.width * 0.6, 13, plen * 0.20, pcx + pux * plen * 0.20, 3.2 + 6.5, pcz + puz * plen * 0.20, 0xc7b59a, pang);   // Festival Hall
+    boxAt(geoms, np.width * 0.6 + 0.3, 2.2, plen * 0.20 - 5, pcx + pux * plen * 0.20, 3.2 + 7.6, pcz + puz * plen * 0.20, 0x22333d, pang);
     const carX = np.root.x + pux * (wheelDist + 55), carZ = np.root.z + puz * (wheelDist + 55);
     boxAt(geoms, 16, 4, 16, carX, 3.2 + 2, carZ, 0xd8cbb0);
     const canopy = new THREE.ConeGeometry(9, 5, 12); canopy.translate(carX, 3.2 + 8, carZ);
@@ -4313,10 +4358,72 @@ window.CHICAGO = {
       RR.River.addWall(bw.ax, bw.az, bw.bx, bw.bz, 4.5);
     }
 
+    // ---------- Lake Shore Drive: elevated viaduct running N–S from the Link Bridge ----------
+    // The roadway picks up at both ends of the Lake Shore Dr crossing and runs the lakefront.
+    const LX = 1359, RD_TOP = 9.5 + 1.6;            // centerline + deck-top height matching the bridge
+    const landOK = (x, z) => RR.City.landClearance(x, z) > 3;
+    for (let z0 = -940; z0 < 940; z0 += 40) {
+      const zc = z0 + 20;
+      if (!landOK(LX, z0) || !landOK(LX, zc) || !landOK(LX, z0 + 40)) continue;   // the bridge spans the river
+      boxAt(geoms2, 20, 1.2, 40.4, LX, RD_TOP - 0.6, zc, 0x63676d);
+      boxAt(geoms2, 20, 0.06, 0.7, LX, RD_TOP + 0.01, zc, 0xdfe3e6);              // lane dash
+      for (const s of [-1, 1]) {
+        boxAt(geoms2, 0.5, 1.0, 40.4, LX + s * 9.9, RD_TOP + 0.5, zc, 0x9aa0a6);  // guardrails
+        boxAt(geoms2, 3.4, RD_TOP - 1.2, 3.0, LX + s * 6.5, (RD_TOP - 1.2) / 2, zc, 0x8b8880);  // piers
+      }
+      if ((z0 / 40) % 2 === 0) {
+        boxAt(geoms2, 0.5, 6, 0.5, LX, RD_TOP + 3, zc, 0x555a60);                 // median light poles
+        if (RR.Theme) RR.Theme.addLamp(LX, RD_TOP + 6.4, zc, 0xffd9a0);
+      }
+    }
+
+    // ---------- lakefront park between the Drive and the seawall (DuSable Harbor front) ----------
+    const CGY = RR.City.GROUND_Y;
+    function parkTree(x, z, s) {
+      const trunk = new THREE.CylinderGeometry(0.22 * s, 0.32 * s, 2.6 * s, 5);
+      trunk.translate(x, CGY + 1.3 * s, z);
+      RR.City.tintGeom(trunk, 0x4a3524, 0, rng); geoms2.push(trunk);
+      const crown = new THREE.SphereGeometry((2.0 + rng() * 1.4) * s, 7, 6);
+      crown.scale(1, 0.82, 1); crown.translate(x, CGY + (3.9 + rng()) * s, z);
+      RR.City.tintGeom(crown, 0x3f7238, 0.12, rng); geoms2.push(crown);
+    }
+    for (let gx2 = LX + 16; gx2 < C.lake.openWaterX - 14; gx2 += 36) {
+      for (let gz2 = -940; gz2 < 940; gz2 += 36) {
+        const cx2 = gx2 + 18, cz2 = gz2 + 18;
+        if (RR.City.landClearance(cx2, cz2) < 27) continue;                       // keep the lawn off the water
+        const lawn = new THREE.PlaneGeometry(36, 36);
+        lawn.rotateX(-Math.PI / 2); lawn.translate(cx2, CGY + 0.02, cz2);
+        RR.City.tintGeom(lawn, 0x4f7a3e, 0.12, rng); geoms2.push(lawn);
+        if (rng() < 0.75) parkTree(cx2 + (rng() - 0.5) * 24, cz2 + (rng() - 0.5) * 24, 0.85 + rng() * 0.5);
+        if (rng() < 0.3) {
+          boxAt(geoms2, 0.4, 4.6, 0.4, cx2 + (rng() - 0.5) * 20, CGY + 2.3, cz2 + (rng() - 0.5) * 20, 0x555a60);
+          if (RR.Theme) RR.Theme.addLamp(cx2, CGY + 4.8, cz2, 0xffe6b0);
+        }
+      }
+    }
+    // lakefront trail: a light path weaving down the park
+    for (let z0 = -930; z0 < 930; z0 += 30) {
+      const zc = z0 + 15, px3 = LX + 52 + Math.sin(z0 * 0.006) * 14;
+      if (RR.City.landClearance(px3, zc) < 20) continue;
+      boxAt(geoms2, 4.2, 0.08, 30.6, px3, CGY + 0.06, zc, 0xb9ac92);
+    }
+    // seawall edge where the park meets Lake Michigan
+    for (let z0 = -940; z0 < 940; z0 += 40) {
+      const zc = z0 + 20, wx = C.lake.openWaterX - 5;
+      if (RR.City.landClearance(wx, z0) < 2 || RR.City.landClearance(wx, z0 + 40) < 2) continue;
+      boxAt(geoms2, 9, CGY + 1.4, 40.4, wx, (CGY + 1.4) / 2 - 0.8, zc, 0x9a988e);
+    }
+
     const mesh = new THREE.Mesh(RR.City.mergeGeoms(geoms), RR.City.flatMaterial());
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     scene.add(mesh);
+    if (geoms2.length) {
+      const mesh2 = new THREE.Mesh(RR.City.mergeGeoms(geoms2), RR.City.flatMaterial());
+      mesh2.castShadow = true;
+      mesh2.receiveShadow = true;
+      scene.add(mesh2);
+    }
 
     // wheel spins about its true axle, gondolas hang level, LEDs glow at night; beacon pulses
     RR.Engine.onUpdate((dt, t) => {
@@ -4645,6 +4752,14 @@ window.CHICAGO = {
             col: CARS[(rng() * CARS.length) | 0] });
         }
       }
+    }
+    // Lake Shore Drive through-traffic: cars streaming the full viaduct, crossing the Link Bridge
+    for (let n = 0; n < 14; n++) {
+      const dir = n % 2 ? 1 : -1;
+      carList.push({ cx: 1359, cz: 0, ax: 0, az: 1, tx: 1, tz: 0, half: 900,
+        lane: dir === 1 ? 3.1 : -3.1, dir,
+        u: (rng() * 2 - 1) * 900, y: 9.5 + 2.15, spd: 14 + rng() * 6,
+        col: CARS[(rng() * CARS.length) | 0] });
     }
     cars = new THREE.InstancedMesh(mergedCar(), new THREE.MeshLambertMaterial({}), Math.max(1, carList.length));
     cars.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -5418,12 +5533,13 @@ window.CHICAGO = {
   const NAMES = ['“Wacker” Wade', 'Lou Canal', 'Stella Skyline', 'Deep Dish Dre', 'Goose Island Gus', 'El Tracks Elena', 'Marina Mae', 'Bridgeport Bo'];
 
   A.createPilot = function (boat, route, idx, difficulty) {
+    const d = difficulty == null ? 1 : difficulty;    // 0.7 rookie · 1.0 skipper · 1.3 legend
     return {
-      boat, route,
+      boat, route, diff: d,
       name: NAMES[idx % NAMES.length],
       lane: ((idx % 4) - 1.5) * 0.42,            // preferred offset across the channel (-1..1 of half width)
-      skill: 0.82 + (idx * 0.37 % 1) * 0.16 * difficulty,
-      aggression: 0.4 + (idx * 0.61 % 1) * 0.6,
+      skill: 0.60 + d * 0.24 + (idx * 0.37 % 1) * 0.12,
+      aggression: 0.15 + d * 0.35 + (idx * 0.61 % 1) * 0.3,
       wobbleSeed: idx * 13.7,
       ctl: { throttle: 0, brake: 0, steer: 0, boost: false },
       stuckTimer: 0,
@@ -5463,10 +5579,12 @@ window.CHICAGO = {
     if (Math.abs(err) > 1.1) th = 0.35;
     pilot.ctl.brake = bend > 0.95 && speed > b.spec.top * 0.75 ? 0.6 : 0;
 
-    // rubber-band: trail the player → run hotter; lead big → ease off
+    // rubber-band: trail the player → run hotter; lead big → ease off.
+    // Difficulty shapes both: legends barely rubber-band and never coast on a lead.
     const gap = playerProgress - b.routeD;                    // >0 means player ahead
     const rubber = U().clamp(gap / 420, -1, 1);
-    th *= pilot.skill + rubber * 0.13;
+    th *= pilot.skill + rubber * (0.05 + pilot.diff * 0.08);
+    if (rubber < 0) th *= 1 + rubber * Math.max(0, 1.15 - pilot.diff) * 0.35;
     pilot.ctl.throttle = U().clamp(th, 0, 1);
 
     // opportunistic boost on straights, more when behind
@@ -6852,7 +6970,7 @@ window.CHICAGO = {
       S.results.push({ boat: b, time: S.time });
       if (b === S.player) {
         S.phase = 'finished';
-        S.finishTimeout = Math.min(S.finishTimeout, 2.2);   // the race is over when YOU cross the line
+        S.finishTimeout = Math.min(S.finishTimeout, 3.0);   // the race is over when YOU cross the line (placement pop plays first)
         saveBest(S.course.id, S.time);
         if (RACE.onPlayerFinish) RACE.onPlayerFinish(S.results.length, S.time);
       }
@@ -6984,6 +7102,18 @@ window.CHICAGO = {
     els.cpFlash.textContent = text;
     els.cpFlash.style.opacity = 1;
     cpFlashT = 0.9;
+  };
+
+  // big animated "1ST!" placement pop the moment you cross the line
+  H.showPlacement = function (pos) {
+    const el = $('placement'), big = $('placement-big'), sub = $('placement-sub');
+    big.textContent = pos + RR.U.ordinal(pos).toUpperCase();
+    big.style.color = pos === 1 ? '#ffd24a' : pos === 2 ? '#dde3e8' : pos === 3 ? '#d0824a' : '#9fb4c0';
+    sub.textContent = pos === 1 ? '★ RIVER CHAMP ★' : 'FINISH';
+    el.classList.remove('on');
+    void el.offsetWidth;                       // restart the CSS animation
+    el.classList.add('on');
+    setTimeout(() => el.classList.remove('on'), 2700);
   };
 
   // landmark callouts as you pass them
@@ -7289,6 +7419,32 @@ window.CHICAGO = {
     });
   }
 
+  // ---------- difficulty ----------
+  let difficulty = (() => { try { return parseFloat(localStorage.getItem('rr_diff')) || 1; } catch (e) { return 1; } })();
+  MENU.difficulty = () => difficulty;
+  const DIFFS = [
+    { name: 'ROOKIE', v: 0.7, desc: 'Rivals cruise the scenic route. A friendly Sunday on the river.' },
+    { name: 'SKIPPER', v: 1.0, desc: 'A fair fight from Wolf Point to the lighthouse.' },
+    { name: 'LEGEND', v: 1.3, desc: 'They run the perfect line, never lift, and show no mercy.' },
+  ];
+  function showDifficulty() {
+    screen = 'difficulty';
+    sel = Math.max(0, DIFFS.findIndex((d) => d.v === difficulty));
+    const rows = DIFFS.map((d, i) => `<div class="menu-item" data-i="${i}">${d.name}</div>`).join('');
+    html(`
+      <div id="select-title">HOW TOUGH ARE THE RIVALS?</div>
+      <div id="select-sub">↑↓ SELECT · ENTER RACE · BKSP BACK</div>
+      <div class="menu-list">${rows}</div>
+      <div class="menu-note" id="diff-desc" style="max-width:520px;">${DIFFS[sel].desc}</div>
+    `);
+    bindClicks(DIFFS.map((d) => () => {
+      difficulty = d.v;
+      try { localStorage.setItem('rr_diff', String(d.v)); } catch (e) { /* fine */ }
+      launch();
+    }));
+    paintSel();
+  }
+
   // ---------- course select ----------
   function showCourses() {
     screen = 'course'; sel = courseIdx;
@@ -7308,7 +7464,7 @@ window.CHICAGO = {
       <div id="select-sub">←→ SELECT · ENTER RACE · BKSP BACK</div>
       <div id="cards">${cards}</div>
     `);
-    bindCards(RR.Race.COURSES.length, (i) => { courseIdx = i; launch(); });
+    bindCards(RR.Race.COURSES.length, (i) => { courseIdx = i; timeTrial ? launch() : showDifficulty(); });
     drawCourseCards();
     paintSel();
   }
@@ -7421,18 +7577,21 @@ window.CHICAGO = {
     root.querySelectorAll('.menu-item, .card').forEach((el) => {
       el.classList.toggle('sel', +el.dataset.i === sel);
     });
+    const dd = $('diff-desc');
+    if (dd && screen === 'difficulty' && DIFFS[sel]) dd.textContent = DIFFS[sel].desc;
   }
 
   window.addEventListener('keydown', (e) => {
     if (screen === 'none') return;
     RR.Audio.init();
-    const vertical = screen === 'title' || screen === 'results' || screen === 'pause' || screen === 'help';
+    const vertical = screen === 'title' || screen === 'results' || screen === 'pause' || screen === 'help' || screen === 'difficulty';
     if ((vertical && e.code === 'ArrowUp') || (!vertical && e.code === 'ArrowLeft')) { sel = (sel - 1 + actions.length) % actions.length; RR.Audio.uiMove(); paintSel(); }
     else if ((vertical && e.code === 'ArrowDown') || (!vertical && e.code === 'ArrowRight')) { sel = (sel + 1) % actions.length; RR.Audio.uiMove(); paintSel(); }
     else if (e.code === 'Enter' || e.code === 'Space') { RR.Audio.uiSelect(); if (actions[sel]) actions[sel](); }
     else if (e.code === 'Backspace' || e.code === 'Escape') {
       if (screen === 'vehicle' || screen === 'help') showTitle();
       else if (screen === 'course') showVehicles(timeTrial);
+      else if (screen === 'difficulty') showCourses();
       else if (screen === 'pause') { MENU.hide(); if (MENU.onResume) MENU.onResume(); }
       e.preventDefault();
     }
@@ -7524,8 +7683,9 @@ window.CHICAGO = {
     raceState = RR.Race.start(courseIdx, boats, player);
 
     pilots = [];
+    const diff = RR.Menus && RR.Menus.difficulty ? RR.Menus.difficulty() : 1;
     for (let i = 1; i < boats.length; i++) {
-      const p = RR.AI.createPilot(boats[i], { path: raceState.route }, i - 1, 1);
+      const p = RR.AI.createPilot(boats[i], { path: raceState.route }, i - 1, diff);
       boats[i].pilotName = p.name;
       pilots.push(p);
     }
@@ -7554,7 +7714,7 @@ window.CHICAGO = {
       if (player) { player.boostEnergy = Math.min(1, player.boostEnergy + 0.45); RR.Camera.kick(0.25); RR.HUD.flash('+BOOST'); }
     };
     RR.Race.onLap = () => { RR.Audio.checkpoint(); };
-    RR.Race.onPlayerFinish = (pos) => { RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.flash('FINISH!'); };
+    RR.Race.onPlayerFinish = (pos) => { RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.showPlacement(pos); };
     RR.Race.onRaceOver = (results) => {
       mode = 'results';
       RR.HUD.show(false);

@@ -76,8 +76,9 @@
     raceState = RR.Race.start(courseIdx, boats, player);
 
     pilots = [];
+    const diff = RR.Menus && RR.Menus.difficulty ? RR.Menus.difficulty() : 1;
     for (let i = 1; i < boats.length; i++) {
-      const p = RR.AI.createPilot(boats[i], { path: raceState.route }, i - 1, 1);
+      const p = RR.AI.createPilot(boats[i], { path: raceState.route }, i - 1, diff);
       boats[i].pilotName = p.name;
       pilots.push(p);
     }
@@ -106,7 +107,7 @@
       if (player) { player.boostEnergy = Math.min(1, player.boostEnergy + 0.45); RR.Camera.kick(0.25); RR.HUD.flash('+BOOST'); }
     };
     RR.Race.onLap = () => { RR.Audio.checkpoint(); };
-    RR.Race.onPlayerFinish = (pos) => { RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.flash('FINISH!'); };
+    RR.Race.onPlayerFinish = (pos) => { RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.showPlacement(pos); };
     RR.Race.onRaceOver = (results) => {
       mode = 'results';
       RR.HUD.show(false);

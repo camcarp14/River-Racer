@@ -6,12 +6,13 @@
   const NAMES = ['“Wacker” Wade', 'Lou Canal', 'Stella Skyline', 'Deep Dish Dre', 'Goose Island Gus', 'El Tracks Elena', 'Marina Mae', 'Bridgeport Bo'];
 
   A.createPilot = function (boat, route, idx, difficulty) {
+    const d = difficulty == null ? 1 : difficulty;    // 0.7 rookie · 1.0 skipper · 1.3 legend
     return {
-      boat, route,
+      boat, route, diff: d,
       name: NAMES[idx % NAMES.length],
       lane: ((idx % 4) - 1.5) * 0.42,            // preferred offset across the channel (-1..1 of half width)
-      skill: 0.82 + (idx * 0.37 % 1) * 0.16 * difficulty,
-      aggression: 0.4 + (idx * 0.61 % 1) * 0.6,
+      skill: 0.60 + d * 0.24 + (idx * 0.37 % 1) * 0.12,
+      aggression: 0.15 + d * 0.35 + (idx * 0.61 % 1) * 0.3,
       wobbleSeed: idx * 13.7,
       ctl: { throttle: 0, brake: 0, steer: 0, boost: false },
       stuckTimer: 0,
@@ -51,10 +52,12 @@
     if (Math.abs(err) > 1.1) th = 0.35;
     pilot.ctl.brake = bend > 0.95 && speed > b.spec.top * 0.75 ? 0.6 : 0;
 
-    // rubber-band: trail the player → run hotter; lead big → ease off
+    // rubber-band: trail the player → run hotter; lead big → ease off.
+    // Difficulty shapes both: legends barely rubber-band and never coast on a lead.
     const gap = playerProgress - b.routeD;                    // >0 means player ahead
     const rubber = U().clamp(gap / 420, -1, 1);
-    th *= pilot.skill + rubber * 0.13;
+    th *= pilot.skill + rubber * (0.05 + pilot.diff * 0.08);
+    if (rubber < 0) th *= 1 + rubber * Math.max(0, 1.15 - pilot.diff) * 0.35;
     pilot.ctl.throttle = U().clamp(th, 0, 1);
 
     // opportunistic boost on straights, more when behind

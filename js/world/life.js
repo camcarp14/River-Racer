@@ -136,6 +136,14 @@
         }
       }
     }
+    // Lake Shore Drive through-traffic: cars streaming the full viaduct, crossing the Link Bridge
+    for (let n = 0; n < 14; n++) {
+      const dir = n % 2 ? 1 : -1;
+      carList.push({ cx: 1359, cz: 0, ax: 0, az: 1, tx: 1, tz: 0, half: 900,
+        lane: dir === 1 ? 3.1 : -3.1, dir,
+        u: (rng() * 2 - 1) * 900, y: 9.5 + 2.15, spd: 14 + rng() * 6,
+        col: CARS[(rng() * CARS.length) | 0] });
+    }
     cars = new THREE.InstancedMesh(mergedCar(), new THREE.MeshLambertMaterial({}), Math.max(1, carList.length));
     cars.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     cars.castShadow = true;

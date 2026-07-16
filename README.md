@@ -24,6 +24,7 @@ Along the banks, modeled from their actual footprints and heights:
 - **28 bridges** in their real order, each with its **street-name sign** (WELLS ST, WABASH AVE, LAKE SHORE DR…), cream-limestone tender houses with verdigris roofs, baluster railings and lamp posts: the bascule spans of the Loop, Wells and Lake St double-deckers carrying the L, the DuSable/Michigan Ave bridge with four tender houses, and the **Kinzie St rail bridge permanently saluting the sky**. Several **bascule bridges raise and lower** their leaves on their own cycles.
 - The real **multi-level Chicago Riverwalk**: a lower promenade at the water's edge with quay walls and railings, stepped up to the street, threaded with its themed "rooms" — café pavilions under canopies, umbrella plazas, the stepped **River Theater**, floating gardens and kayak docks — plus docked **architecture-tour boats** and water taxis.
 - A **living city**: crowds of people and cyclists stroll the promenades and **cars stream across every bridge**, all GPU-instanced. Lamp posts, benches, planters, street trees and pocket parks line the upper level — with strict keep-out so nothing but the bridges ever crosses the water.
+- **Lake Shore Drive**: an elevated viaduct streaming with traffic runs the whole lakefront, crossing the river mouth on the **Link Bridge** with its four monumental Art-Moderne pylons — with lakefront parkland, a winding trail, trees and a seawall between the Drive and the water.
 - The **Chicago Harbor Lock** (real 24 m chamber — a genuine pinch at speed), a built-out **Navy Pier** — Pier Park, Festival Hall, the domed ballroom, a carousel and string-lit promenade — crowned by the **Centennial Wheel**: a proper Ferris wheel with a double steel rim, hub, and hanging gondolas that spins on its true axle and blazes with color-cycling LEDs at night. Plus the **Chicago Harbor Lighthouse** and a **living harbor**: moored sailboats, yachts under sail, nav buoys, a lake freighter, and the Gold Coast and Museum Campus skylines low on the far shore. Out on the open water, a **glowing chevron ribbon and lit pylons** mark the racing line so you never lose the course.
 
 ## Courses
@@ -37,7 +38,7 @@ Along the banks, modeled from their actual footprints and heights:
 
 ## Boats
 
-Five hulls with genuinely different physics: a whippy **sport jet ski**, an offshore **V-hull muscle boat**, a screaming **F1H2O tunnel-hull**, a varnished **1947 mahogany runabout**, and the **CFD Marine 7-1** fire boat. Lean into turns, ride the chop, launch off lake swells, manage the trim-boost meter.
+Five hulls with genuinely different physics: a whippy **sport jet ski**, an offshore **V-hull muscle boat**, a screaming **F1H2O tunnel-hull**, a varnished **1947 mahogany runabout**, and the **CFD Marine 7-1** fire boat. Lean into turns, ride the chop, launch off lake swells, manage the boost meter. Pick your poison before each race: **ROOKIE, SKIPPER or LEGEND** rivals — legends run the perfect line and never lift. Cross the line first and the **1ST place pop** says so before the leaderboard does.
 
 ## Controls
 

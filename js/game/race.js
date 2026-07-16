@@ -274,7 +274,7 @@
       S.results.push({ boat: b, time: S.time });
       if (b === S.player) {
         S.phase = 'finished';
-        S.finishTimeout = Math.min(S.finishTimeout, 2.2);   // the race is over when YOU cross the line
+        S.finishTimeout = Math.min(S.finishTimeout, 3.0);   // the race is over when YOU cross the line (placement pop plays first)
         saveBest(S.course.id, S.time);
         if (RACE.onPlayerFinish) RACE.onPlayerFinish(S.results.length, S.time);
       }

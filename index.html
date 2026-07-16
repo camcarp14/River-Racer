@@ -35,6 +35,12 @@
   #timer small { display: block; font-size: 10px; letter-spacing: 3px; color: var(--chi-blue); text-align: center; }
   #checkpoint-flash { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); font-size: 28px; font-weight: 800; font-style: italic; color: var(--gold); text-shadow: 0 0 22px rgba(255,200,87,.9); opacity: 0; transition: opacity .25s; }
   #wrongway { position: absolute; left: 50%; top: 32%; transform: translateX(-50%); font-size: 40px; font-weight: 900; color: var(--chi-red); text-shadow: 0 0 24px rgba(255,59,48,.8); display: none; animation: blink .5s steps(1) infinite; }
+  #placement { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; pointer-events: none; z-index: 12; }
+  #placement.on { display: flex; }
+  #placement-big { font-size: 150px; font-weight: 900; font-style: italic; letter-spacing: 4px; text-shadow: 0 8px 44px rgba(0,0,0,.65); animation: placepop .75s cubic-bezier(.2,2.2,.4,1) both; }
+  #placement-sub { font-size: 26px; font-weight: 700; letter-spacing: 10px; color: #e8f4fa; text-shadow: 0 3px 16px rgba(0,0,0,.6); animation: placesub .5s ease-out .35s both; }
+  @keyframes placepop { 0% { transform: scale(.1) rotate(-9deg); opacity: 0; } 60% { transform: scale(1.18) rotate(2deg); opacity: 1; } 100% { transform: scale(1) rotate(0); opacity: 1; } }
+  @keyframes placesub { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
   @keyframes blink { 50% { opacity: .15; } }
   #countdown { position: absolute; left: 50%; top: 38%; transform: translate(-50%,-50%); font-size: 140px; font-weight: 900; font-style: italic; color: #fff; text-shadow: 0 0 40px rgba(126,200,227,.9), 0 6px 0 rgba(0,0,0,.35); display: none; }
   #minimap { position: absolute; right: 22px; top: 18px; width: 200px; height: 260px; border-radius: 12px; border: 1px solid rgba(126,200,227,.35); background: var(--hud-bg); }
@@ -93,6 +99,7 @@
   <div id="speedo" class="hud-panel"><div id="speed-num">0</div><div id="speed-unit">MPH</div><div id="throttle-bar"><div id="throttle-fill"></div></div></div>
   <div id="checkpoint-flash"></div>
   <div id="wrongway">WRONG WAY HOMIE</div>
+  <div id="placement"><div id="placement-big"></div><div id="placement-sub"></div></div>
   <div id="countdown"></div>
   <div id="landmark-tag"></div>
   <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake<br><b>SHIFT</b> boost &nbsp;<b>C</b> camera &nbsp;<b>N</b> time of day &nbsp;<b>G</b> green river &nbsp;<b>P</b> photo &nbsp;<b>R</b> reset &nbsp;<b>ESC</b> pause</div>

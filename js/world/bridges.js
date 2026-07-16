@@ -251,6 +251,14 @@
       for (const s of [-1, 1]) cross(1.2, 7, span, s * 9.5, cl + 5.4, 0x6a7076);
       cross(20, 1.2, 8, 0, cl + 9.2, 0x6a7076);
       for (let a = -half; a <= half; a += 8) for (const s of [-1, 1]) cylAt(0.35, 7, s * 9.5, a, cl + 5.4, 0x5a6066, 4);
+      if (bridge.name.indexOf('Lake Shore') >= 0) {
+        // the Link Bridge's four monumental Art-Moderne pylons
+        for (const sA of [-1, 1]) for (const sB of [-1, 1]) {
+          at(7, 17, 10, sA * (deckW / 2 + 4.5), sB * (half + 6), 8.5, 0xb9b4a6, true);
+          at(8, 2, 11, sA * (deckW / 2 + 4.5), sB * (half + 6), 18, 0x9a968c, true);
+          if (RR.Theme) RR.Theme.addLamp(cx + tx * sA * (deckW / 2 + 4.5) - tz * sB * (half + 6), 19.6, cz + tz * sA * (deckW / 2 + 4.5) + tx * sB * (half + 6), 0xffe6b0);
+        }
+      }
       addSigns(cl + 3.6);
     } else {
       // bascule tender houses

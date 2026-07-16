@@ -40,6 +40,18 @@
     cpFlashT = 0.9;
   };
 
+  // big animated "1ST!" placement pop the moment you cross the line
+  H.showPlacement = function (pos) {
+    const el = $('placement'), big = $('placement-big'), sub = $('placement-sub');
+    big.textContent = pos + RR.U.ordinal(pos).toUpperCase();
+    big.style.color = pos === 1 ? '#ffd24a' : pos === 2 ? '#dde3e8' : pos === 3 ? '#d0824a' : '#9fb4c0';
+    sub.textContent = pos === 1 ? '★ RIVER CHAMP ★' : 'FINISH';
+    el.classList.remove('on');
+    void el.offsetWidth;                       // restart the CSS animation
+    el.classList.add('on');
+    setTimeout(() => el.classList.remove('on'), 2700);
+  };
+
   // landmark callouts as you pass them
   H.tagLandmark = function (name) {
     if (name === lastTagged) return;
