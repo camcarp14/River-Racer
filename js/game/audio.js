@@ -218,7 +218,7 @@
       master.connect(comp);
       comp.connect(ctx.destination);
 
-      engineBus = gain(0.38); // engines (incl. spray) sit well under music + SFX
+      engineBus = gain(0.30); // engines (incl. spray) sit well under music + SFX
       engineBus.connect(master);
       fxBus = gain(0.9);
       fxBus.connect(master);

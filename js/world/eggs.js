@@ -12,6 +12,9 @@
   let mainJet = null;
   const trains = [];             // CTA "L" trains crossing the double-deck bridges
   let fb = null;                 // fireboat salute state
+  let ducks = null;              // rubber-duck-derby flotilla (bobs as one raft)
+  let blimp = null;              // banner blimp lapping the Loop
+  const beacons = [];            // red aviation strobes on the tallest spires
 
   function tint(geo, hex, jit) { RR.City.tintGeom(geo, hex, jit || 0, rng); return geo; }
 
@@ -226,6 +229,117 @@
       E.tags.push({ name: 'FIREBOAT SALUTE', x: bx, z: bz, r2: 90 * 90 });
     }
 
+    // ---------- RUBBER DUCK DERBY: a flotilla of yellow ducks bobbing by the riverwalk ----------
+    {
+      const q = U().pathAt(main, main.len * 0.42, {});
+      const off = q.w * 0.7;
+      const dx2 = q.x + q.tz * off, dz2 = q.z - q.tx * off;          // south-bank eddy, off the race line
+      const duckGeoms = [];
+      for (let i = 0; i < 36; i++) {
+        const px = (rng() - 0.5) * 13, pz = (rng() - 0.5) * 8;
+        const body = new THREE.SphereGeometry(0.42, 7, 5);
+        body.scale(1, 0.68, 1.25); body.translate(px, 0.24, pz);
+        duckGeoms.push(tint(body, 0xffd21e, 0.04));
+        const head = new THREE.SphereGeometry(0.24, 6, 5);
+        const hy = rng() * 6.28;
+        head.translate(px + Math.sin(hy) * 0.28, 0.62, pz + Math.cos(hy) * 0.28);
+        duckGeoms.push(tint(head, 0xffd21e, 0.04));
+        const beak = new THREE.ConeGeometry(0.09, 0.2, 5);
+        beak.rotateX(Math.PI / 2); beak.rotateY(hy);
+        beak.translate(px + Math.sin(hy) * 0.5, 0.6, pz + Math.cos(hy) * 0.5);
+        duckGeoms.push(tint(beak, 0xf07820, 0));
+      }
+      ducks = new THREE.Mesh(RR.City.mergeGeoms(duckGeoms), RR.City.flatMaterial());
+      ducks.layers.set(1);
+      ducks.position.set(dx2, 0, dz2);
+      scene.add(ducks);
+      ducks.userData.ph = rng() * 9;
+      E.tags.push({ name: 'RUBBER DUCK DERBY', x: dx2, z: dz2, r2: 80 * 80 });
+    }
+
+    // ---------- BANNER BLIMP: slow laps over the Loop towing a RIVER RACER banner ----------
+    {
+      const grp = new THREE.Group();
+      const env = new THREE.Mesh(new THREE.SphereGeometry(9, 12, 9),
+        new THREE.MeshLambertMaterial({ color: 0xe8ebee }));
+      env.scale.set(1, 1, 2.6); grp.add(env);
+      const gond = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.6, 5),
+        new THREE.MeshLambertMaterial({ color: 0x2b3138 }));
+      gond.position.y = -8.6; grp.add(gond);
+      const finMat = new THREE.MeshLambertMaterial({ color: 0xc22b1f });
+      for (const r of [0, Math.PI / 2]) {
+        const fin = new THREE.Mesh(new THREE.BoxGeometry(0.3, 7.5, 5.5), finMat);
+        fin.rotation.z = r; fin.position.z = -20; grp.add(fin);
+      }
+      const banTex = U().canvasTexture(512, 84, (c, w, h) => {
+        c.fillStyle = '#0b1e2d'; c.fillRect(0, 0, w, h);
+        c.strokeStyle = '#ffc857'; c.lineWidth = 5; c.strokeRect(5, 5, w - 10, h - 10);
+        c.fillStyle = '#ffc857'; c.font = 'bold italic 52px Arial, sans-serif';
+        c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText('★ RIVER RACER ★', w / 2, h / 2 + 2);
+      });
+      for (const s of [1, -1]) {                                     // readable from both sides
+        const ban = new THREE.Mesh(new THREE.PlaneGeometry(34, 5.6),
+          new THREE.MeshBasicMaterial({ map: banTex, side: THREE.FrontSide }));
+        ban.rotation.y = s > 0 ? 0 : Math.PI;
+        ban.position.set(0, -2, -46); grp.add(ban);
+      }
+      const tow = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 24, 3),
+        new THREE.MeshBasicMaterial({ color: 0x9aa0a6 }));
+      tow.rotation.x = Math.PI / 2; tow.position.set(0, -1, -34); grp.add(tow);
+      grp.traverse((o) => o.layers.set(1));
+      scene.add(grp);
+      blimp = { g: grp, cx: 300, cz: 120, r: 760, a: rng() * 6.28 };
+    }
+
+    // ---------- AVIATION BEACONS: red strobes on the tallest spires ----------
+    {
+      const lm = window.CHICAGO.landmarks;
+      const beaconMat = new THREE.MeshBasicMaterial({ color: 0xff2a1e });
+      const spots = [];
+      const willis = lm.find((l) => l.name.indexOf('Willis') >= 0);
+      if (willis) for (const s of [-6, 6]) spots.push([willis.x + s, 6 + willis.h + 84, willis.z]);
+      const trump = lm.find((l) => l.name.indexOf('Trump') >= 0);
+      if (trump) spots.push([trump.x + trump.w * 0.2, 6 + trump.h + 65, trump.z]);
+      for (const [bx2, by2, bz2] of spots) {
+        const s = new THREE.Mesh(new THREE.SphereGeometry(1.5, 6, 5), beaconMat);
+        s.position.set(bx2, by2, bz2);
+        s.layers.set(1);
+        scene.add(s);
+        beacons.push(s);
+      }
+    }
+
+    // ---------- RIVERWALK MURAL: a painted city-flag mural on the south quay wall ----------
+    {
+      const q = U().pathAt(main, main.len * 0.31, {});
+      const off = q.w + 8.7;
+      const mx = q.x + q.tz * off, mz = q.z - q.tx * off;            // south bank retaining wall
+      const muralTex = U().canvasTexture(512, 96, (c, w, h) => {
+        c.fillStyle = '#f4f1e8'; c.fillRect(0, 0, w, h);
+        c.fillStyle = '#b3ddf2'; c.fillRect(0, 14, w, 16); c.fillRect(0, h - 30, w, 16);
+        c.fillStyle = '#e03a2f';
+        const star = (cx2, cy2, R) => {                              // six-pointed Chicago star
+          c.beginPath();
+          for (let k = 0; k < 12; k++) {
+            const rr = k % 2 ? R * 0.45 : R, an = (k / 12) * Math.PI * 2 - Math.PI / 2;
+            c[k ? 'lineTo' : 'moveTo'](cx2 + Math.cos(an) * rr, cy2 + Math.sin(an) * rr);
+          }
+          c.closePath(); c.fill();
+        };
+        for (let i = 0; i < 4; i++) star(w * (0.2 + i * 0.2), h / 2, 15);
+        c.fillStyle = '#0b1e2d'; c.font = 'bold 26px Arial, sans-serif';
+        c.textAlign = 'center'; c.fillText('SWEET HOME CHICAGO', w / 2, h - 6);
+      });
+      const mural = new THREE.Mesh(new THREE.PlaneGeometry(24, 3.6),
+        new THREE.MeshLambertMaterial({ map: muralTex }));
+      mural.position.set(mx, 3.4, mz);
+      mural.rotation.y = Math.atan2(-q.tz, q.tx) + Math.PI / 2;      // face the water
+      mural.layers.set(1);
+      scene.add(mural);
+      E.tags.push({ name: 'SWEET HOME CHICAGO MURAL', x: mx, z: mz, r2: 70 * 70 });
+    }
+
     if (flat.length) {
       const mesh = new THREE.Mesh(RR.City.mergeGeoms(flat), RR.City.flatMaterial());
       mesh.castShadow = true;
@@ -266,18 +380,38 @@
           if (tr.wait <= 0) { tr.run = true; tr.dir = -tr.dir; tr.s = -tr.end * tr.dir; }
         }
       }
-      // fireboat bobs on the swell and keeps two arcing plumes going over the channel
+      // fireboat bobs on the swell and keeps two tall arcing plumes going over the channel
       if (fb) {
         const wy = U().waterHeight(fb.x, fb.z, t, 1);
         fb.g.position.y = wy;
         fb.g.rotation.z = Math.sin(t * 0.7 + fb.ph) * 0.03;
         if (RR.FX) for (let i = 0; i < 2; i++) {
-          if (Math.random() < 0.25) {
+          if (Math.random() < 0.35) {
             const n = fb.n[i];
             RR.FX.spray(fb.x + n.ox, wy + n.oy, fb.z + n.oz,
-              n.vx, 7.5 + Math.random() * 1.5, n.vz, 3, 1.4, 1.4);
+              n.vx * 1.15, 9.5 + Math.random() * 2, n.vz * 1.15, 4, 1.6, 1.7);
           }
         }
+      }
+      // duck raft bobs together on the river swell
+      if (ducks) {
+        ducks.position.y = U().waterHeight(ducks.position.x, ducks.position.z, t, 1) - 0.06;
+        ducks.rotation.z = Math.sin(t * 0.9 + ducks.userData.ph) * 0.05;
+        ducks.rotation.x = Math.sin(t * 0.7 + ducks.userData.ph * 2) * 0.04;
+      }
+      // blimp laps the Loop, nose into its turn, banner in tow
+      if (blimp) {
+        blimp.a += dt * 0.022;
+        const bx3 = blimp.cx + Math.cos(blimp.a) * blimp.r;
+        const bz3 = blimp.cz + Math.sin(blimp.a) * blimp.r;
+        blimp.g.position.set(bx3, 215 + Math.sin(t * 0.2) * 6, bz3);
+        blimp.g.rotation.y = Math.atan2(-Math.sin(blimp.a), Math.cos(blimp.a)) + Math.PI / 2;
+      }
+      // aviation strobes: sharp double-blink like the real towers
+      if (beacons.length) {
+        const cyc = (t % 1.6) / 1.6;
+        const on = cyc < 0.07 || (cyc > 0.14 && cyc < 0.21);
+        for (let i = 0; i < beacons.length; i++) beacons[i].visible = on;
       }
     });
   };
