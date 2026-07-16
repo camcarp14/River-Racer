@@ -10,7 +10,7 @@ Arcade boat racing down the **real Chicago River** and out into **Lake Michigan*
 
 **From the repo:** open `index.html` in any browser.
 
-The river **mirrors the skyline** with real planar reflections, the golden hour **blooms**, boats kick up **bow-wave foam**, **bascule bridges raise and lower**, and water taxis and tour boats cruise the channels. Hit **N** for **night mode** — the whole city lights up, thousands of windows and street lamps glowing and reflecting on the black water. The renderer scales quality dynamically to hold frame rate.
+The river **mirrors the skyline** with real planar reflections, the golden hour **blooms**, boats kick up **bow-wave foam**, **bascule bridges raise and lower**, and water taxis and tour boats cruise the channels. Tap **N** to ride the clock through **day → sunset → night**: the sky burns orange over the west branch at dusk, then the whole city lights up — thousands of windows and street lamps glowing and reflecting on the black water, while **fireworks arc up over Navy Pier** and burst into colored peonies on the horizon. The renderer scales quality dynamically to hold frame rate.
 
 ## The map is real
 
@@ -48,7 +48,7 @@ Five hulls with genuinely different physics: a whippy **sport jet ski**, an offs
 | `A` `D` / `←` `→` | Steer |
 | `Shift` | Trim boost (watch the meter) |
 | `C` | Camera (chase / close / hull) |
-| `N` | Toggle day / night |
+| `N` | Time of day (day / sunset / night) |
 | `R` | Reset to course |
 | `Esc` | Pause |
 

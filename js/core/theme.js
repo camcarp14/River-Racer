@@ -28,27 +28,43 @@
     RR.Engine.scene.add(T._mesh);
   };
 
-  const DAY = {
-    sun: 0xffdcae, sunI: 1.55, hemi: 0xcfe3f0, hemiG: 0x44505c, hemiI: 0.68, exposure: 0.95,
-    fog: 0xd8c9a8, fogNear: 900, fogFar: 4200,
-    water: { deepR: 0x1e4d43, shalR: 0x3e7d68, deepL: 0x14496b, shalL: 0x2e7d9e, skyLo: 0xffd9a0, skyHi: 0x74a9c9, fog: 0xd8c9a8 },
+  const PRESETS = {
+    day: {
+      sun: 0xffdcae, sunI: 1.55, hemi: 0xcfe3f0, hemiG: 0x44505c, hemiI: 0.68, exposure: 0.95,
+      fog: 0xd8c9a8, fogNear: 900, fogFar: 4200, night: 0, emissive: 0, fireworks: false, lamps: false,
+      sky: { zenith: 0x2e6a9e, mid: 0x9fc4d8, horizon: 0xffd9a0, west: 0xffb35c },
+      water: { deepR: 0x1e4d43, shalR: 0x3e7d68, deepL: 0x14496b, shalL: 0x2e7d9e, skyLo: 0xffd9a0, skyHi: 0x74a9c9, fog: 0xd8c9a8 },
+    },
+    sunset: {
+      sun: 0xff9a54, sunI: 1.7, hemi: 0xf0b488, hemiG: 0x5a4238, hemiI: 0.85, exposure: 1.2,
+      fog: 0xecb182, fogNear: 850, fogFar: 4200, night: 0, emissive: 0.4, fireworks: false, lamps: true,
+      sky: { zenith: 0x3a4674, mid: 0xcf847a, horizon: 0xff8438, west: 0xff5230 },
+      water: { deepR: 0x35474c, shalR: 0x7a7658, deepL: 0x354458, shalL: 0x88745e, skyLo: 0xffa856, skyHi: 0x9a6478, fog: 0xecb182 },
+    },
+    night: {
+      sun: 0x9fb2dc, sunI: 0.5, hemi: 0x27324c, hemiG: 0x0d121c, hemiI: 0.4, exposure: 1.35,
+      fog: 0x0a1120, fogNear: 650, fogFar: 3500, night: 1, emissive: 1.15, fireworks: true, lamps: true,
+      sky: { zenith: 0x2e6a9e, mid: 0x9fc4d8, horizon: 0xffd9a0, west: 0xffb35c },
+      water: { deepR: 0x081820, shalR: 0x123038, deepL: 0x06111d, shalL: 0x102838, skyLo: 0x1c2740, skyHi: 0x080f1c, fog: 0x0a1120 },
+    },
   };
-  const NIGHT = {
-    sun: 0x9fb2dc, sunI: 0.5, hemi: 0x27324c, hemiG: 0x0d121c, hemiI: 0.4, exposure: 1.35,
-    fog: 0x0a1120, fogNear: 650, fogFar: 3500,
-    water: { deepR: 0x081820, shalR: 0x123038, deepL: 0x06111d, shalL: 0x102838, skyLo: 0x1c2740, skyHi: 0x080f1c, fog: 0x0a1120 },
-  };
+  const ORDER = ['day', 'sunset', 'night'];
 
   T.apply = function (mode) {
+    const P = PRESETS[mode] || PRESETS.day;
     T.mode = mode;
-    const night = mode === 'night';
-    const P = night ? NIGHT : DAY, E = RR.Engine;
+    const E = RR.Engine;
     E.sun.color.setHex(P.sun); E.sun.intensity = P.sunI;
     E.hemi.color.setHex(P.hemi); E.hemi.groundColor.setHex(P.hemiG); E.hemi.intensity = P.hemiI;
     E.renderer.toneMappingExposure = P.exposure;
     E.scene.fog.color.setHex(P.fog); E.scene.fog.near = P.fogNear; E.scene.fog.far = P.fogFar;
 
-    if (RR.Sky && RR.Sky.setNight) RR.Sky.setNight(night ? 1 : 0);
+    if (RR.Sky && RR.Sky.mat) {
+      const u = RR.Sky.mat.uniforms;
+      u.cZenith.value.setHex(P.sky.zenith); u.cMid.value.setHex(P.sky.mid);
+      u.cHorizon.value.setHex(P.sky.horizon); u.cWest.value.setHex(P.sky.west);
+      if (RR.Sky.setNight) RR.Sky.setNight(P.night);
+    }
 
     if (RR.Water && RR.Water.material) {
       const u = RR.Water.material.uniforms, c = P.water;
@@ -56,16 +72,18 @@
       u.uDeepLake.value.setHex(c.deepL); u.uShallowLake.value.setHex(c.shalL);
       u.uSkyLow.value.setHex(c.skyLo); u.uSkyHigh.value.setHex(c.skyHi);
       u.uFogColor.value.setHex(c.fog);
-      u.uReflectStrength && (u._nightRefl = night);
     }
 
-    const cm = RR.City.material();      // lit windows glow via the emissive map
-    cm.emissiveIntensity = night ? 1.15 : 0;
-
-    if (T._mesh) T._mesh.visible = night;
+    RR.City.material().emissiveIntensity = P.emissive;
+    if (T._mesh) T._mesh.visible = P.lamps;
+    if (RR.Fireworks) RR.Fireworks.setActive(P.fireworks);
   };
 
-  T.toggle = function () { T.apply(T.mode === 'day' ? 'night' : 'day'); return T.mode; };
+  T.toggle = function () {
+    const i = (ORDER.indexOf(T.mode) + 1) % ORDER.length;
+    T.apply(ORDER[i]);
+    return T.mode;
+  };
 
   RR.Theme = T;
 })();

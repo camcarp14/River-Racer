@@ -95,7 +95,7 @@
   <div id="wrongway">WRONG WAY!</div>
   <div id="countdown"></div>
   <div id="landmark-tag"></div>
-  <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake<br><b>SHIFT</b> trim boost &nbsp;<b>C</b> camera &nbsp;<b>N</b> day/night &nbsp;<b>R</b> reset &nbsp;<b>ESC</b> pause</div>
+  <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake<br><b>SHIFT</b> trim boost &nbsp;<b>C</b> camera &nbsp;<b>N</b> time of day &nbsp;<b>R</b> reset &nbsp;<b>ESC</b> pause</div>
 </div>
 
 <div id="menu"></div>
@@ -1866,27 +1866,43 @@ window.CHICAGO = {
     RR.Engine.scene.add(T._mesh);
   };
 
-  const DAY = {
-    sun: 0xffdcae, sunI: 1.55, hemi: 0xcfe3f0, hemiG: 0x44505c, hemiI: 0.68, exposure: 0.95,
-    fog: 0xd8c9a8, fogNear: 900, fogFar: 4200,
-    water: { deepR: 0x1e4d43, shalR: 0x3e7d68, deepL: 0x14496b, shalL: 0x2e7d9e, skyLo: 0xffd9a0, skyHi: 0x74a9c9, fog: 0xd8c9a8 },
+  const PRESETS = {
+    day: {
+      sun: 0xffdcae, sunI: 1.55, hemi: 0xcfe3f0, hemiG: 0x44505c, hemiI: 0.68, exposure: 0.95,
+      fog: 0xd8c9a8, fogNear: 900, fogFar: 4200, night: 0, emissive: 0, fireworks: false, lamps: false,
+      sky: { zenith: 0x2e6a9e, mid: 0x9fc4d8, horizon: 0xffd9a0, west: 0xffb35c },
+      water: { deepR: 0x1e4d43, shalR: 0x3e7d68, deepL: 0x14496b, shalL: 0x2e7d9e, skyLo: 0xffd9a0, skyHi: 0x74a9c9, fog: 0xd8c9a8 },
+    },
+    sunset: {
+      sun: 0xff9a54, sunI: 1.7, hemi: 0xf0b488, hemiG: 0x5a4238, hemiI: 0.85, exposure: 1.2,
+      fog: 0xecb182, fogNear: 850, fogFar: 4200, night: 0, emissive: 0.4, fireworks: false, lamps: true,
+      sky: { zenith: 0x3a4674, mid: 0xcf847a, horizon: 0xff8438, west: 0xff5230 },
+      water: { deepR: 0x35474c, shalR: 0x7a7658, deepL: 0x354458, shalL: 0x88745e, skyLo: 0xffa856, skyHi: 0x9a6478, fog: 0xecb182 },
+    },
+    night: {
+      sun: 0x9fb2dc, sunI: 0.5, hemi: 0x27324c, hemiG: 0x0d121c, hemiI: 0.4, exposure: 1.35,
+      fog: 0x0a1120, fogNear: 650, fogFar: 3500, night: 1, emissive: 1.15, fireworks: true, lamps: true,
+      sky: { zenith: 0x2e6a9e, mid: 0x9fc4d8, horizon: 0xffd9a0, west: 0xffb35c },
+      water: { deepR: 0x081820, shalR: 0x123038, deepL: 0x06111d, shalL: 0x102838, skyLo: 0x1c2740, skyHi: 0x080f1c, fog: 0x0a1120 },
+    },
   };
-  const NIGHT = {
-    sun: 0x9fb2dc, sunI: 0.5, hemi: 0x27324c, hemiG: 0x0d121c, hemiI: 0.4, exposure: 1.35,
-    fog: 0x0a1120, fogNear: 650, fogFar: 3500,
-    water: { deepR: 0x081820, shalR: 0x123038, deepL: 0x06111d, shalL: 0x102838, skyLo: 0x1c2740, skyHi: 0x080f1c, fog: 0x0a1120 },
-  };
+  const ORDER = ['day', 'sunset', 'night'];
 
   T.apply = function (mode) {
+    const P = PRESETS[mode] || PRESETS.day;
     T.mode = mode;
-    const night = mode === 'night';
-    const P = night ? NIGHT : DAY, E = RR.Engine;
+    const E = RR.Engine;
     E.sun.color.setHex(P.sun); E.sun.intensity = P.sunI;
     E.hemi.color.setHex(P.hemi); E.hemi.groundColor.setHex(P.hemiG); E.hemi.intensity = P.hemiI;
     E.renderer.toneMappingExposure = P.exposure;
     E.scene.fog.color.setHex(P.fog); E.scene.fog.near = P.fogNear; E.scene.fog.far = P.fogFar;
 
-    if (RR.Sky && RR.Sky.setNight) RR.Sky.setNight(night ? 1 : 0);
+    if (RR.Sky && RR.Sky.mat) {
+      const u = RR.Sky.mat.uniforms;
+      u.cZenith.value.setHex(P.sky.zenith); u.cMid.value.setHex(P.sky.mid);
+      u.cHorizon.value.setHex(P.sky.horizon); u.cWest.value.setHex(P.sky.west);
+      if (RR.Sky.setNight) RR.Sky.setNight(P.night);
+    }
 
     if (RR.Water && RR.Water.material) {
       const u = RR.Water.material.uniforms, c = P.water;
@@ -1894,16 +1910,18 @@ window.CHICAGO = {
       u.uDeepLake.value.setHex(c.deepL); u.uShallowLake.value.setHex(c.shalL);
       u.uSkyLow.value.setHex(c.skyLo); u.uSkyHigh.value.setHex(c.skyHi);
       u.uFogColor.value.setHex(c.fog);
-      u.uReflectStrength && (u._nightRefl = night);
     }
 
-    const cm = RR.City.material();      // lit windows glow via the emissive map
-    cm.emissiveIntensity = night ? 1.15 : 0;
-
-    if (T._mesh) T._mesh.visible = night;
+    RR.City.material().emissiveIntensity = P.emissive;
+    if (T._mesh) T._mesh.visible = P.lamps;
+    if (RR.Fireworks) RR.Fireworks.setActive(P.fireworks);
   };
 
-  T.toggle = function () { T.apply(T.mode === 'day' ? 'night' : 'day'); return T.mode; };
+  T.toggle = function () {
+    const i = (ORDER.indexOf(T.mode) + 1) % ORDER.length;
+    T.apply(ORDER[i]);
+    return T.mode;
+  };
 
   RR.Theme = T;
 })();
@@ -4517,6 +4535,107 @@ window.CHICAGO = {
 
 </script>
 <script>
+/* ===== js/world/fireworks.js ===== */
+/* River Racer — fireworks over Navy Pier at night. Additive particle rockets that
+   arc up from the pier and burst into colored peonies, reflected on the dark water. */
+(function () {
+  const F = { active: false };
+  const MAX = 2600;
+  let geo, pts, pool = [], idx = 0, launchT = 1.2, bases = [];
+  const COLORS = [
+    [1.0, 0.32, 0.34], [1.0, 0.82, 0.30], [0.42, 1.0, 0.55], [0.42, 0.72, 1.0],
+    [0.90, 0.50, 1.0], [1.0, 1.0, 1.0], [1.0, 0.55, 0.22], [0.4, 1.0, 0.95],
+  ];
+
+  function alloc() { const p = pool[idx]; idx = (idx + 1) % MAX; return p; }
+
+  function rocket() {
+    const base = bases[(Math.random() * bases.length) | 0];
+    const c = COLORS[(Math.random() * COLORS.length) | 0];
+    const p = alloc();
+    p.kind = 0;
+    p.x = base.x + (Math.random() - 0.5) * 60; p.y = 3; p.z = base.z + (Math.random() - 0.5) * 60;
+    p.vx = (Math.random() - 0.5) * 5; p.vz = (Math.random() - 0.5) * 5; p.vy = 40 + Math.random() * 16;
+    p.age = 0; p.life = 1.7 + Math.random() * 0.7; p.r = c[0]; p.g = c[1]; p.b = c[2];
+  }
+  function burst(x, y, z, c) {
+    const n = 110 + (Math.random() * 80 | 0);
+    const spd = 15 + Math.random() * 11;
+    const ring = Math.random() < 0.35;                 // some bursts are flat rings
+    for (let i = 0; i < n; i++) {
+      const p = alloc();
+      let dx, dy, dz;
+      if (ring) { const th = Math.random() * Math.PI * 2; dx = Math.cos(th); dy = (Math.random() - 0.5) * 0.25; dz = Math.sin(th); }
+      else { const u = Math.random() * 2 - 1, th = Math.random() * Math.PI * 2, r = Math.sqrt(1 - u * u); dx = r * Math.cos(th); dy = u; dz = r * Math.sin(th); }
+      const s = spd * (0.55 + Math.random() * 0.6);
+      p.kind = 1; p.x = x; p.y = y; p.z = z;
+      p.vx = dx * s; p.vy = dy * s + 2.5; p.vz = dz * s;
+      p.age = 0; p.life = 1.4 + Math.random() * 1.2;
+      p.r = c[0]; p.g = c[1]; p.b = c[2];
+    }
+  }
+
+  F.setActive = function (on) { F.active = on; };
+
+  F.init = function () {
+    const np = window.CHICAGO.lake.navyPier;
+    bases = [
+      { x: np.tip.x - 30, z: np.tip.z - 30 },
+      { x: np.tip.x + 40, z: np.tip.z + 20 },
+      { x: (np.root.x + np.tip.x) / 2, z: np.tip.z - 90 },
+      { x: np.tip.x + 90, z: np.tip.z - 40 },
+    ];
+    for (let i = 0; i < MAX; i++) pool.push({ kind: 1, x: 0, y: -1000, z: 0, vx: 0, vy: 0, vz: 0, age: 9, life: 0, r: 0, g: 0, b: 0 });
+    const posA = new Float32Array(MAX * 3), colA = new Float32Array(MAX * 3);
+    for (let i = 0; i < MAX; i++) posA[i * 3 + 1] = -1000;
+    geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(posA, 3).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('color', new THREE.BufferAttribute(colA, 3).setUsage(THREE.DynamicDrawUsage));
+    const tex = RR.U.canvasTexture(64, 64, (ctx) => {
+      const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+      g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.3, 'rgba(255,255,255,0.75)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 64, 64);
+    });
+    pts = new THREE.Points(geo, new THREE.PointsMaterial({
+      size: 3.4, map: tex, vertexColors: true, transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, sizeAttenuation: true,
+    }));
+    pts.frustumCulled = false; pts.renderOrder = 4;
+    RR.Engine.scene.add(pts);
+  };
+
+  F.update = function (dt) {
+    if (!geo) return;
+    if (F.active) {
+      launchT -= dt;
+      if (launchT <= 0) { rocket(); if (Math.random() < 0.6) rocket(); if (Math.random() < 0.3) rocket(); launchT = 0.5 + Math.random() * 1.4; }
+    }
+    const pos = geo.attributes.position.array, col = geo.attributes.color.array;
+    for (let i = 0; i < MAX; i++) {
+      const p = pool[i];
+      if (p.age < p.life) {
+        p.age += dt;
+        p.vy -= 9.2 * dt;
+        if (p.kind === 1) { const dr = Math.exp(-0.85 * dt); p.vx *= dr; p.vy *= dr; p.vz *= dr; }
+        p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+        if (p.kind === 0 && p.age >= p.life) { burst(p.x, p.y, p.z, [p.r, p.g, p.b]); p.age = p.life + 1; pos[i * 3 + 1] = -1000; col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = 0; continue; }
+        const fade = p.kind === 1 ? Math.max(0, 1 - p.age / p.life) : 1;
+        const tw = p.kind === 1 ? (0.68 + 0.32 * Math.sin(p.age * 42 + i)) : 1.4;   // spark twinkle, bright rocket
+        pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
+        col[i * 3] = p.r * fade * tw; col[i * 3 + 1] = p.g * fade * tw; col[i * 3 + 2] = p.b * fade * tw;
+      } else {
+        pos[i * 3 + 1] = -1000; col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = 0;
+      }
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+  };
+
+  RR.Fireworks = F;
+})();
+
+</script>
+<script>
 /* ===== js/game/boats.js ===== */
 /* River Racer — procedural vehicle meshes + stat sheets */
 (function () {
@@ -6958,7 +7077,7 @@ window.CHICAGO = {
     ['LAYING THE RIVERWALK…', () => { RR.Riverwalk.init(); }],
     ['OPENING THE LOCK…', () => { RR.Lake.init(); }],
     ['RIGGING THE SAILBOATS…', () => { RR.Scenery.init(); }],
-    ['FILLING THE STREETS…', () => { RR.Life.init(); }],
+    ['FILLING THE STREETS…', () => { RR.Life.init(); RR.Fireworks.init(); }],
     ['FUELING THE BOATS…', () => { RR.FX.init(); RR.HUD.init(); RR.Minimap.init(); }],
   ];
 
@@ -7087,6 +7206,7 @@ window.CHICAGO = {
 
   function update(dt, t) {
     if (RR.Life) RR.Life.update(dt, t);          // crowds + traffic animate in every scene
+    if (RR.Fireworks) RR.Fireworks.update(dt);
     if (mode === 'menu' || mode === 'results') {
       if (RR.Water && RR.Water.material) RR.Water.material.uniforms.uNumBoats.value = 0;  // no stale foam
       // attract flythrough behind the menus
@@ -7186,7 +7306,7 @@ window.CHICAGO = {
       window.RRTest._freecam = true;
     },
     clearCamera: () => { window.RRTest._freecam = false; },
-    night: (on) => { if (RR.Theme) RR.Theme.apply(on ? 'night' : 'day'); },
+    night: (m) => { if (RR.Theme) RR.Theme.apply(typeof m === 'string' ? m : (m ? 'night' : 'day')); },
     // hold full quality (disable adaptive downgrade) — used by visual tests on the software renderer
     pinQuality: () => { RR.Engine.setAutoQuality(false); if (RR.Reflect) RR.Reflect.enabled = true; if (RR.Post) RR.Post.enabled = true; },
     getState: () => ({

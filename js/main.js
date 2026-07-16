@@ -20,7 +20,7 @@
     ['LAYING THE RIVERWALK…', () => { RR.Riverwalk.init(); }],
     ['OPENING THE LOCK…', () => { RR.Lake.init(); }],
     ['RIGGING THE SAILBOATS…', () => { RR.Scenery.init(); }],
-    ['FILLING THE STREETS…', () => { RR.Life.init(); }],
+    ['FILLING THE STREETS…', () => { RR.Life.init(); RR.Fireworks.init(); }],
     ['FUELING THE BOATS…', () => { RR.FX.init(); RR.HUD.init(); RR.Minimap.init(); }],
   ];
 
@@ -149,6 +149,7 @@
 
   function update(dt, t) {
     if (RR.Life) RR.Life.update(dt, t);          // crowds + traffic animate in every scene
+    if (RR.Fireworks) RR.Fireworks.update(dt);
     if (mode === 'menu' || mode === 'results') {
       if (RR.Water && RR.Water.material) RR.Water.material.uniforms.uNumBoats.value = 0;  // no stale foam
       // attract flythrough behind the menus
@@ -248,7 +249,7 @@
       window.RRTest._freecam = true;
     },
     clearCamera: () => { window.RRTest._freecam = false; },
-    night: (on) => { if (RR.Theme) RR.Theme.apply(on ? 'night' : 'day'); },
+    night: (m) => { if (RR.Theme) RR.Theme.apply(typeof m === 'string' ? m : (m ? 'night' : 'day')); },
     // hold full quality (disable adaptive downgrade) — used by visual tests on the software renderer
     pinQuality: () => { RR.Engine.setAutoQuality(false); if (RR.Reflect) RR.Reflect.enabled = true; if (RR.Post) RR.Post.enabled = true; },
     getState: () => ({
