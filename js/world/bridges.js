@@ -247,16 +247,25 @@
       }
       addSigns(cl + 3.4);
     } else if (bridge.kind === 'deck') {
-      // Lake Shore Drive: steel through-truss
-      for (const s of [-1, 1]) cross(1.2, 7, span, s * 9.5, cl + 5.4, 0x6a7076);
-      cross(20, 1.2, 8, 0, cl + 9.2, 0x6a7076);
-      for (let a = -half; a <= half; a += 8) for (const s of [-1, 1]) cylAt(0.35, 7, s * 9.5, a, cl + 5.4, 0x5a6066, 4);
+      // girder bridge: green-steel fascia UNDER the deck edges + open railings above,
+      // so the span reads airy from the water instead of a solid wall
+      const GRN = 0x4f625a;
+      for (const s of [-1, 1]) cross(0.9, 2.0, span, s * 10.2, cl - 0.2, GRN);
+      for (const s of [-1, 1]) {
+        cross(0.22, 0.18, span, s * 10.6, cl + 3.1, 0x77817b);                       // top rail
+        for (let a = -half - 4; a <= half + 4; a += 5) cylAt(0.11, 1.2, s * 10.6, a, cl + 2.5, 0x6a7076, 4);
+      }
       if (bridge.name.indexOf('Lake Shore') >= 0) {
-        // the Link Bridge's four monumental Art-Moderne pylons
+        // the Link Bridge: double-deck steel + four slender Art-Moderne limestone pylons
+        cross(18, 0.9, span, 0, cl - 2.4, GRN);                                       // lower deck chord
+        for (let a = -half; a <= half; a += 8) for (const s of [-1, 1]) cylAt(0.15, 2.2, s * 8.8, a, cl - 1.2, 0x44554e, 4);
         for (const sA of [-1, 1]) for (const sB of [-1, 1]) {
-          at(7, 17, 10, sA * (deckW / 2 + 4.5), sB * (half + 6), 8.5, 0xb9b4a6, true);
-          at(8, 2, 11, sA * (deckW / 2 + 4.5), sB * (half + 6), 18, 0x9a968c, true);
-          if (RR.Theme) RR.Theme.addLamp(cx + tx * sA * (deckW / 2 + 4.5) - tz * sB * (half + 6), 19.6, cz + tz * sA * (deckW / 2 + 4.5) + tx * sB * (half + 6), 0xffe6b0);
+          const ao = sA * (deckW / 2 + 3.5), ac = sB * (half + 4);
+          at(5.5, 3, 6.5, ao, ac, 1.5, 0xb3ae9e, true);                               // base
+          at(4.2, 18, 5.2, ao, ac, 12, 0xc4bfae, true);                               // shaft
+          at(4.8, 1.6, 5.8, ao, ac, 21.4, 0xb3ae9e, true);                            // stepped cap
+          at(2.2, 1.8, 3.0, ao, ac, 23, 0xc4bfae, true);                              // crown block
+          if (RR.Theme) RR.Theme.addLamp(cx + tx * ao - tz * ac, 24.2, cz + tz * ao + tx * ac, 0xffe6b0);
         }
       }
       addSigns(cl + 3.6);

@@ -23,6 +23,7 @@
   var music = {
     playing: false,
     mode: null,            // 'title' | 'race'
+    wantMode: null,        // requested before the ctx existed — honored on init
     interval: null,
     step: 0,
     nextTime: 0,
@@ -217,7 +218,7 @@
       master.connect(comp);
       comp.connect(ctx.destination);
 
-      engineBus = gain(0.45); // engines (incl. spray) sit well under music + SFX
+      engineBus = gain(0.38); // engines (incl. spray) sit well under music + SFX
       engineBus.connect(master);
       fxBus = gain(0.9);
       fxBus.connect(master);
@@ -225,6 +226,12 @@
       ensureAmbience();
     }
     doResume();
+    // music requested before the first user gesture (title screen at boot) starts now
+    if (music.wantMode && !music.playing) {
+      var wm = music.wantMode;
+      music.wantMode = null;
+      doSetMode(wm, true);
+    }
   }
 
   function doResume() {
@@ -748,7 +755,7 @@
   function applyMode(mode) {
     if (mode === 'race') {
       music.stepDur = 60 / RACE_BPM / 4;
-      music.level = 0.20;                      // over quiet engines, under SFX
+      music.level = 0.34;                      // clearly over the quiet engines, under SFX peaks
       music.padFilter.frequency.value = 1000;  // darker stabs
       music.padGain.gain.value = 0.6;
       music.bassFilter.frequency.value = 380;  // pure 808 sub
@@ -757,7 +764,7 @@
       music.kickGain.gain.value = 1.0;
     } else {
       music.stepDur = 60 / TITLE_BPM / 4;
-      music.level = 0.16;
+      music.level = 0.30;
       music.padFilter.frequency.value = 2200;  // warm piano brightness
       music.padGain.gain.value = 0.55;
       music.bassFilter.frequency.value = 700;
@@ -935,6 +942,7 @@
   // Shared start/stop for both loops. Idempotent; switching stops the other.
   function doSetMode(mode, on) {
     if (!on) {
+      if (music.wantMode === mode) music.wantMode = null;
       if (!music.playing || music.mode !== mode) return; // off is a no-op unless this loop plays
       music.playing = false;
       if (music.interval) { clearInterval(music.interval); music.interval = null; }
@@ -951,7 +959,7 @@
       }, 900);
       return;
     }
-    if (!ready()) return;
+    if (!ready()) { music.wantMode = mode; return; }   // remember: init will start us
     ensureMusicBuses();
     if (music.playing && music.mode === mode) return; // idempotent
     var t = now(), startAt = t + 0.06;
@@ -979,7 +987,7 @@
   }
 
   function doSetMusic(on) { doSetMode('title', !!on); }
-  function doSetRaceMusic(on) { if (!ctx) return; doSetMode('race', !!on); }
+  function doSetRaceMusic(on) { doSetMode('race', !!on); }
 
   // --------------------------------------------------------------------------
   // Public API — every method wrapped so it can never throw

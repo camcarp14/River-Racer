@@ -10,7 +10,7 @@
       hud: $('hud'), speed: $('speed-num'), throttle: $('throttle-fill'),
       pos: $('pos-big'), posSuf: $('pos-suffix'), posTotal: $('pos-total'), lap: $('lap-line'),
       timer: $('timer-num'), cpFlash: $('checkpoint-flash'), wrong: $('wrongway'),
-      count: $('countdown'), tag: $('landmark-tag'),
+      count: $('countdown'), tag: $('landmark-tag'), vig: $('vignette'),
     };
   };
 
@@ -64,6 +64,11 @@
   H.update = function (dt, boat, race) {
     const speed = Math.hypot(boat.vel.x, boat.vel.z);
     els.speed.textContent = Math.round(speed * 2.237);          // m/s → mph
+    // speed vignette: the edges close in as you approach (and boost past) top speed
+    if (els.vig) {
+      const f = RR.U.clamp((speed / boat.spec.top - 0.7) * 2.0, 0, 1) * 0.5 + boat.boostHeat * 0.2;
+      els.vig.style.opacity = f.toFixed(2);
+    }
     els.throttle.style.width = Math.round(boat.boostEnergy * 100) + '%';
     els.throttle.style.background = boat.boostHeat > 0.5
       ? 'linear-gradient(90deg,#ffc857,#ff3b30)'

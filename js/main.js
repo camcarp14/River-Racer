@@ -119,7 +119,18 @@
       if (player) { player.boostEnergy = Math.min(1, player.boostEnergy + 0.45); RR.Camera.kick(0.25); RR.HUD.flash('+BOOST'); }
     };
     RR.Race.onLap = () => { RR.Audio.checkpoint(); };
-    RR.Race.onPlayerFinish = (pos) => { RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.showPlacement(pos); };
+    RR.Race.onPlayerFinish = (pos) => {
+      RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.showPlacement(pos);
+      const g = raceState && raceState.finishGate;
+      if (g) {
+        if (RR.FX.confetti) RR.FX.confetti(g.x, 12, g.z, 260);
+        if (RR.Fireworks && RR.Fireworks.burstAt) {
+          RR.Fireworks.burstAt(g.x - 18, 26, g.z, [1, 0.82, 0.3]);
+          RR.Fireworks.burstAt(g.x + 16, 32, g.z + 8, null);
+          setTimeout(() => RR.Fireworks.burstAt && RR.Fireworks.burstAt(g.x, 30, g.z - 10, [0.42, 0.72, 1]), 450);
+        }
+      }
+    };
     RR.Race.onRaceOver = (results) => {
       mode = 'results';
       RR.HUD.show(false);
