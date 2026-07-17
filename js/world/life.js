@@ -44,11 +44,12 @@
     const rng = U().mulberry(24601);
     const openX = C.lake.openWaterX;
 
-    function overOther(x, z, selfKey) {
+    // over ANY channel's water (its own included — a constant offset can curl back into the
+    // channel on a concave bend, which is exactly how a stroller ended up standing on the river)
+    function overWater(x, z) {
       for (const key in RR.River.paths) {
-        if (key.startsWith('lake') || key === selfKey) continue;
         const q = U().pathNearest(RR.River.paths[key], x, z);
-        if (q.dist < q.w) return true;
+        if (q.dist < q.w + 0.5) return true;
       }
       return false;
     }
@@ -66,7 +67,7 @@
           const off = 2 + rng() * 6.2;                            // across the promenade
           const a = U().pathAt(p, d, {});
           const x = a.x + (-a.tz) * (a.w + off) * s, z = a.z + a.tx * (a.w + off) * s;
-          if (x > openX - 8 || overOther(x, z, key)) continue;
+          if (x > openX - 8 || overWater(x, z)) continue;
           const isBike = rng() < 0.14;
           const w = { p, key, s, d, off, dir: rng() < 0.5 ? 1 : -1, spd: isBike ? 5 + rng() * 3 : 1.1 + rng() * 0.8,
                       col: SHIRTS[(rng() * SHIRTS.length) | 0], ph: rng() * 9, bike: isBike };
@@ -83,7 +84,7 @@
           const off = 2.5 + rng() * 5, dd = d + (rng() - 0.5) * 20;
           const b = U().pathAt(main, dd, {});
           const x = b.x + (-b.tz) * (b.w + off) * s, z = b.z + b.tx * (b.w + off) * s;
-          if (x > openX - 8 || overOther(x, z, 'main')) continue;
+          if (x > openX - 8 || overWater(x, z)) continue;
           statics.push({ x, z, yaw: rng() * 6.28, col: SHIRTS[(rng() * SHIRTS.length) | 0] });
         }
       }
@@ -279,9 +280,19 @@
       w.d += w.spd * w.dir * dt;
       if (w.d > w.p.len) { w.d = w.p.len; w.dir = -1; }
       else if (w.d < 0) { w.d = 0; w.dir = 1; }
-      const a = U().pathAt(w.p, w.d, bp);
-      const nx = -a.tz, nz = a.tx;
-      const x = a.x + nx * (a.w + w.off) * w.s, z = a.z + nz * (a.w + w.off) * w.s;
+      let a = U().pathAt(w.p, w.d, bp);
+      let nx = -a.tz, nz = a.tx;
+      let x = a.x + nx * (a.w + w.off) * w.s, z = a.z + nz * (a.w + w.off) * w.s;
+      // guard against curling into the channel at a bend: if this step would put the walker
+      // on the water, turn around and re-place on the stretch just behind them (cheap windowed check)
+      const hint = (w.d / w.p.len * (w.p.n - 1)) | 0;
+      const q = U().pathNearest(w.p, x, z, hint, 5);
+      if (q.dist < q.w + 0.3) {
+        w.dir = -w.dir;
+        w.d = U().clamp(w.d + w.spd * w.dir * dt * 2, 0, w.p.len);
+        a = U().pathAt(w.p, w.d, bp); nx = -a.tz; nz = a.tx;
+        x = a.x + nx * (a.w + w.off) * w.s; z = a.z + nz * (a.w + w.off) * w.s;
+      }
       const yaw = Math.atan2(a.tx * w.dir, a.tz * w.dir);
       const bob = w.bike ? 0 : Math.abs(Math.sin(t * 6 + w.ph)) * 0.06;
       _q.setFromAxisAngle(_up, yaw); _p.set(x, PY + bob, z);

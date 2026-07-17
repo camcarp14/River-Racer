@@ -1,6 +1,6 @@
 /* River Racer — renderer, scene, main loop, adaptive quality */
 (function () {
-  const E = { SKIP_REFLECT: 1, autoQuality: true };
+  const E = { SKIP_REFLECT: 1, autoQuality: true, timeScale: 1, rawDt: 0 };
   E.setAutoQuality = function (on) { E.autoQuality = on; };
   let renderer, scene, camera;
   let updateFns = [];
@@ -90,6 +90,7 @@
   function tick(now) {
     let dt = Math.min(0.05, (now - last) / 1000);
     last = now;
+    E.rawDt = dt;                    // real wall-clock dt (camera swings, UI use this)
 
     const inst = 1000 / Math.max(1, now - (tick._p || now - 16));
     tick._p = now;
@@ -117,7 +118,9 @@
       while (spent < warpBank && spent < 12) { step(h); spent += h; }
       warpBank = Math.max(0, warpBank - spent);
     }
-    step(dt);
+    // one global clock: pause sets timeScale 0 (whole map freezes), photo slo-mo sets 0.25.
+    // simTime advances by the same scaled dt so t-driven animations freeze/slow in lockstep.
+    step(dt * (E.timeScale != null ? E.timeScale : 1));
 
     if (RR.Reflect && RR.Reflect.enabled) RR.Reflect.update(renderer, scene, camera);
     if (RR.Post && RR.Post.enabled) RR.Post.render(renderer, scene, camera);

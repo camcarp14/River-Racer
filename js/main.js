@@ -62,7 +62,7 @@
       RR.Engine.scene.add(showBoat);
       showIdx = i;
     };
-    RR.Menus.onResume = () => { mode = 'race'; };
+    RR.Menus.onResume = () => { mode = 'race'; RR.Engine.timeScale = 1; };
     RR.Menus.onQuit = quitToTitle;
     RR.Engine.onUpdate(update);
     RR.Engine.start();
@@ -79,6 +79,7 @@
 
   function startRace(courseIdx, vehicleIdx, timeTrial) {
     clearBoats();
+    RR.Engine.timeScale = 1;                          // clear any pause/photo slo-mo from a prior race
     const N = timeTrial ? 1 : 6;
     const catalog = RR.Boats.CATALOG;
     // one-design racing: every rival runs the SAME hull as you (fair fight, pure skill),
@@ -161,6 +162,7 @@
 
   function quitToTitle() {
     mode = 'menu';
+    RR.Engine.timeScale = 1;
     RR.HUD.show(false);
     RR.Audio.stopEngine();
     if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(false);
@@ -189,7 +191,7 @@
     }
     if (e.code === 'KeyP' && (mode === 'race' || mode === 'photo')) togglePhotoMode();
     if (e.code === 'Escape' && mode === 'photo') togglePhotoMode();
-    if (e.code === 'Escape' && mode === 'race') { mode = 'paused'; RR.Menus.showPause(); }
+    if (e.code === 'Escape' && mode === 'race') { mode = 'paused'; RR.Engine.timeScale = 0; RR.Menus.showPause(); }
     RR.Audio.init(); RR.Audio.resume();
   }, { once: false });
   window.addEventListener('pointerdown', () => { RR.Audio.init(); RR.Audio.resume(); });
@@ -199,14 +201,15 @@
   let tagCooldown = 0;
   let photoAngle = 0;
 
-  // freeze the sim and swing a slow cinematic camera around the boat for screenshots
+  // photo mode: drop the whole world into 0.25x slo-mo and swing a cinematic camera.
+  // Everything — boats, crowds, traffic, water, easter eggs — slows together (engine timeScale).
   function togglePhotoMode() {
     if (mode === 'race') {
-      mode = 'photo'; RR.HUD.show(false); RR.Audio.stopEngine();
-      if (RR.HUD.flash) RR.HUD.flash('PHOTO MODE');
+      mode = 'photo'; RR.HUD.show(false); RR.Engine.timeScale = 0.25;
+      if (RR.HUD.flash) RR.HUD.flash('PHOTO · SLO-MO');
     } else if (mode === 'photo') {
-      mode = 'race'; RR.HUD.show(true);
-      if (player) { RR.Audio.startEngine(player.spec.kind); RR.Camera.snapTo(player); }
+      mode = 'race'; RR.HUD.show(true); RR.Engine.timeScale = 1;
+      if (player) RR.Camera.snapTo(player);
     }
   }
 
@@ -237,19 +240,10 @@
       return;
     }
     if (showBoat) { RR.Engine.scene.remove(showBoat); showBoat = null; showIdx = -1; }   // never leak into a race
-    if (mode === 'photo') {
-      if (!player) return;
-      photoAngle += dt * 0.25;                       // slow orbit; world keeps shimmering (Life/Fireworks/water run above)
-      const r = 15 + Math.sin(t * 0.2) * 4, cy = player.pos.y + 5.5;
-      const cam = RR.Engine.camera;
-      cam.up.set(0, 1, 0);
-      cam.position.set(player.pos.x + Math.sin(photoAngle) * r, cy, player.pos.z + Math.cos(photoAngle) * r);
-      cam.lookAt(player.pos.x, player.pos.y + 1, player.pos.z);
-      RR.Race.animateGates && raceState && RR.Race.animateGates(t);
-      return;
-    }
-    if (mode === 'paused') return;
+    if (mode === 'paused') return;                   // timeScale 0 already froze the map; skip the sim entirely
     if (!raceState || !player) return;
+    // in photo mode the sim below still runs — just at 0.25x via engine.timeScale — so the
+    // whole scene glides in slo-mo; only the camera is overridden (at the follow site).
 
     RR.Input.update(dt);
     RR.Race.update(dt);
@@ -311,7 +305,16 @@
 
     RR.Race.animateGates(t);
     RR.FX.update(boats, dt, t);
-    if (!(window.RRTest && window.RRTest._freecam)) RR.Camera.follow(player, dt);
+    if (mode === 'photo') {
+      // cinematic orbit that keeps swinging at a natural rate (rawDt) while the world is in slo-mo
+      photoAngle += (RR.Engine.rawDt || dt) * 0.5;
+      const r = 15 + Math.sin(t * 0.2) * 4, cam = RR.Engine.camera;
+      cam.up.set(0, 1, 0);
+      cam.position.set(player.pos.x + Math.sin(photoAngle) * r, player.pos.y + 5.5, player.pos.z + Math.cos(photoAngle) * r);
+      cam.lookAt(player.pos.x, player.pos.y + 1, player.pos.z);
+    } else if (!(window.RRTest && window.RRTest._freecam)) {
+      RR.Camera.follow(player, dt);
+    }
     RR.Engine.trackShadow(player.pos.x, player.pos.z);
 
     RR.HUD.update(dt, player, raceState);
