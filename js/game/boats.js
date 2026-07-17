@@ -392,18 +392,25 @@
         spike.translate(0, 0, -2.95);                                     // tip aft at z ≈ −3.5
         pushG(silverGeos, spike, s);
 
-        // --- gold vanes: anchored at the front half, running back alongside the body and
-        // trailing past the tail, rounded tips + blue X marks at the trailing end ---
+        // --- gold vanes: they flare FORWARD around the fan like a claw (per the official
+        // render) — anchored on the machinery behind the cowl, sweeping ahead alongside
+        // the fan with rounded tips reaching past the spinner cone, blue X near the tips ---
         for (const psi of [Math.PI / 2, Math.PI / 2 + 2.1, Math.PI / 2 - 2.1]) {
           const rot = psi - Math.PI / 2;
-          const plank = new THREE.BoxGeometry(0.9, 0.08, 4.2); plank.translate(0, 0.86, -0.6); plank.rotateZ(rot);  // z 1.5 … −2.7
-          pushG(goldGeos, plank, s);
-          const round = new THREE.CylinderGeometry(0.45, 0.45, 0.08, 10, 1, false, Math.PI / 2, Math.PI);
-          round.translate(0, 0.86, -2.7); round.rotateZ(rot);             // rounded trailing tip
-          pushG(goldGeos, round, s);
-          for (const d of [-1, 1]) {                                      // blue X near the trailing tip
-            const strip = new THREE.BoxGeometry(0.6, 0.045, 0.15); strip.rotateY(d * 0.62); strip.translate(0, 0.905, -2.1); strip.rotateZ(rot);
-            pushG(accentGeos, strip, s);
+          const vane = [];
+          const plank = new THREE.BoxGeometry(0.95, 0.08, 3.9); vane.push(plank);            // vane-local, centered
+          const round = new THREE.CylinderGeometry(0.475, 0.475, 0.08, 10, 1, false, -Math.PI / 2, Math.PI);
+          round.translate(0, 0, 1.95); vane.push(round);                                     // rounded FRONT tip
+          const strips = [];
+          for (const d of [-1, 1]) {
+            const strip = new THREE.BoxGeometry(0.6, 0.045, 0.15); strip.rotateY(d * 0.62); strip.translate(0, 0.06, 1.3);
+            strips.push(strip);
+          }
+          for (const p of vane.concat(strips)) {
+            p.rotateX(-0.09);                       // slight outward flare toward the front tip
+            p.translate(0, 0.88, 2.6);              // anchor just behind the cowl → tips reach z ≈ 4.5
+            p.rotateZ(rot);
+            pushG(strips.includes(p) ? accentGeos : goldGeos, p, s);
           }
         }
 
@@ -436,16 +443,16 @@
         mesh.castShadow = true; g.add(mesh);
       }
 
-      // ---- the energy binder: a jagged magenta arc leaping the gap between the two
-      // fan cowls at the FRONT (where the render has it), crackling via flicker ----
+      // ---- the energy binder: a jagged magenta arc between the engines' REAR inner
+      // faces — the spot Anakin stares at from the cockpit, matching the render ----
       for (let i = 0; i < 7; i++) {
-        const bolt = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 1.0, 0.07, 0.06), plasmaMat());
-        bolt.position.set(0, EY - 0.25 + i * 0.11, EZ + 2.9 + Math.sin(i * 2.1) * 0.18);
+        const bolt = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 0.9, 0.07, 0.06), plasmaMat());
+        bolt.position.set(0, EY - 0.25 + i * 0.11, EZ - 1.7 + Math.sin(i * 2.1) * 0.2);
         bolt.rotation.z = Math.sin(i * 3.7) * 0.45;
         bolt.renderOrder = 3; sparks.push(bolt); g.add(bolt);
       }
-      const haze = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 1.0, 0.9, 0.6), plasmaMat());
-      haze.material.opacity = 0.16; haze.position.set(0, EY, EZ + 2.9); haze.renderOrder = 3;
+      const haze = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 0.9, 0.9, 0.6), plasmaMat());
+      haze.material.opacity = 0.16; haze.position.set(0, EY, EZ - 1.7); haze.renderOrder = 3;
       plasma.push(haze); g.add(haze);
 
       // ---- the tiny cockpit sled, towed FAR behind across open air (film signature:
@@ -472,10 +479,11 @@
       const pilot = driverFigure({ pose: 'sit', lean: 0.26, footDrop: 0.1, suit: 0x8a6f4a, vest: 0xcaa06a, helmet: 0x7a5a3a, visor: true, scale: 0.88 });
       pilot.position.set(0, 0.42, PZ - 0.15); g.add(pilot);
 
-      // ---- Steelton control cables spanning the AIR GAP: pod nose → rising arc → engine crown ----
+      // ---- Steelton control cables spanning the AIR GAP: pod nose → rising arc → the
+      // engines' REAR tops (short runs, like the render) ----
       for (const s of [-1, 1]) {
-        limb(g, cableMat, 0.045, 0, 0.58, PZ + 1.5, s * 0.9, 1.5, -2.4);   // nose → high arc over the gap
-        limb(g, cableMat, 0.045, s * 0.9, 1.5, -2.4, s * (EX - 0.1), EY + 0.6, EZ + 0.7);  // arc → engine crown
+        limb(g, cableMat, 0.045, 0, 0.58, PZ + 1.5, s * 0.85, 1.4, -3.5);   // nose → high arc over the gap
+        limb(g, cableMat, 0.045, s * 0.85, 1.4, -3.5, s * (EX - 0.15), EY + 0.5, EZ - 1.5);  // arc → rear top
       }
 
       navLights(g, 1.9, 2.4, PZ - 1.0, EY);
