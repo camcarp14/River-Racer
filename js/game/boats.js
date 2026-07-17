@@ -349,82 +349,83 @@
       const cylZ = (r0, r1, len, seg) => { const c = new THREE.CylinderGeometry(r0, r1, len, seg || 16); c.rotateX(Math.PI / 2); return c; };
 
       function engine(s) {
-        // --- FRONT: pointed silver nose spike + flared intake maw + chrome lip + spinner ---
-        const spike = new THREE.ConeGeometry(0.3, 0.95, 12); spike.rotateX(Math.PI / 2); spike.translate(0, 0, 4.15);
-        pushG(silverGeos, spike, s);
-        const maw = new THREE.CylinderGeometry(0.9, 0.74, 0.72, 20, 1, true); maw.rotateX(Math.PI / 2); maw.translate(0, 0, 3.4);
-        pushG(silverGeos, maw, s);
-        const mawLip = new THREE.TorusGeometry(0.89, 0.07, 8, 22); mawLip.translate(0, 0, 3.72);
-        pushG(chromeGeos, mawLip, s);
-        const mawIn = new THREE.CylinderGeometry(0.84, 0.7, 0.62, 20, 1, true); mawIn.rotateX(Math.PI / 2); mawIn.translate(0, 0, 3.4);
-        pushG(darkGeos, mawIn, s);
-        const face = new THREE.CircleGeometry(0.72, 18); face.translate(0, 0, 3.08);
-        pushG(darkGeos, face, s);                                          // dark throat behind the spinner
+        // --- FRONT (the end that leads): a big BLACK radial turbine fan filling a gold-
+        // rimmed cowl, with the GOLD rounded spinner cone protruding from its center —
+        // jet-engine anatomy, exactly like the reference render ---
+        const rim = new THREE.TorusGeometry(0.86, 0.09, 8, 24); rim.translate(0, 0, 3.35);
+        pushG(goldGeos, rim, s);                                          // gold cowl rim around the fan
+        const cowl = new THREE.CylinderGeometry(0.88, 0.82, 0.6, 20, 1, true);
+        cowl.rotateX(Math.PI / 2); cowl.translate(0, 0, 3.05);
+        pushG(goldGeos, cowl, s);                                         // short gold cowl behind the rim
+        const face = new THREE.CircleGeometry(0.8, 20); face.translate(0, 0, 3.24);
+        pushG(darkGeos, face, s);                                         // black fan backdrop
+        for (let i = 0; i < 3; i++) {                                     // triple air scoops around the cowl
+          const a = Math.PI / 2 + i * (Math.PI * 2 / 3);
+          const t = cylZ(0.14, 0.14, 0.7, 8); t.translate(Math.cos(a) * 0.78, Math.sin(a) * 0.78, 2.85);
+          pushG(darkGeos, t, s);
+        }
 
-        // --- LONG silver machinery body — the dominant color, running the whole length ---
-        pushG(silverGeos, cylZ(0.82, 0.7, 5.0, 20).translate(0, 0, 0.55), s);   // spans z −1.95 … +3.05
-        for (const zz of [2.7, 1.9, 1.05, 0.15, -0.85, -1.7]) {           // chrome band rings down the body
-          const ring = new THREE.TorusGeometry(0.83, 0.05, 6, 24); ring.translate(0, 0, zz);
+        // --- LONG silver machinery body, tapering REARWARD (dominant color) ---
+        pushG(silverGeos, cylZ(0.82, 0.66, 4.6, 20).translate(0, 0, 0.75), s);   // spans z −1.55 … +3.05
+        for (const zz of [2.55, 1.7, 0.8, -0.15, -1.05]) {                // chrome band rings down the body
+          const ring = new THREE.TorusGeometry(0.82, 0.05, 6, 24); ring.translate(0, 0, zz);
           pushG(chromeGeos, ring, s);
         }
         for (let i = 0; i < 8; i++) {                                     // vertical machinery ribs, front block
-          const rib = new THREE.BoxGeometry(0.05, 0.18, 2.0); rib.translate(0, 0.8, 2.0); rib.rotateZ(i * Math.PI / 4);
+          const rib = new THREE.BoxGeometry(0.05, 0.18, 1.8); rib.translate(0, 0.79, 1.9); rib.rotateZ(i * Math.PI / 4);
           pushG(silverGeos, rib, s);
         }
-        const belly = new THREE.CylinderGeometry(0.855, 0.735, 3.2, 16, 1, true, Math.PI / 2 - 0.6, 1.2);
-        belly.rotateX(Math.PI / 2); belly.translate(0, 0, 0.7);
+        const belly = new THREE.CylinderGeometry(0.84, 0.72, 3.0, 16, 1, true, Math.PI / 2 - 0.6, 1.2);
+        belly.rotateX(Math.PI / 2); belly.translate(0, 0, 0.3);
         pushG(maroonGeos, belly, s);                                      // maroon underbelly panel (bottom only)
-        const crown = new THREE.BoxGeometry(0.5, 0.06, 1.3); crown.translate(0, 0.84, 1.8);
+        const crown = new THREE.BoxGeometry(0.5, 0.06, 1.3); crown.translate(0, 0.82, 1.6);
         pushG(goldGeos, crown, s);                                        // gold "620" panel on the crown
         for (const d of [-1, 1]) {                                        // small blue accent squares
-          const sq = new THREE.BoxGeometry(0.24, 0.05, 0.24); sq.translate(0, 0.8, 0.4); sq.rotateZ(d * 0.9);
+          const sq = new THREE.BoxGeometry(0.24, 0.05, 0.24); sq.translate(0, 0.78, 0.3); sq.rotateZ(d * 0.9);
           pushG(accentGeos, sq, s);
         }
 
-        // --- THE gold that belongs at the FRONT: two rounded nacelle bulbs slung under the
-        // nose, their domes facing forward — the podracer's signature gold up front ---
-        for (const bx of [-0.48, 0.48]) {
-          const bulb = new THREE.CapsuleGeometry(0.33, 1.35, 6, 14); bulb.rotateX(Math.PI / 2);
-          bulb.translate(bx, -0.62, 1.95);
-          pushG(goldGeos, bulb, s);
-          const bandR = new THREE.TorusGeometry(0.335, 0.045, 6, 16); bandR.translate(bx, -0.62, 1.7);
-          pushG(chromeGeos, bandR, s);
-        }
+        // --- REAR (toward the towed cockpit): silver taper ending in the pointed TAIL
+        // SPIKE — the spike is the exhaust cone at the BACK, never the nose ---
+        pushG(silverGeos, cylZ(0.66, 0.34, 0.9, 16).translate(0, 0, -2.0), s);
+        const spike = new THREE.ConeGeometry(0.3, 1.1, 12); spike.rotateX(Math.PI / 2); spike.rotateY(Math.PI);
+        spike.translate(0, 0, -2.95);                                     // tip aft at z ≈ −3.5
+        pushG(silverGeos, spike, s);
 
-        // --- dark exhaust nozzle at the very back ---
-        pushG(darkGeos, cylZ(0.5, 0.38, 0.95, 14).translate(0, 0, -2.35), s);
-
-        // --- three gold vanes TRAILING off the back (dorsal + two splayed low), rounded
-        // tips, blue X painted on their outer faces ---
+        // --- gold vanes: anchored at the front half, running back alongside the body and
+        // trailing past the tail, rounded tips + blue X marks at the trailing end ---
         for (const psi of [Math.PI / 2, Math.PI / 2 + 2.1, Math.PI / 2 - 2.1]) {
           const rot = psi - Math.PI / 2;
-          const plank = new THREE.BoxGeometry(0.9, 0.08, 3.7); plank.translate(0, 0.86, -1.35); plank.rotateZ(rot);  // z 0.5 … −3.2
+          const plank = new THREE.BoxGeometry(0.9, 0.08, 4.2); plank.translate(0, 0.86, -0.6); plank.rotateZ(rot);  // z 1.5 … −2.7
           pushG(goldGeos, plank, s);
           const round = new THREE.CylinderGeometry(0.45, 0.45, 0.08, 10, 1, false, Math.PI / 2, Math.PI);
-          round.translate(0, 0.86, -3.2); round.rotateZ(rot);            // rounded trailing tip
+          round.translate(0, 0.86, -2.7); round.rotateZ(rot);             // rounded trailing tip
           pushG(goldGeos, round, s);
-          for (const d of [-1, 1]) {                                     // blue X on the outer face
-            const strip = new THREE.BoxGeometry(0.6, 0.045, 0.15); strip.rotateY(d * 0.62); strip.translate(0, 0.905, -2.6); strip.rotateZ(rot);
+          for (const d of [-1, 1]) {                                      // blue X near the trailing tip
+            const strip = new THREE.BoxGeometry(0.6, 0.045, 0.15); strip.rotateY(d * 0.62); strip.translate(0, 0.905, -2.1); strip.rotateZ(rot);
             pushG(accentGeos, strip, s);
           }
         }
 
-        // --- live parts: spinner turning inside the maw + exhaust glow at the back ---
+        // --- live parts: the big fan + gold spinner cone turning at the FRONT,
+        // and the exhaust glow streaming off the tail spike ---
         const comp = new THREE.Group();
-        const compGeos = [];
-        for (let i = 0; i < 11; i++) {
-          const a = i / 11 * Math.PI * 2;
-          const bl = new THREE.BoxGeometry(0.12, 0.55, 0.06);
-          bl.rotateZ(0.5); bl.translate(Math.cos(a) * 0.5, Math.sin(a) * 0.5, 0); bl.rotateZ(a);
-          compGeos.push(bl);
+        const bladeGeos = [];
+        for (let i = 0; i < 13; i++) {
+          const a = i / 13 * Math.PI * 2;
+          const bl = new THREE.BoxGeometry(0.14, 0.62, 0.06);
+          bl.rotateZ(0.5); bl.translate(Math.cos(a) * 0.48, Math.sin(a) * 0.48, 0); bl.rotateZ(a);
+          bladeGeos.push(bl);
         }
-        const cone = new THREE.ConeGeometry(0.17, 0.55, 8); cone.rotateX(Math.PI / 2); cone.translate(0, 0, 0.35);
-        compGeos.push(cone);                                             // spinner cone hub poking forward
-        comp.add(new THREE.Mesh(RR.City.mergeGeoms(compGeos), silver()));
-        comp.position.set(s * EX, EY, EZ + 3.35); rings.push(comp); g.add(comp);
-        const glow = new THREE.Mesh(new THREE.ConeGeometry(0.38, 1.9, 12), glowMat());
-        glow.rotation.x = -Math.PI / 2;                                  // tip aft
-        glow.position.set(s * EX, EY, EZ - 2.9); glow.layers.set(1); glow.renderOrder = 3;
+        comp.add(new THREE.Mesh(RR.City.mergeGeoms(bladeGeos), mat(0x23262b, { roughness: 0.5, metalness: 0.4 })));
+        const spinGeos = [];
+        const scone = new THREE.CapsuleGeometry(0.26, 0.55, 6, 12); scone.rotateX(Math.PI / 2); scone.translate(0, 0, 0.38);
+        spinGeos.push(scone);                                             // the GOLD rounded spinner cone, poking forward
+        comp.add(new THREE.Mesh(RR.City.mergeGeoms(spinGeos), goldMat));
+        comp.position.set(s * EX, EY, EZ + 3.34); rings.push(comp); g.add(comp);
+        const glow = new THREE.Mesh(new THREE.ConeGeometry(0.3, 1.5, 12), glowMat());
+        glow.rotation.x = -Math.PI / 2;                                   // tip aft, off the tail spike
+        glow.position.set(s * EX, EY, EZ - 3.3); glow.layers.set(1); glow.renderOrder = 3;
         glows.push(glow); g.add(glow);
       }
       engine(-1); engine(1);
@@ -435,16 +436,16 @@
         mesh.castShadow = true; g.add(mesh);
       }
 
-      // ---- the energy binder: a jagged magenta arc leaping the gap between the inner
-      // faces mid-engine (film-accurate spot), crackling via visibility flicker ----
+      // ---- the energy binder: a jagged magenta arc leaping the gap between the two
+      // fan cowls at the FRONT (where the render has it), crackling via flicker ----
       for (let i = 0; i < 7; i++) {
         const bolt = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 1.0, 0.07, 0.06), plasmaMat());
-        bolt.position.set(0, EY - 0.25 + i * 0.11, EZ + 0.55 + Math.sin(i * 2.1) * 0.14);
+        bolt.position.set(0, EY - 0.25 + i * 0.11, EZ + 2.9 + Math.sin(i * 2.1) * 0.18);
         bolt.rotation.z = Math.sin(i * 3.7) * 0.45;
         bolt.renderOrder = 3; sparks.push(bolt); g.add(bolt);
       }
-      const haze = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 1.0, 0.9, 0.5), plasmaMat());
-      haze.material.opacity = 0.16; haze.position.set(0, EY, EZ + 0.55); haze.renderOrder = 3;
+      const haze = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 1.0, 0.9, 0.6), plasmaMat());
+      haze.material.opacity = 0.16; haze.position.set(0, EY, EZ + 2.9); haze.renderOrder = 3;
       plasma.push(haze); g.add(haze);
 
       // ---- the tiny cockpit sled, towed FAR behind across open air (film signature:
@@ -477,7 +478,7 @@
         limb(g, cableMat, 0.045, s * 0.9, 1.5, -2.4, s * (EX - 0.1), EY + 0.6, EZ + 0.7);  // arc → engine crown
       }
 
-      navLights(g, 1.6, 4.2, PZ - 1.0, EY);
+      navLights(g, 1.9, 2.4, PZ - 1.0, EY);
       g.userData.size = { r: 2.7, len: 9.0 };
       g.userData.noFlame = true;               // boost shows on the engine glows, not a stern cone
       g.userData.hoverShow = 0.8;              // extra lift so it floats in the showroom too
