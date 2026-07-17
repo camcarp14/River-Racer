@@ -7192,23 +7192,23 @@ window.CHICAGO = {
       return g;
     },
 
-    // Anakin's Podracer, built to the film reference: each engine is a LONG spear —
-    // flared silver radial turbine up front (spinning compressor visible in the maw),
-    // a slender golden body tapering aft, then a split cowling: three curved golden
-    // shell blades wrapping AROUND the dark core and trailing past it like a fork,
-    // blue X-marks painted flat on the shells near the tips. A magenta energy binder
-    // crackles between the intakes, and the tiny silver cockpit trails far behind on
-    // drooping Steelton cables. Hovers (spec.hover); turbine wash marks the water.
+    // Anakin's Podracer, matched to the film reference: each engine is a LONG SILVER
+    // machinery cylinder (ribbed, chrome-banded, maroon belly) with a pointed silver
+    // intake + spinner at the FRONT. The only gold is (a) the pair of rounded nacelle
+    // bulbs slung under the front, domes facing forward, and (b) the three flat vanes
+    // that trail off the back with rounded tips and blue X-marks. A magenta binder
+    // crackles between the engines; the cockpit is towed far behind on two cables.
     podracer(spec) {
       const g = new THREE.Group();
       // moderate metalness — with no envmap, high-metal surfaces go BLACK whenever the sun
       // is behind them, which is exactly how the turbine blocks turned into dark barrels
-      const silver = () => mat(0xd8dce0, { roughness: 0.35, metalness: 0.5 });   // turbine housings
+      const silver = () => mat(0xd6dade, { roughness: 0.36, metalness: 0.5 });    // engine machinery (the dominant color)
       const brightChrome = () => mat(0xe9edf0, { roughness: 0.22, metalness: 0.6 });
-      const tubeMat = mat(spec.hull, { roughness: 0.42, metalness: 0.55 });      // golden engine body + cowls
-      const blueMat = mat(0x5a63b8, { roughness: 0.55, metalness: 0.2 });        // blue-lavender X marks + accents
-      const podM = mat(spec.deck, { roughness: 0.3, metalness: 0.55 });          // silver cockpit
-      const cableMat = mat(0x24262b, { roughness: 0.6, metalness: 0.5 });        // Steelton control cables
+      const goldMat = mat(spec.hull, { roughness: 0.4, metalness: 0.55 });        // ONLY the bulbs + trailing vanes
+      const maroonMat = mat(0x7c3230, { roughness: 0.55, metalness: 0.25 });      // engine belly panel
+      const blueMat = mat(0x3550b0, { roughness: 0.5, metalness: 0.2 });          // blue X-marks + accents
+      const podM = mat(spec.deck, { roughness: 0.3, metalness: 0.55 });           // silver cockpit
+      const cableMat = mat(0x24262b, { roughness: 0.6, metalness: 0.5 });         // Steelton control cables
       const darkM = mat(0x08090c, { roughness: 0.7, metalness: 0.3 });
       const rings = [], plasma = [], sparks = [], glows = [];
       // additive magenta so the energy binder crackles like the film, day or night
@@ -7220,70 +7220,74 @@ window.CHICAGO = {
       const EZ = 0.6;                                   // engine group forward offset
 
       // Static engine parts are accumulated per material and merged into ONE mesh each —
-      // twice the film detail without a draw-call explosion. Coordinates are LOCAL to an
-      // engine axis; the s*EX/EY/EZ offset bakes in at push time.
-      const silverGeos = [], goldGeos = [], darkGeos = [], chromeGeos = [], accentGeos = [];
+      // film detail without a draw-call explosion. Coordinates are LOCAL to an engine axis;
+      // the s*EX/EY/EZ offset bakes in at push time.
+      const silverGeos = [], goldGeos = [], darkGeos = [], chromeGeos = [], accentGeos = [], maroonGeos = [];
       function pushG(arr, geo, s) { geo.translate(s * EX, EY, EZ); arr.push(geo); }
       const cylZ = (r0, r1, len, seg) => { const c = new THREE.CylinderGeometry(r0, r1, len, seg || 16); c.rotateX(Math.PI / 2); return c; };
 
       function engine(s) {
-        // --- unmistakable FRONT: a big flared jet-intake maw, chrome-lipped, dark inside,
-        // with the spinner turning in it — nothing on the vehicle reads "forward" harder ---
-        const maw = new THREE.CylinderGeometry(0.96, 0.8, 0.6, 20, 1, true);
-        maw.rotateX(Math.PI / 2); maw.translate(0, 0, 3.45);
+        // --- FRONT: pointed silver nose spike + flared intake maw + chrome lip + spinner ---
+        const spike = new THREE.ConeGeometry(0.3, 0.95, 12); spike.rotateX(Math.PI / 2); spike.translate(0, 0, 4.15);
+        pushG(silverGeos, spike, s);
+        const maw = new THREE.CylinderGeometry(0.9, 0.74, 0.72, 20, 1, true); maw.rotateX(Math.PI / 2); maw.translate(0, 0, 3.4);
         pushG(silverGeos, maw, s);
-        const mawLip = new THREE.TorusGeometry(0.95, 0.08, 8, 22); mawLip.translate(0, 0, 3.74);
+        const mawLip = new THREE.TorusGeometry(0.89, 0.07, 8, 22); mawLip.translate(0, 0, 3.72);
         pushG(chromeGeos, mawLip, s);
-        const mawIn = new THREE.CylinderGeometry(0.9, 0.76, 0.55, 20, 1, true);   // dark throat
-        mawIn.rotateX(Math.PI / 2); mawIn.translate(0, 0, 3.44);
+        const mawIn = new THREE.CylinderGeometry(0.84, 0.7, 0.62, 20, 1, true); mawIn.rotateX(Math.PI / 2); mawIn.translate(0, 0, 3.4);
         pushG(darkGeos, mawIn, s);
-        // --- the FAT silver radial-turbine block: ribbed, ringed, panelled ---
-        pushG(silverGeos, cylZ(0.82, 0.78, 1.7, 18).translate(0, 0, 2.3), s);
-        for (let i = 0; i < 6; i++) {                                    // vertical machinery ribs
-          const rib = new THREE.BoxGeometry(0.06, 0.2, 1.55);
-          rib.translate(0, 0.88, 2.3); rib.rotateZ(Math.PI / 6 + i * Math.PI / 3);
-          pushG(silverGeos, rib, s);
-        }
-        for (const zz of [3.08, 1.52]) {                                 // chrome end rings
-          const ring = new THREE.TorusGeometry(0.84, 0.05, 6, 22); ring.translate(0, 0, zz);
+        const face = new THREE.CircleGeometry(0.72, 18); face.translate(0, 0, 3.08);
+        pushG(darkGeos, face, s);                                          // dark throat behind the spinner
+
+        // --- LONG silver machinery body — the dominant color, running the whole length ---
+        pushG(silverGeos, cylZ(0.82, 0.7, 5.0, 20).translate(0, 0, 0.55), s);   // spans z −1.95 … +3.05
+        for (const zz of [2.7, 1.9, 1.05, 0.15, -0.85, -1.7]) {           // chrome band rings down the body
+          const ring = new THREE.TorusGeometry(0.83, 0.05, 6, 24); ring.translate(0, 0, zz);
           pushG(chromeGeos, ring, s);
         }
-        const panel = new THREE.BoxGeometry(0.55, 0.06, 1.1); panel.translate(0, 0.86, 2.3);
-        pushG(goldGeos, panel, s);                                       // gold trapezoid panel on the crown
-        for (const d of [-1, 1]) {                                       // small lavender accents, upper flanks
-          const ap = new THREE.BoxGeometry(0.32, 0.05, 0.65); ap.translate(0, 0.86, 2.35); ap.rotateZ(d * 0.72);
-          pushG(accentGeos, ap, s);
+        for (let i = 0; i < 8; i++) {                                     // vertical machinery ribs, front block
+          const rib = new THREE.BoxGeometry(0.05, 0.18, 2.0); rib.translate(0, 0.8, 2.0); rib.rotateZ(i * Math.PI / 4);
+          pushG(silverGeos, rib, s);
         }
-        const face = new THREE.CircleGeometry(0.78, 18); face.translate(0, 0, 3.18);
-        pushG(darkGeos, face, s);                                        // dark turbine face behind the spinner
-        // --- narrow waist with piping, then the golden body tapering aft ---
-        pushG(silverGeos, cylZ(0.56, 0.56, 0.75, 14).translate(0, 0, 1.08), s);
-        for (const d of [-1, 1]) {
-          const pipe = cylZ(0.06, 0.06, 1.0, 6); pipe.translate(d * 0.6, 0.2, 1.05);
-          pushG(chromeGeos, pipe, s);
+        const belly = new THREE.CylinderGeometry(0.855, 0.735, 3.2, 16, 1, true, Math.PI / 2 - 0.6, 1.2);
+        belly.rotateX(Math.PI / 2); belly.translate(0, 0, 0.7);
+        pushG(maroonGeos, belly, s);                                      // maroon underbelly panel (bottom only)
+        const crown = new THREE.BoxGeometry(0.5, 0.06, 1.3); crown.translate(0, 0.84, 1.8);
+        pushG(goldGeos, crown, s);                                        // gold "620" panel on the crown
+        for (const d of [-1, 1]) {                                        // small blue accent squares
+          const sq = new THREE.BoxGeometry(0.24, 0.05, 0.24); sq.translate(0, 0.8, 0.4); sq.rotateZ(d * 0.9);
+          pushG(accentGeos, sq, s);
         }
-        pushG(goldGeos, cylZ(0.66, 0.5, 2.2, 16).translate(0, 0, -0.15), s);
-        // --- dark exhaust poking out between the blade cowls ---
-        pushG(darkGeos, cylZ(0.42, 0.34, 0.7, 12).translate(0, 0, -1.55), s);
 
-        // --- THE signature: three LONG parallel blade cowls (rounded tips) trailing from
-        // mid-body well past the exhaust — dorsal one on the crown, two splayed below ---
-        for (const psi of [Math.PI / 2, Math.PI / 2 + 2.0, Math.PI / 2 - 2.0]) {
+        // --- THE gold that belongs at the FRONT: two rounded nacelle bulbs slung under the
+        // nose, their domes facing forward — the podracer's signature gold up front ---
+        for (const bx of [-0.48, 0.48]) {
+          const bulb = new THREE.CapsuleGeometry(0.33, 1.35, 6, 14); bulb.rotateX(Math.PI / 2);
+          bulb.translate(bx, -0.62, 1.95);
+          pushG(goldGeos, bulb, s);
+          const bandR = new THREE.TorusGeometry(0.335, 0.045, 6, 16); bandR.translate(bx, -0.62, 1.7);
+          pushG(chromeGeos, bandR, s);
+        }
+
+        // --- dark exhaust nozzle at the very back ---
+        pushG(darkGeos, cylZ(0.5, 0.38, 0.95, 14).translate(0, 0, -2.35), s);
+
+        // --- three gold vanes TRAILING off the back (dorsal + two splayed low), rounded
+        // tips, blue X painted on their outer faces ---
+        for (const psi of [Math.PI / 2, Math.PI / 2 + 2.1, Math.PI / 2 - 2.1]) {
           const rot = psi - Math.PI / 2;
-          const plank = new THREE.BoxGeometry(0.88, 0.07, 3.8);
-          plank.translate(0, 0.8, -1.45); plank.rotateZ(rot);            // spans z 0.45 … −3.35
+          const plank = new THREE.BoxGeometry(0.9, 0.08, 3.7); plank.translate(0, 0.86, -1.35); plank.rotateZ(rot);  // z 0.5 … −3.2
           pushG(goldGeos, plank, s);
-          const round = new THREE.CylinderGeometry(0.44, 0.44, 0.07, 10, 1, false, Math.PI / 2, Math.PI);
-          round.translate(0, 0.8, -3.35); round.rotateZ(rot);            // rounded trailing tip
+          const round = new THREE.CylinderGeometry(0.45, 0.45, 0.08, 10, 1, false, Math.PI / 2, Math.PI);
+          round.translate(0, 0.86, -3.2); round.rotateZ(rot);            // rounded trailing tip
           pushG(goldGeos, round, s);
-          for (const d of [-1, 1]) {                                     // blue X painted on the outer face
-            const strip = new THREE.BoxGeometry(0.5, 0.035, 0.13);
-            strip.rotateY(d * 0.65); strip.translate(0, 0.85, -2.85); strip.rotateZ(rot);
+          for (const d of [-1, 1]) {                                     // blue X on the outer face
+            const strip = new THREE.BoxGeometry(0.6, 0.045, 0.15); strip.rotateY(d * 0.62); strip.translate(0, 0.905, -2.6); strip.rotateZ(rot);
             pushG(accentGeos, strip, s);
           }
         }
 
-        // --- live parts: spinner turning inside the maw + exhaust glow between the cowls ---
+        // --- live parts: spinner turning inside the maw + exhaust glow at the back ---
         const comp = new THREE.Group();
         const compGeos = [];
         for (let i = 0; i < 11; i++) {
@@ -7292,20 +7296,19 @@ window.CHICAGO = {
           bl.rotateZ(0.5); bl.translate(Math.cos(a) * 0.5, Math.sin(a) * 0.5, 0); bl.rotateZ(a);
           compGeos.push(bl);
         }
-        const cone = new THREE.ConeGeometry(0.17, 0.55, 8);              // spinner cone hub, poking forward
-        cone.rotateX(Math.PI / 2); cone.translate(0, 0, 0.35);
-        compGeos.push(cone);
+        const cone = new THREE.ConeGeometry(0.17, 0.55, 8); cone.rotateX(Math.PI / 2); cone.translate(0, 0, 0.35);
+        compGeos.push(cone);                                             // spinner cone hub poking forward
         comp.add(new THREE.Mesh(RR.City.mergeGeoms(compGeos), silver()));
-        comp.position.set(s * EX, EY, EZ + 3.42); rings.push(comp); g.add(comp);
-        const glow = new THREE.Mesh(new THREE.ConeGeometry(0.36, 1.8, 12), glowMat());
-        glow.rotation.x = -Math.PI / 2;                                  // tip aft, between the cowls
-        glow.position.set(s * EX, EY, EZ - 2.6); glow.layers.set(1); glow.renderOrder = 3;
+        comp.position.set(s * EX, EY, EZ + 3.35); rings.push(comp); g.add(comp);
+        const glow = new THREE.Mesh(new THREE.ConeGeometry(0.38, 1.9, 12), glowMat());
+        glow.rotation.x = -Math.PI / 2;                                  // tip aft
+        glow.position.set(s * EX, EY, EZ - 2.9); glow.layers.set(1); glow.renderOrder = 3;
         glows.push(glow); g.add(glow);
       }
       engine(-1); engine(1);
 
-      // merge + mount the static engine geometry (5 draw calls for both engines)
-      for (const [geos, m] of [[silverGeos, silver()], [goldGeos, tubeMat], [darkGeos, darkM], [chromeGeos, brightChrome()], [accentGeos, blueMat]]) {
+      // merge + mount the static engine geometry (6 draw calls for both engines)
+      for (const [geos, m] of [[silverGeos, silver()], [goldGeos, goldMat], [darkGeos, darkM], [chromeGeos, brightChrome()], [accentGeos, blueMat], [maroonGeos, maroonMat]]) {
         const mesh = new THREE.Mesh(RR.City.mergeGeoms(geos), m);
         mesh.castShadow = true; g.add(mesh);
       }
