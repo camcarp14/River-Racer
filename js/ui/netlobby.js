@@ -48,11 +48,14 @@
 
     const btn = document.createElement('button'); btn.id = 'net-play-btn'; btn.textContent = '▸ PLAY ONLINE';
     btn.onclick = () => UI.openEntry(); document.body.appendChild(btn);
-    // show the button only on the title/menu (not mid-race)
-    setInterval(() => {
+    // show the button only on the title/menu (not mid-race). Check right away and keep
+    // polling: the P2P transport global may finish loading a beat after boot.
+    const refreshBtn = () => {
       const onMenu = RR.Menus && RR.Menus.screen && (RR.Menus.screen() === 'title' || RR.Menus.screen() === 'vehicle' || RR.Menus.screen() === 'course');
       btn.style.display = (!RR.Net.active && onMenu && UI.transportFactory()) ? 'block' : 'none';
-    }, 700);
+    };
+    refreshBtn();
+    setInterval(refreshBtn, 300);
 
     RR.Net.on('roster', renderWaiting);
     RR.Net.on('start', () => hide());
