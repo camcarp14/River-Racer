@@ -314,114 +314,144 @@
       return g;
     },
 
-    // Anakin's Podracer: two long radial-turbine engines (silver intake → golden open air-scoop)
-    // with trailing forked control vanes, a magenta plasma energy-binder crackling between them,
-    // and a small cockpit trailing behind on Steelton cables. Hovers (spec.hover) and marks the
-    // water via turbine wash (effects.js). Local +z = forward (the intakes lead).
+    // Anakin's Podracer, built to the film reference: each engine is a LONG spear —
+    // flared silver radial turbine up front (spinning compressor visible in the maw),
+    // a slender golden body tapering aft, then a split cowling: three curved golden
+    // shell blades wrapping AROUND the dark core and trailing past it like a fork,
+    // blue X-marks painted flat on the shells near the tips. A magenta energy binder
+    // crackles between the intakes, and the tiny silver cockpit trails far behind on
+    // drooping Steelton cables. Hovers (spec.hover); turbine wash marks the water.
     podracer(spec) {
       const g = new THREE.Group();
       const silver = () => mat(0xc9ced2, { roughness: 0.3, metalness: 0.85 });   // turbine housings
-      const tubeMat = mat(spec.hull, { roughness: 0.42, metalness: 0.55 });      // golden air-scoop tubes
-      const vaneMat = mat(spec.hull, { roughness: 0.5, metalness: 0.35 });       // flat control vanes
-      const blueMat = mat(0x2f5fc8, { roughness: 0.55, metalness: 0.2 });        // the blue "X" flashes
-      const goldTri = mat(0xe0982a, { roughness: 0.45, metalness: 0.5 });        // engine-top emblem
+      const tubeMat = mat(spec.hull, { roughness: 0.42, metalness: 0.55 });      // golden engine body
+      const shellMat = mat(spec.hull, { roughness: 0.45, metalness: 0.5 });      // fork cowling shells
+      shellMat.side = THREE.DoubleSide;                                          // open shells show their backs
+      const blueMat = mat(0x2b4fa8, { roughness: 0.6, metalness: 0.15 });        // painted-on blue X marks
       const podM = mat(spec.deck, { roughness: 0.3, metalness: 0.55 });          // silver cockpit
       const cableMat = mat(0x24262b, { roughness: 0.6, metalness: 0.5 });        // Steelton control cables
       const darkM = mat(0x08090c, { roughness: 0.7, metalness: 0.3 });
-      const rings = [], plasma = [], sparks = [];
+      const rings = [], plasma = [], sparks = [], glows = [];
       // additive magenta so the energy binder crackles like the film, day or night
       const plasmaMat = () => new THREE.MeshBasicMaterial({ color: spec.accent, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
+      const glowMat = () => new THREE.MeshBasicMaterial({ color: 0xff7a3a, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false });
 
-      const EX = 1.4;                                   // engine half-separation
+      const EX = 1.35;                                  // engine half-separation (they run close)
 
-      // ---- one engine, built along z about its own origin, then placed at (±EX, y, 0) ----
+      // ---- one engine spear, built along z about its own origin, placed at (±EX, y, 0.6) ----
       function engine(s) {
         const e = new THREE.Group();
-        // long golden air-scoop tube (rear), open at the back so it reads hollow
-        const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.66, 2.9, 18, 1, true), tubeMat);
-        tube.rotation.x = Math.PI / 2; tube.position.z = -0.55; e.add(tube);
-        const tubeIn = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.64, 2.7, 18, 1, true), darkM);   // dark inner wall
-        tubeIn.rotation.x = Math.PI / 2; tubeIn.position.z = -0.55; e.add(tubeIn);
-        const tubeCap = new THREE.Mesh(new THREE.CircleGeometry(0.6, 18), darkM);
-        tubeCap.position.z = -1.9; tubeCap.rotation.y = Math.PI; e.add(tubeCap);                          // hollow-looking back
-        // silver mid housing joining tube to the turbine
-        const mid = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.66, 1.2, 18), silver());
-        mid.rotation.x = Math.PI / 2; mid.position.z = 1.4; e.add(mid);
-        const joint = new THREE.Mesh(new THREE.TorusGeometry(0.66, 0.08, 8, 20), chrome());
-        joint.position.z = 0.9; e.add(joint);
-        // gold triangular emblem on the housing crown
-        const tri = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.5, 3), goldTri);
-        tri.rotation.x = Math.PI / 2; tri.position.set(0, 0.6, 1.5); e.add(tri);
-        // flared silver turbine intake at the very front
-        const intake = new THREE.Mesh(new THREE.CylinderGeometry(0.98, 0.72, 1.0, 20, 1, true), silver());
-        intake.rotation.x = Math.PI / 2; intake.position.z = 2.55; e.add(intake);
-        const lip = new THREE.Mesh(new THREE.TorusGeometry(0.96, 0.09, 8, 22), chrome());
-        lip.position.z = 3.05; e.add(lip);
-        // spinning compressor: hub + radial blades set into the maw
-        const comp = new THREE.Group();
-        const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.34, 10), silver());
+        // dark core running the full length — the fork shells wrap around this
+        const core = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.3, 5.4, 14), darkM);
+        core.rotation.x = Math.PI / 2; core.position.z = -0.6; e.add(core);
+
+        // --- silver radial turbine (front ~40%) ---
+        const lip = new THREE.Mesh(new THREE.TorusGeometry(0.92, 0.09, 8, 22), chrome());
+        lip.position.z = 3.0; e.add(lip);
+        const intake = new THREE.Mesh(new THREE.CylinderGeometry(0.92, 0.76, 0.9, 20, 1, true), silver());
+        intake.rotation.x = Math.PI / 2; intake.position.z = 2.55; e.add(intake);   // flared maw
+        const comp = new THREE.Group();                                             // spinning compressor
+        const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.36, 10), silver());
         hub.rotation.x = Math.PI / 2; comp.add(hub);
         for (let i = 0; i < 9; i++) {
           const a = i / 9 * Math.PI * 2;
-          const bl = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.66, 0.05), silver());
-          bl.position.set(Math.cos(a) * 0.42, Math.sin(a) * 0.42, 0); bl.rotation.z = a + 0.5; comp.add(bl);
+          const bl = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.6, 0.05), silver());
+          bl.position.set(Math.cos(a) * 0.4, Math.sin(a) * 0.4, 0); bl.rotation.z = a + 0.5; comp.add(bl);
         }
-        comp.position.z = 2.35; rings.push(comp); e.add(comp);
-        const back = new THREE.Mesh(new THREE.CircleGeometry(0.66, 18), darkM);
-        back.position.z = 2.0; back.rotation.y = Math.PI; e.add(back);                                    // dark behind the blades
+        comp.position.z = 2.4; rings.push(comp); e.add(comp);
+        const back = new THREE.Mesh(new THREE.CircleGeometry(0.72, 18), darkM);
+        back.position.z = 2.1; back.rotation.y = Math.PI; e.add(back);              // dark behind the blades
+        const housing = new THREE.Mesh(new THREE.CylinderGeometry(0.76, 0.68, 1.9, 18), silver());
+        housing.rotation.x = Math.PI / 2; housing.position.z = 1.15; e.add(housing);
+        for (const zz of [1.85, 1.25, 0.55]) {                                      // chrome rib rings
+          const rib = new THREE.Mesh(new THREE.TorusGeometry(0.755, 0.035, 6, 20), chrome());
+          rib.position.z = zz; e.add(rib);
+        }
 
-        // trailing forked control vanes (flat golden blades) with a blue X flash near each tip.
-        // one rides the crown, two splay from the flanks — the podracer's tail signature.
-        const vanes = [[0, 1.0, 0.0], [s * 0.62, 0.3, 0.7], [s * 0.62, 0.3, -0.7]];
-        for (const [vx, vy, roll] of vanes) {
-          const vane = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.62, 2.2), vaneMat);
-          vane.position.set(vx, vy, -1.7); vane.rotation.z = roll; vane.rotation.x = 0.12; e.add(vane);
-          for (const d of [-1, 1]) {                                   // small blue "X" near the tip
-            const b = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.5), blueMat);
-            b.position.set(vx, vy + 0.33, -2.3); b.rotation.z = roll; b.rotation.y = d * 0.5; e.add(b);
+        // --- golden body tapering aft ---
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.68, 0.48, 1.8, 18), tubeMat);
+        body.rotation.x = Math.PI / 2; body.position.z = -0.7; e.add(body);
+
+        // --- the split cowling fork: three curved shells wrapping the core, trailing aft.
+        // Partial-cylinder segments (not flat slabs) so they read as the body splitting open.
+        const ARC = 1.0;
+        for (const psi of [Math.PI / 2, -Math.PI / 6, Math.PI + Math.PI / 6]) {     // crown, lower-right, lower-left
+          const shellGeo = new THREE.CylinderGeometry(0.5, 0.6, 2.6, 8, 1, true, -ARC / 2, ARC);
+          shellGeo.rotateX(Math.PI / 2);              // axis → z, narrow end forward (meets the body taper)
+          shellGeo.rotateZ(psi);
+          shellGeo.translate(0, 0, -2.55);            // trails from the body back past the core
+          e.add(new THREE.Mesh(shellGeo, shellMat));
+          // blue X painted flat on the shell near the tip (two crossed strips hugging the surface)
+          const xg = new THREE.Group();
+          xg.position.set(Math.cos(psi) * 0.63, Math.sin(psi) * 0.63, -3.25);
+          xg.rotation.z = psi;                        // local +x = radially outward
+          for (const d of [-1, 1]) {
+            const strip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 0.55), blueMat);
+            strip.rotation.x = d * 0.7;               // crossing diagonals in the shell's surface plane
+            xg.add(strip);
           }
+          e.add(xg);
         }
-        e.position.set(s * EX, 0.72, 0.2);
+
+        // exhaust glow tucked between the fork blades — flares with boost (podracer skips
+        // the stock stern flame via userData.noFlame; this IS its boost visual)
+        const glow = new THREE.Mesh(new THREE.ConeGeometry(0.34, 1.6, 12), glowMat());
+        glow.rotation.x = -Math.PI / 2;               // tip aft
+        glow.position.z = -3.6; glow.layers.set(1); glow.renderOrder = 3;
+        glows.push(glow); e.add(glow);
+
+        e.position.set(s * EX, 0.78, 0.6);
         g.add(e);
       }
       engine(-1); engine(1);
 
-      // ---- magenta energy binder crackling between the turbine fronts ----
-      const field = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 0.4, 1.2, 0.08), plasmaMat());
-      field.material.opacity = 0.3; field.position.set(0, 0.72, 2.2); field.renderOrder = 3; plasma.push(field); g.add(field);
+      // ---- magenta energy binder crackling between the turbine intakes ----
+      const field = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 0.5, 1.2, 0.08), plasmaMat());
+      field.material.opacity = 0.28; field.position.set(0, 0.78, 3.0); field.renderOrder = 3; plasma.push(field); g.add(field);
       for (let i = 0; i < 6; i++) {
-        const bolt = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 0.3, 0.09, 0.07), plasmaMat());
-        bolt.position.set(0, 0.2 + i * 0.2, 2.22); bolt.rotation.z = (i % 2 ? 0.5 : -0.5);
+        const bolt = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 0.4, 0.09, 0.07), plasmaMat());
+        bolt.position.set(0, 0.26 + i * 0.2, 3.02); bolt.rotation.z = (i % 2 ? 0.5 : -0.5);
         bolt.renderOrder = 3; sparks.push(bolt); g.add(bolt);
       }
 
-      // ---- cockpit shell trailing well behind, slung low ----
-      const pod = new THREE.Mesh(new THREE.SphereGeometry(0.6, 16, 12), podM);
-      pod.scale.set(0.78, 0.66, 1.5); pod.position.set(0, 0.34, -3.1); g.add(pod);
-      const cnose = new THREE.Mesh(new THREE.ConeGeometry(0.42, 1.3, 14), podM);
-      cnose.rotation.x = Math.PI / 2; cnose.position.set(0, 0.36, -2.0); g.add(cnose);   // points forward to the engines
-      const cfin = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.66, 0.9), goldTri);
-      cfin.position.set(0, 0.82, -3.9); g.add(cfin);
-      const crim = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.06, 8, 16), chrome());
-      crim.rotation.x = Math.PI / 2; crim.position.set(0, 0.7, -3.1); g.add(crim);
-      const pilot = driverFigure({ pose: 'sit', lean: 0.26, footDrop: 0.1, suit: 0x8a6f4a, vest: 0xcaa06a, helmet: 0x7a5a3a, visor: true, scale: 0.9 });
-      pilot.position.set(0, 0.4, -3.25); g.add(pilot);
+      // ---- the tiny cockpit sled, slung low and trailing far behind ----
+      const pod = new THREE.Mesh(new THREE.SphereGeometry(0.56, 16, 12), podM);
+      pod.scale.set(0.72, 0.6, 1.8); pod.position.set(0, 0.34, -3.9); g.add(pod);
+      const cnose = new THREE.Mesh(new THREE.ConeGeometry(0.36, 1.4, 14), podM);
+      cnose.rotation.x = Math.PI / 2; cnose.position.set(0, 0.36, -2.65); g.add(cnose);   // points at the engines
+      const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.4), glassMat());
+      screen.position.set(0, 0.74, -3.3); screen.rotation.x = -0.55; g.add(screen);        // curved windscreen stand-in
+      for (const s of [-1, 1]) {                                                            // flat tail outrigger fins
+        const fin = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.05, 0.5), podM);
+        fin.position.set(s * 0.52, 0.5, -4.45); fin.rotation.z = s * 0.22; g.add(fin);
+      }
+      const crim = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.05, 8, 16), chrome());
+      crim.rotation.x = Math.PI / 2; crim.position.set(0, 0.66, -3.95); g.add(crim);
+      const pilot = driverFigure({ pose: 'sit', lean: 0.26, footDrop: 0.1, suit: 0x8a6f4a, vest: 0xcaa06a, helmet: 0x7a5a3a, visor: true, scale: 0.88 });
+      pilot.position.set(0, 0.42, -4.05); g.add(pilot);
 
-      // ---- Steelton control cables: cockpit nose → each engine's rear-inner ----
-      for (const s of [-1, 1]) limb(g, cableMat, 0.06, 0, 0.5, -2.2, s * (EX - 0.5), 0.72, -1.2);
-      // plus a thin plasma tether tracing each cable so the binder energy reads along it
-      for (const s of [-1, 1]) plasma.push(limb(g, plasmaMat(), 0.05, 0, 0.55, -2.1, s * (EX - 0.5), 0.8, -1.0));
+      // ---- Steelton control cables, drooping cockpit nose → each engine's inner rear ----
+      for (const s of [-1, 1]) {
+        limb(g, cableMat, 0.05, 0, 0.5, -3.0, s * 0.5, 0.55, -1.9);      // nose → mid sag
+        limb(g, cableMat, 0.05, s * 0.5, 0.55, -1.9, s * (EX - 0.35), 0.78, -0.9);  // sag → engine
+      }
 
-      navLights(g, 1.6, 3.0, -3.9, 0.72);
-      g.userData.size = { r: 2.7, len: 6.6 };
+      navLights(g, 1.6, 3.4, -4.6, 0.78);
+      g.userData.size = { r: 2.7, len: 7.4 };
+      g.userData.noFlame = true;               // boost shows on the engine glows, not a stern cone
       g.userData.hoverShow = 0.8;              // extra lift so it floats in the showroom too
       g.userData.tick = function (t, boat) {
         const sp = boat ? Math.hypot(boat.vel.x, boat.vel.z) : 7;
         const rev = t * (10 + sp * 0.5);
         for (const r of rings) r.rotation.z = rev;
         const fl = 0.55 + 0.3 * Math.sin(t * 30) + 0.16 * Math.sin(t * 63 + 1.3);
-        for (const pl of plasma) pl.material.opacity = Math.max(0.3, Math.min(1, fl));
+        for (const pl of plasma) pl.material.opacity = Math.max(0.28, Math.min(1, fl));
         for (let i = 0; i < sparks.length; i++) sparks[i].visible = Math.sin(t * 42 + i * 7.3) > 0.2;   // crackle
+        const boost = boat ? (boat.boostHeat || 0) : 0.2;
+        for (const gl of glows) {
+          gl.scale.set(1, 1 + boost * 1.3 + 0.12 * Math.sin(t * 26), 1);
+          gl.material.opacity = 0.4 + boost * 0.4 + 0.12 * Math.sin(t * 31);
+        }
       };
       return g;
     },

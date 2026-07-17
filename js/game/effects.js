@@ -282,7 +282,7 @@
   // ---------- boost flame: additive cone pair at the stern while the burn is hot ----------
   function createFlame(boat) {
     const size = boat.mesh.userData && boat.mesh.userData.size;
-    const sternZ = size ? -size.l / 2 : -(boat.radius || 2);
+    const sternZ = size ? -(size.len || 4) / 2 : -(boat.radius || 2);   // size.len (size.l was a bug → NaN → invisible flames)
     const g = new THREE.Group();
     const outer = new THREE.Mesh(
       new THREE.ConeGeometry(0.28, 1.4, 6),
@@ -304,8 +304,8 @@
   }
 
   function updateFlame(w, boat, t) {
+    if (!boat.mesh || boat.mesh.userData.noFlame) return;   // podracer runs its own engine glows
     if (!w.flame) {
-      if (!boat.mesh) return;
       w.flame = createFlame(boat);
       boat.mesh.add(w.flame);
     }
