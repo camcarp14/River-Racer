@@ -4501,6 +4501,7 @@ window.CHICAGO = {
   let ducks = null;              // rubber-duck-derby flotilla (bobs as one raft)
   let blimp = null;              // banner blimp lapping the Loop
   const beacons = [];            // red aviation strobes on the tallest spires
+  let busDump = null;            // the Steve Biller Band tour bus on Kinzie St (2004 homage)
 
   function tint(geo, hex, jit) { RR.City.tintGeom(geo, hex, jit || 0, rng); return geo; }
 
@@ -4868,6 +4869,76 @@ window.CHICAGO = {
       scene.add(mesh);
     }
 
+    // ---------- STEVE BILLER BAND tour bus on Kinzie St, dumping "waste" through the
+    // grated deck into the river — a wink at the infamous 2004 bridge incident ----------
+    {
+      const kb = window.CHICAGO.bridges.find((b) => b.name === 'Kinzie St');
+      if (kb && RR.River.paths[kb.branch]) {
+        const q = U().pathNearest(RR.River.paths[kb.branch], kb.x, kb.z);
+        const deckTop = kb.clearance + 1.6;                 // road surface on the bascule deck
+        const ax = -q.tz, az = q.tx;                        // across-channel = the roadway direction
+        const yaw = Math.atan2(ax, az);                     // bus length (local +z) runs along the road
+        const grp = new THREE.Group();
+        grp.position.set(q.x - q.tz * 2.2, deckTop, q.z + q.tx * 2.2);   // parked just off the crown
+        grp.rotation.y = yaw;
+
+        const coachMat = new THREE.MeshLambertMaterial({ color: 0x2a2f3a });
+        const glassMat = new THREE.MeshLambertMaterial({ color: 0x11202b });
+        const trimMat = new THREE.MeshLambertMaterial({ color: 0x8a929c });
+        // body: a long touring coach, length along +z
+        const body = new THREE.Mesh(new THREE.BoxGeometry(2.8, 3.0, 11.5), coachMat);
+        body.position.y = 2.1; grp.add(body);
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.4, 11.0), trimMat);
+        roof.position.y = 3.7; grp.add(roof);
+        // window ribbon both sides
+        for (const s of [-1, 1]) {
+          const win = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.0, 9.8), glassMat);
+          win.position.set(s * 1.41, 2.6, 0); grp.add(win);
+        }
+        // windshield + tail
+        const wsF = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.4, 0.1), glassMat); wsF.position.set(0, 2.5, 5.8); grp.add(wsF);
+        const wsB = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.2, 0.1), glassMat); wsB.position.set(0, 2.5, -5.8); grp.add(wsB);
+        // wheels
+        for (const z of [4.2, 2.6, -3.4, -4.6]) for (const s of [-1, 1]) {
+          const wh = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.4, 10), new THREE.MeshLambertMaterial({ color: 0x0c0e12 }));
+          wh.rotation.z = Math.PI / 2; wh.position.set(s * 1.42, 0.7, z); grp.add(wh);
+        }
+        // STEVE BILLER BAND tour livery, readable off both flanks
+        const banTex = U().canvasTexture(512, 96, (c, w, h) => {
+          c.fillStyle = '#141821'; c.fillRect(0, 0, w, h);
+          c.fillStyle = '#e8c24a'; c.font = 'bold italic 40px Arial, sans-serif';
+          c.textAlign = 'center'; c.textBaseline = 'middle';
+          c.fillText('STEVE BILLER BAND', w / 2, 34);
+          c.fillStyle = '#b8c0cc'; c.font = '20px Arial, sans-serif';
+          c.fillText('· SUMMER TOUR ·', w / 2, 70);
+        });
+        for (const s of [-1, 1]) {
+          const ban = new THREE.Mesh(new THREE.PlaneGeometry(9.0, 1.7),
+            new THREE.MeshBasicMaterial({ map: banTex }));
+          ban.position.set(s * 1.45, 1.5, 0); ban.rotation.y = s > 0 ? Math.PI / 2 : -Math.PI / 2; grp.add(ban);
+        }
+        grp.traverse((o) => o.layers.set(1));
+        scene.add(grp);
+
+        // the dump: a brown stream + recycling droplets falling from the rear underbody to the
+        // river, and a spreading stain on the surface below. Dump point in world space.
+        const dpx = q.x - q.tz * 2.2 + ax * -4.2, dpz = q.z + q.tx * 2.2 + az * -4.2;   // under the tail
+        const wasteMat = new THREE.MeshBasicMaterial({ color: 0x4a3a1c, transparent: true, opacity: 0.62, depthWrite: false });
+        const stream = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.22, deckTop, 7), wasteMat.clone());
+        stream.position.set(dpx, deckTop / 2, dpz); stream.layers.set(1); scene.add(stream);
+        const stain = new THREE.Mesh(new THREE.CircleGeometry(2.2, 18), new THREE.MeshBasicMaterial({ color: 0x5c4a22, transparent: true, opacity: 0.5, depthWrite: false }));
+        stain.rotation.x = -Math.PI / 2; stain.position.set(dpx, 0.14, dpz); stain.layers.set(1); scene.add(stain);
+        const drops = [];
+        for (let i = 0; i < 14; i++) {
+          const d = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.22, 0.16), wasteMat.clone());
+          d.layers.set(1); scene.add(d);
+          drops.push({ m: d, y: Math.random() * deckTop, spd: 4 + Math.random() * 3, jx: (Math.random() - 0.5) * 0.5, jz: (Math.random() - 0.5) * 0.5 });
+        }
+        busDump = { grp, stream, stain, drops, dpx, dpz, deckTop, gush: 0 };
+        E.tags.push({ name: 'STEVE BILLER BAND — 2004', x: kb.x, z: kb.z, r2: 120 * 120 });
+      }
+    }
+
     // flags ripple hoist→fly; the great plume breathes 8-20m like the real hourly display
     RR.Engine.onUpdate((dt, t) => {
       if (flagMesh) {
@@ -4932,13 +5003,46 @@ window.CHICAGO = {
         ducks.rotation.z = Math.sin(t * 0.9 + ducks.userData.ph) * 0.05;
         ducks.rotation.x = Math.sin(t * 0.7 + ducks.userData.ph * 2) * 0.04;
       }
+      // Steve Biller Band bus keeps dribbling "waste" through the grate; it gushes when a
+      // racer comes within range (the 2004 incident doused a tour boat passing below)
+      if (busDump) {
+        const bd = busDump;
+        const racing = raceS && raceS.phase === 'racing';
+        const near = pl && U().dist2(pl.pos.x, pl.pos.z, bd.dpx, bd.dpz) < 70 * 70;
+        bd.gush = U().damp(bd.gush, near ? 1 : 0.3, 3, dt);
+        const wy = U().waterHeight(bd.dpx, bd.dpz, t, 1);
+        bd.stream.material.opacity = 0.5 + 0.25 * bd.gush + 0.1 * Math.sin(t * 20);
+        bd.stream.scale.x = bd.stream.scale.z = 0.8 + bd.gush * 0.5 + 0.08 * Math.sin(t * 15);
+        bd.stain.scale.setScalar(0.7 + bd.gush * 0.8 + 0.05 * Math.sin(t * 3));
+        bd.stain.material.opacity = 0.32 + bd.gush * 0.26;
+        bd.stain.position.y = wy + 0.12;
+        const active = Math.floor(4 + bd.gush * bd.drops.length);
+        for (let i = 0; i < bd.drops.length; i++) {
+          const d = bd.drops[i];
+          if (i >= active) { d.m.visible = false; continue; }
+          d.m.visible = true;
+          d.y -= d.spd * dt;
+          if (d.y <= wy + 0.15) {
+            d.y = bd.deckTop - Math.random() * 0.5;
+            d.jx = (Math.random() - 0.5) * 0.5; d.jz = (Math.random() - 0.5) * 0.5;
+            if (RR.FX && Math.random() < 0.5) RR.FX.spray(bd.dpx + d.jx, wy + 0.1, bd.dpz + d.jz, 0, 1.1, 0, 1, 0.8, 0.8);
+          }
+          const spread = d.y / bd.deckTop;                    // funnel narrows toward the grate
+          d.m.position.set(bd.dpx + d.jx * spread, d.y, bd.dpz + d.jz * spread);
+          d.m.rotation.y += dt * 5;
+        }
+        if (near && racing && !bd._warned) { bd._warned = true; if (RR.HUD && RR.HUD.flash) RR.HUD.flash('⚠ HEADS UP BELOW!'); }
+        if (!near) bd._warned = false;
+      }
       // blimp laps the Loop, nose into its turn, banner in tow
       if (blimp) {
         blimp.a += dt * 0.022;
         const bx3 = blimp.cx + Math.cos(blimp.a) * blimp.r;
         const bz3 = blimp.cz + Math.sin(blimp.a) * blimp.r;
         blimp.g.position.set(bx3, 215 + Math.sin(t * 0.2) * 6, bz3);
-        blimp.g.rotation.y = Math.atan2(-Math.sin(blimp.a), Math.cos(blimp.a)) + Math.PI / 2;
+        // nose (+z local) points along the tangent of travel so the banner trails astern,
+        // instead of the old +π/2 that aimed it radially outward and flew the ship broadside
+        blimp.g.rotation.y = -blimp.a;
       }
       // aviation strobes: sharp double-blink like the real towers
       if (beacons.length) {
@@ -6794,6 +6898,13 @@ window.CHICAGO = {
       top: 36, accel: 13.0, turn: 1.85, grip: 3.0, lean: 0.28, boost: 1.2, mass: 1.35,
       hull: 0xd42a1e, deck: 0x1f242b, accent: 0xf5f6f7, seat: 0x14161c,
     },
+    {
+      id: 'podracer', name: 'ANAKIN’S PODRACER', kind: 'podracer',
+      desc: 'Twin turbines on a plasma tether, skimming the river on a cushion of thrust. Untouchable top end — if you can steer the thing.',
+      top: 49, accel: 17.0, turn: 1.55, grip: 1.7, lean: 0.42, boost: 1.18, mass: 0.85,
+      hover: 1.15,                                    // rides ~1.15m above the wave crests
+      hull: 0xb08d57, deck: 0x9aa1a7, accent: 0x49d6ff, seat: 0x161a1f,
+    },
   ];
 
   function mat(color, opts) {
@@ -7066,6 +7177,96 @@ window.CHICAGO = {
       g.userData.size = { r: 2.1, len: 6.6 };
       return g;
     },
+
+    // Anakin's Podracer: two radial turbine engines out front, an open cockpit pod
+    // tethered behind, and crackling plasma energy-binders. Hovers (spec.hover) and
+    // leaves water marks via engine wash (effects.js). Local +z = forward.
+    podracer(spec) {
+      const g = new THREE.Group();
+      const engMat = mat(spec.hull, { roughness: 0.34, metalness: 0.78 });
+      const engMat2 = mat(spec.hull, { roughness: 0.5, metalness: 0.55 });
+      const podM = mat(spec.deck, { roughness: 0.3, metalness: 0.55 });
+      const bandM = mat(0xc85a1e, { roughness: 0.42, metalness: 0.5 });   // warm orange accent rings
+      const nozM = mat(0x232019, { roughness: 0.5, metalness: 0.7 });
+      const darkM = mat(0x08090c, { roughness: 0.7, metalness: 0.3 });
+      const rings = [], glows = [], plasma = [], sparks = [];
+      const glowBase = () => new THREE.MeshBasicMaterial({ color: 0xff7a2a, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false });
+      // additive so the energy binders glow like plasma in daylight, not just at night
+      const plasmaMat = () => new THREE.MeshBasicMaterial({ color: 0x9fedff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
+
+      // ---- one turbine engine, built along z about its own origin, then placed ----
+      function engine(s) {
+        const e = new THREE.Group();
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.66, 2.6, 16), engMat);
+        body.rotation.x = Math.PI / 2; e.add(body);                          // nacelle, axis +z
+        const intake = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.58, 1.0, 16, 1, true), engMat2);
+        intake.rotation.x = Math.PI / 2; intake.position.z = 1.75; e.add(intake);   // flared maw forward
+        const lip = new THREE.Mesh(new THREE.TorusGeometry(0.88, 0.08, 8, 20), chrome());
+        lip.position.z = 2.22; e.add(lip);
+        const maw = new THREE.Mesh(new THREE.CircleGeometry(0.82, 18), darkM);
+        maw.position.z = 2.0; e.add(maw);                                     // dark recessed interior
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.11, 6, 5), chrome());
+        ring.position.z = 1.45; rings.push(ring); e.add(ring);               // 5-spoke compressor → visible spin
+        const band = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.32, 16), bandM);
+        band.rotation.x = Math.PI / 2; band.position.z = 0.8; e.add(band);
+        const noz = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.58, 0.8, 16), nozM);
+        noz.rotation.x = Math.PI / 2; noz.position.z = -1.7; e.add(noz);
+        const glow = new THREE.Mesh(new THREE.ConeGeometry(0.4, 1.5, 12), glowBase());
+        glow.rotation.x = -Math.PI / 2; glow.position.z = -2.5; glow.layers.set(1); glows.push(glow); e.add(glow);
+        const vane = new THREE.Mesh(new THREE.BoxGeometry(0.09, 1.15, 1.7), engMat);
+        vane.position.set(s * 0.6, 0.55, -0.2); vane.rotation.z = -s * 0.55; e.add(vane);  // outer control vane
+        e.position.set(s * 1.25, 0.66, 1.3);
+        g.add(e);
+      }
+      engine(-1); engine(1);
+
+      // ---- energy binder: a crackling plasma field spanning the gap between the intakes ----
+      const field = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.3, 0.08), plasmaMat());
+      field.material.opacity = 0.34; field.position.set(0, 0.66, 1.7); field.renderOrder = 3; plasma.push(field); g.add(field);
+      // bright bolts arcing across the field, flicking on and off for the crackle
+      for (let i = 0; i < 6; i++) {
+        const bolt = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.08, 0.07), plasmaMat());
+        bolt.position.set(0, 0.14 + i * 0.2, 1.72); bolt.rotation.z = (i % 2 ? 0.55 : -0.55);
+        bolt.renderOrder = 3; sparks.push(bolt); g.add(bolt);
+      }
+
+      // ---- cockpit pod, tethered behind and below ----
+      const pod = new THREE.Mesh(new THREE.SphereGeometry(0.62, 16, 12), podM);
+      pod.scale.set(0.74, 0.68, 1.35); pod.position.set(0, 0.5, -1.7); g.add(pod);
+      const nose = new THREE.Mesh(new THREE.ConeGeometry(0.4, 1.2, 12), podM);
+      nose.rotation.x = Math.PI / 2; nose.position.set(0, 0.52, -0.85); g.add(nose);   // points to the engines
+      const fin = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.72, 0.95), bandM);
+      fin.position.set(0, 0.98, -2.45); g.add(fin);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.33, 0.06, 8, 16), chrome());
+      rim.rotation.x = Math.PI / 2; rim.position.set(0, 0.86, -1.7); g.add(rim);
+      // Anakin: sandy pilot with goggled flight cap
+      const pilot = driverFigure({ pose: 'sit', lean: 0.24, footDrop: 0.1, suit: 0x8a6f4a, vest: 0xcaa06a, helmet: 0x7a5a3a, visor: true, scale: 0.92 });
+      pilot.position.set(0, 0.56, -1.86); g.add(pilot);
+
+      // ---- plasma tethers: pod nose → each engine, arcing over the top so they read ----
+      for (const s of [-1, 1]) {
+        const seg = limb(g, plasmaMat(), 0.09, 0, 0.7, -0.3, s * 1.15, 1.0, 0.5);
+        plasma.push(seg);
+      }
+
+      navLights(g, 1.5, 2.6, -2.6, 0.66);
+      g.userData.size = { r: 2.3, len: 5.2 };
+      g.userData.hoverShow = 0.75;              // extra lift so it floats in the showroom too
+      g.userData.tick = function (t, boat) {
+        const sp = boat ? Math.hypot(boat.vel.x, boat.vel.z) : 7;
+        const rev = t * (9 + sp * 0.55);
+        for (const r of rings) r.rotation.z = rev;
+        const boost = boat ? (boat.boostHeat || 0) : 0.2;
+        for (const gl of glows) {
+          gl.scale.set(1, 0.8 + boost * 1.0 + 0.15 * Math.sin(t * 24), 1);
+          gl.material.opacity = 0.55 + 0.28 * Math.sin(t * 26 + gl.id) + boost * 0.22;
+        }
+        const fl = 0.6 + 0.28 * Math.sin(t * 30) + 0.16 * Math.sin(t * 63 + 1.3);
+        for (const pl of plasma) pl.material.opacity = Math.max(0.35, Math.min(1, fl));
+        for (let i = 0; i < sparks.length; i++) sparks[i].visible = Math.sin(t * 42 + i * 7.3) > 0.25;   // crackle
+      };
+      return g;
+    },
   };
 
   // fire boat: rigid inflatable — speedboat hull + collar + light bar + console
@@ -7178,7 +7379,7 @@ window.CHICAGO = {
     // ---- vertical: ride the analytic wave field ----
     const amp = RR.River.waveAmp(boat.pos.x, boat.pos.z);
     U().waterNormalPitchRoll(boat.pos.x, boat.pos.z, t, amp, wn);
-    const rideY = wn.h + 0.12 + Math.min(0.35, speed * 0.012);   // planing lifts the bow region
+    const rideY = wn.h + 0.12 + Math.min(0.35, speed * 0.012) + (spec.hover || 0);   // planing lift + any hover cushion
     if (!boat.airborne) {
       // launch off steep lake swells at speed
       const relSlope = -(wn.pitch * fz + wn.roll * fx);
@@ -7319,6 +7520,7 @@ window.CHICAGO = {
     m.rotateY(boat.heading);
     m.rotateX(boat.visPitch);
     m.rotateZ(-boat.visRoll);
+    if (m.userData.tick) m.userData.tick(RR.Engine.time(), boat);   // animated parts (podracer turbines/plasma)
   };
 
   RR.Physics = P;
@@ -7680,6 +7882,20 @@ window.CHICAGO = {
     if (boat.airborne || speed < 6) return;
     const s = Math.sin(boat.heading), c = Math.cos(boat.heading);
     const intensity = U().clamp(speed / boat.spec.top, 0, 1);
+    // hovercraft (podracer): the turbines blast the surface below, so the "water marks"
+    // are two plumes kicked UP off the water rather than spray peeling off a hull
+    if (boat.spec.hover) {
+      const wy = U().waterHeight(boat.pos.x, boat.pos.z, t, RR.River.waveAmp(boat.pos.x, boat.pos.z));
+      const wash = intensity + (boat.boostHeat > 0.4 ? 0.5 : 0);
+      for (const side of [-1, 1]) {
+        const ex = boat.pos.x + c * side * boat.radius * 0.7 + s * boat.radius * 0.7;
+        const ez = boat.pos.z - s * side * boat.radius * 0.7 + c * boat.radius * 0.7;
+        FX.spray(ex, wy + 0.05, ez,
+          boat.vel.x * 0.14 + c * side * 1.6, 1.5 + wash * 2.8, boat.vel.z * 0.14 - s * side * 1.6,
+          1, 1.5 + wash, 1.1);
+      }
+      return;
+    }
     if (Math.random() < intensity * 0.9) {
       const side = Math.random() < 0.5 ? -1 : 1;
       FX.spray(
@@ -7996,6 +8212,25 @@ window.CHICAGO = {
       noise: { bp: 500, q: 0.5, gain: 0.14 },
       am: { rate: 22, rateRpm: 15, depth: 0.55, depthRpm: -0.25 },
       idle: 0.13, full: 0.30
+    },
+    // Turbine scream: bright saw stack, tall whine formant, heavy jet-wash noise, no throaty sub
+    podracer: {
+      base: 150,
+      oscs: [
+        { type: 'sawtooth', ratio: 1.00, detune: -6, gain: 0.34 },
+        { type: 'sawtooth', ratio: 2.00, detune:  5, gain: 0.30 },
+        { type: 'sawtooth', ratio: 3.01, detune: -4, gain: 0.20 },
+        { type: 'sine',     ratio: 4.02, detune:  0, gain: 0.16 },
+        { type: 'square',   ratio: 1.50, detune:  3, gain: 0.10 }
+      ],
+      sub: null,
+      drive: 2.0,
+      bpBase: 900, bpRange: 6200, bpQ: 1.5,
+      lpBase: 11000,
+      formant: { freq: 4300, q: 5, db: 9 },
+      noise: { bp: 5200, q: 0.5, gain: 0.17 },
+      am: { rate: 120, rateRpm: 95, depth: 0.05, depthRpm: -0.02 },
+      idle: 0.10, full: 0.30
     }
   };
 
@@ -9988,8 +10223,9 @@ window.CHICAGO = {
       if (RR.Menus.screen() === 'vehicle' && showBoat) {
         // showroom: slow orbit around the boat bobbing on the lake chop
         const amp = RR.River.waveAmp(SHOW.x, SHOW.z);
-        showBoat.position.y = RR.U.waterHeight(SHOW.x, SHOW.z, t, amp) + 0.18;
+        showBoat.position.y = RR.U.waterHeight(SHOW.x, SHOW.z, t, amp) + 0.18 + (showBoat.userData.hoverShow || 0);
         showBoat.rotation.set(Math.sin(t * 0.7) * 0.035, t * 0.4, Math.sin(t * 0.55) * 0.045);
+        if (showBoat.userData.tick) showBoat.userData.tick(t, null);   // spin turbines / flicker plasma on display
         const cam = RR.Engine.camera;
         const oa = t * 0.14, r = 10.5;
         cam.position.set(SHOW.x + Math.sin(oa) * r, 3.4 + Math.sin(t * 0.3) * 0.5, SHOW.z + Math.cos(oa) * r);

@@ -195,6 +195,25 @@
       noise: { bp: 500, q: 0.5, gain: 0.14 },
       am: { rate: 22, rateRpm: 15, depth: 0.55, depthRpm: -0.25 },
       idle: 0.13, full: 0.30
+    },
+    // Turbine scream: bright saw stack, tall whine formant, heavy jet-wash noise, no throaty sub
+    podracer: {
+      base: 150,
+      oscs: [
+        { type: 'sawtooth', ratio: 1.00, detune: -6, gain: 0.34 },
+        { type: 'sawtooth', ratio: 2.00, detune:  5, gain: 0.30 },
+        { type: 'sawtooth', ratio: 3.01, detune: -4, gain: 0.20 },
+        { type: 'sine',     ratio: 4.02, detune:  0, gain: 0.16 },
+        { type: 'square',   ratio: 1.50, detune:  3, gain: 0.10 }
+      ],
+      sub: null,
+      drive: 2.0,
+      bpBase: 900, bpRange: 6200, bpQ: 1.5,
+      lpBase: 11000,
+      formant: { freq: 4300, q: 5, db: 9 },
+      noise: { bp: 5200, q: 0.5, gain: 0.17 },
+      am: { rate: 120, rateRpm: 95, depth: 0.05, depthRpm: -0.02 },
+      idle: 0.10, full: 0.30
     }
   };
 

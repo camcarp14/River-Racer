@@ -84,7 +84,7 @@
     // ---- vertical: ride the analytic wave field ----
     const amp = RR.River.waveAmp(boat.pos.x, boat.pos.z);
     U().waterNormalPitchRoll(boat.pos.x, boat.pos.z, t, amp, wn);
-    const rideY = wn.h + 0.12 + Math.min(0.35, speed * 0.012);   // planing lifts the bow region
+    const rideY = wn.h + 0.12 + Math.min(0.35, speed * 0.012) + (spec.hover || 0);   // planing lift + any hover cushion
     if (!boat.airborne) {
       // launch off steep lake swells at speed
       const relSlope = -(wn.pitch * fz + wn.roll * fx);
@@ -225,6 +225,7 @@
     m.rotateY(boat.heading);
     m.rotateX(boat.visPitch);
     m.rotateZ(-boat.visRoll);
+    if (m.userData.tick) m.userData.tick(RR.Engine.time(), boat);   // animated parts (podracer turbines/plasma)
   };
 
   RR.Physics = P;

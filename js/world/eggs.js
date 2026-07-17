@@ -15,6 +15,7 @@
   let ducks = null;              // rubber-duck-derby flotilla (bobs as one raft)
   let blimp = null;              // banner blimp lapping the Loop
   const beacons = [];            // red aviation strobes on the tallest spires
+  let busDump = null;            // the Steve Biller Band tour bus on Kinzie St (2004 homage)
 
   function tint(geo, hex, jit) { RR.City.tintGeom(geo, hex, jit || 0, rng); return geo; }
 
@@ -382,6 +383,76 @@
       scene.add(mesh);
     }
 
+    // ---------- STEVE BILLER BAND tour bus on Kinzie St, dumping "waste" through the
+    // grated deck into the river — a wink at the infamous 2004 bridge incident ----------
+    {
+      const kb = window.CHICAGO.bridges.find((b) => b.name === 'Kinzie St');
+      if (kb && RR.River.paths[kb.branch]) {
+        const q = U().pathNearest(RR.River.paths[kb.branch], kb.x, kb.z);
+        const deckTop = kb.clearance + 1.6;                 // road surface on the bascule deck
+        const ax = -q.tz, az = q.tx;                        // across-channel = the roadway direction
+        const yaw = Math.atan2(ax, az);                     // bus length (local +z) runs along the road
+        const grp = new THREE.Group();
+        grp.position.set(q.x - q.tz * 2.2, deckTop, q.z + q.tx * 2.2);   // parked just off the crown
+        grp.rotation.y = yaw;
+
+        const coachMat = new THREE.MeshLambertMaterial({ color: 0x2a2f3a });
+        const glassMat = new THREE.MeshLambertMaterial({ color: 0x11202b });
+        const trimMat = new THREE.MeshLambertMaterial({ color: 0x8a929c });
+        // body: a long touring coach, length along +z
+        const body = new THREE.Mesh(new THREE.BoxGeometry(2.8, 3.0, 11.5), coachMat);
+        body.position.y = 2.1; grp.add(body);
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.4, 11.0), trimMat);
+        roof.position.y = 3.7; grp.add(roof);
+        // window ribbon both sides
+        for (const s of [-1, 1]) {
+          const win = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.0, 9.8), glassMat);
+          win.position.set(s * 1.41, 2.6, 0); grp.add(win);
+        }
+        // windshield + tail
+        const wsF = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.4, 0.1), glassMat); wsF.position.set(0, 2.5, 5.8); grp.add(wsF);
+        const wsB = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.2, 0.1), glassMat); wsB.position.set(0, 2.5, -5.8); grp.add(wsB);
+        // wheels
+        for (const z of [4.2, 2.6, -3.4, -4.6]) for (const s of [-1, 1]) {
+          const wh = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.4, 10), new THREE.MeshLambertMaterial({ color: 0x0c0e12 }));
+          wh.rotation.z = Math.PI / 2; wh.position.set(s * 1.42, 0.7, z); grp.add(wh);
+        }
+        // STEVE BILLER BAND tour livery, readable off both flanks
+        const banTex = U().canvasTexture(512, 96, (c, w, h) => {
+          c.fillStyle = '#141821'; c.fillRect(0, 0, w, h);
+          c.fillStyle = '#e8c24a'; c.font = 'bold italic 40px Arial, sans-serif';
+          c.textAlign = 'center'; c.textBaseline = 'middle';
+          c.fillText('STEVE BILLER BAND', w / 2, 34);
+          c.fillStyle = '#b8c0cc'; c.font = '20px Arial, sans-serif';
+          c.fillText('· SUMMER TOUR ·', w / 2, 70);
+        });
+        for (const s of [-1, 1]) {
+          const ban = new THREE.Mesh(new THREE.PlaneGeometry(9.0, 1.7),
+            new THREE.MeshBasicMaterial({ map: banTex }));
+          ban.position.set(s * 1.45, 1.5, 0); ban.rotation.y = s > 0 ? Math.PI / 2 : -Math.PI / 2; grp.add(ban);
+        }
+        grp.traverse((o) => o.layers.set(1));
+        scene.add(grp);
+
+        // the dump: a brown stream + recycling droplets falling from the rear underbody to the
+        // river, and a spreading stain on the surface below. Dump point in world space.
+        const dpx = q.x - q.tz * 2.2 + ax * -4.2, dpz = q.z + q.tx * 2.2 + az * -4.2;   // under the tail
+        const wasteMat = new THREE.MeshBasicMaterial({ color: 0x4a3a1c, transparent: true, opacity: 0.62, depthWrite: false });
+        const stream = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.22, deckTop, 7), wasteMat.clone());
+        stream.position.set(dpx, deckTop / 2, dpz); stream.layers.set(1); scene.add(stream);
+        const stain = new THREE.Mesh(new THREE.CircleGeometry(2.2, 18), new THREE.MeshBasicMaterial({ color: 0x5c4a22, transparent: true, opacity: 0.5, depthWrite: false }));
+        stain.rotation.x = -Math.PI / 2; stain.position.set(dpx, 0.14, dpz); stain.layers.set(1); scene.add(stain);
+        const drops = [];
+        for (let i = 0; i < 14; i++) {
+          const d = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.22, 0.16), wasteMat.clone());
+          d.layers.set(1); scene.add(d);
+          drops.push({ m: d, y: Math.random() * deckTop, spd: 4 + Math.random() * 3, jx: (Math.random() - 0.5) * 0.5, jz: (Math.random() - 0.5) * 0.5 });
+        }
+        busDump = { grp, stream, stain, drops, dpx, dpz, deckTop, gush: 0 };
+        E.tags.push({ name: 'STEVE BILLER BAND — 2004', x: kb.x, z: kb.z, r2: 120 * 120 });
+      }
+    }
+
     // flags ripple hoist→fly; the great plume breathes 8-20m like the real hourly display
     RR.Engine.onUpdate((dt, t) => {
       if (flagMesh) {
@@ -446,13 +517,46 @@
         ducks.rotation.z = Math.sin(t * 0.9 + ducks.userData.ph) * 0.05;
         ducks.rotation.x = Math.sin(t * 0.7 + ducks.userData.ph * 2) * 0.04;
       }
+      // Steve Biller Band bus keeps dribbling "waste" through the grate; it gushes when a
+      // racer comes within range (the 2004 incident doused a tour boat passing below)
+      if (busDump) {
+        const bd = busDump;
+        const racing = raceS && raceS.phase === 'racing';
+        const near = pl && U().dist2(pl.pos.x, pl.pos.z, bd.dpx, bd.dpz) < 70 * 70;
+        bd.gush = U().damp(bd.gush, near ? 1 : 0.3, 3, dt);
+        const wy = U().waterHeight(bd.dpx, bd.dpz, t, 1);
+        bd.stream.material.opacity = 0.5 + 0.25 * bd.gush + 0.1 * Math.sin(t * 20);
+        bd.stream.scale.x = bd.stream.scale.z = 0.8 + bd.gush * 0.5 + 0.08 * Math.sin(t * 15);
+        bd.stain.scale.setScalar(0.7 + bd.gush * 0.8 + 0.05 * Math.sin(t * 3));
+        bd.stain.material.opacity = 0.32 + bd.gush * 0.26;
+        bd.stain.position.y = wy + 0.12;
+        const active = Math.floor(4 + bd.gush * bd.drops.length);
+        for (let i = 0; i < bd.drops.length; i++) {
+          const d = bd.drops[i];
+          if (i >= active) { d.m.visible = false; continue; }
+          d.m.visible = true;
+          d.y -= d.spd * dt;
+          if (d.y <= wy + 0.15) {
+            d.y = bd.deckTop - Math.random() * 0.5;
+            d.jx = (Math.random() - 0.5) * 0.5; d.jz = (Math.random() - 0.5) * 0.5;
+            if (RR.FX && Math.random() < 0.5) RR.FX.spray(bd.dpx + d.jx, wy + 0.1, bd.dpz + d.jz, 0, 1.1, 0, 1, 0.8, 0.8);
+          }
+          const spread = d.y / bd.deckTop;                    // funnel narrows toward the grate
+          d.m.position.set(bd.dpx + d.jx * spread, d.y, bd.dpz + d.jz * spread);
+          d.m.rotation.y += dt * 5;
+        }
+        if (near && racing && !bd._warned) { bd._warned = true; if (RR.HUD && RR.HUD.flash) RR.HUD.flash('⚠ HEADS UP BELOW!'); }
+        if (!near) bd._warned = false;
+      }
       // blimp laps the Loop, nose into its turn, banner in tow
       if (blimp) {
         blimp.a += dt * 0.022;
         const bx3 = blimp.cx + Math.cos(blimp.a) * blimp.r;
         const bz3 = blimp.cz + Math.sin(blimp.a) * blimp.r;
         blimp.g.position.set(bx3, 215 + Math.sin(t * 0.2) * 6, bz3);
-        blimp.g.rotation.y = Math.atan2(-Math.sin(blimp.a), Math.cos(blimp.a)) + Math.PI / 2;
+        // nose (+z local) points along the tangent of travel so the banner trails astern,
+        // instead of the old +π/2 that aimed it radially outward and flew the ship broadside
+        blimp.g.rotation.y = -blimp.a;
       }
       // aviation strobes: sharp double-blink like the real towers
       if (beacons.length) {

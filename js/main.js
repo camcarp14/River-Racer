@@ -218,8 +218,9 @@
       if (RR.Menus.screen() === 'vehicle' && showBoat) {
         // showroom: slow orbit around the boat bobbing on the lake chop
         const amp = RR.River.waveAmp(SHOW.x, SHOW.z);
-        showBoat.position.y = RR.U.waterHeight(SHOW.x, SHOW.z, t, amp) + 0.18;
+        showBoat.position.y = RR.U.waterHeight(SHOW.x, SHOW.z, t, amp) + 0.18 + (showBoat.userData.hoverShow || 0);
         showBoat.rotation.set(Math.sin(t * 0.7) * 0.035, t * 0.4, Math.sin(t * 0.55) * 0.045);
+        if (showBoat.userData.tick) showBoat.userData.tick(t, null);   // spin turbines / flicker plasma on display
         const cam = RR.Engine.camera;
         const oa = t * 0.14, r = 10.5;
         cam.position.set(SHOW.x + Math.sin(oa) * r, 3.4 + Math.sin(t * 0.3) * 0.5, SHOW.z + Math.cos(oa) * r);

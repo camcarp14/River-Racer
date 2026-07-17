@@ -231,6 +231,20 @@
     if (boat.airborne || speed < 6) return;
     const s = Math.sin(boat.heading), c = Math.cos(boat.heading);
     const intensity = U().clamp(speed / boat.spec.top, 0, 1);
+    // hovercraft (podracer): the turbines blast the surface below, so the "water marks"
+    // are two plumes kicked UP off the water rather than spray peeling off a hull
+    if (boat.spec.hover) {
+      const wy = U().waterHeight(boat.pos.x, boat.pos.z, t, RR.River.waveAmp(boat.pos.x, boat.pos.z));
+      const wash = intensity + (boat.boostHeat > 0.4 ? 0.5 : 0);
+      for (const side of [-1, 1]) {
+        const ex = boat.pos.x + c * side * boat.radius * 0.7 + s * boat.radius * 0.7;
+        const ez = boat.pos.z - s * side * boat.radius * 0.7 + c * boat.radius * 0.7;
+        FX.spray(ex, wy + 0.05, ez,
+          boat.vel.x * 0.14 + c * side * 1.6, 1.5 + wash * 2.8, boat.vel.z * 0.14 - s * side * 1.6,
+          1, 1.5 + wash, 1.1);
+      }
+      return;
+    }
     if (Math.random() < intensity * 0.9) {
       const side = Math.random() < 0.5 ? -1 : 1;
       FX.spray(

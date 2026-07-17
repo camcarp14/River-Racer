@@ -34,6 +34,13 @@
       top: 36, accel: 13.0, turn: 1.85, grip: 3.0, lean: 0.28, boost: 1.2, mass: 1.35,
       hull: 0xd42a1e, deck: 0x1f242b, accent: 0xf5f6f7, seat: 0x14161c,
     },
+    {
+      id: 'podracer', name: 'ANAKIN’S PODRACER', kind: 'podracer',
+      desc: 'Twin turbines on a plasma tether, skimming the river on a cushion of thrust. Untouchable top end — if you can steer the thing.',
+      top: 49, accel: 17.0, turn: 1.55, grip: 1.7, lean: 0.42, boost: 1.18, mass: 0.85,
+      hover: 1.15,                                    // rides ~1.15m above the wave crests
+      hull: 0xb08d57, deck: 0x9aa1a7, accent: 0x49d6ff, seat: 0x161a1f,
+    },
   ];
 
   function mat(color, opts) {
@@ -304,6 +311,96 @@
       capt.position.set(-0.35, 1.16, -0.42); g.add(capt);
       navLights(g, 0.95, 2.9, -3.1, 1.02);
       g.userData.size = { r: 2.1, len: 6.6 };
+      return g;
+    },
+
+    // Anakin's Podracer: two radial turbine engines out front, an open cockpit pod
+    // tethered behind, and crackling plasma energy-binders. Hovers (spec.hover) and
+    // leaves water marks via engine wash (effects.js). Local +z = forward.
+    podracer(spec) {
+      const g = new THREE.Group();
+      const engMat = mat(spec.hull, { roughness: 0.34, metalness: 0.78 });
+      const engMat2 = mat(spec.hull, { roughness: 0.5, metalness: 0.55 });
+      const podM = mat(spec.deck, { roughness: 0.3, metalness: 0.55 });
+      const bandM = mat(0xc85a1e, { roughness: 0.42, metalness: 0.5 });   // warm orange accent rings
+      const nozM = mat(0x232019, { roughness: 0.5, metalness: 0.7 });
+      const darkM = mat(0x08090c, { roughness: 0.7, metalness: 0.3 });
+      const rings = [], glows = [], plasma = [], sparks = [];
+      const glowBase = () => new THREE.MeshBasicMaterial({ color: 0xff7a2a, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false });
+      // additive so the energy binders glow like plasma in daylight, not just at night
+      const plasmaMat = () => new THREE.MeshBasicMaterial({ color: 0x9fedff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
+
+      // ---- one turbine engine, built along z about its own origin, then placed ----
+      function engine(s) {
+        const e = new THREE.Group();
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.66, 2.6, 16), engMat);
+        body.rotation.x = Math.PI / 2; e.add(body);                          // nacelle, axis +z
+        const intake = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.58, 1.0, 16, 1, true), engMat2);
+        intake.rotation.x = Math.PI / 2; intake.position.z = 1.75; e.add(intake);   // flared maw forward
+        const lip = new THREE.Mesh(new THREE.TorusGeometry(0.88, 0.08, 8, 20), chrome());
+        lip.position.z = 2.22; e.add(lip);
+        const maw = new THREE.Mesh(new THREE.CircleGeometry(0.82, 18), darkM);
+        maw.position.z = 2.0; e.add(maw);                                     // dark recessed interior
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.11, 6, 5), chrome());
+        ring.position.z = 1.45; rings.push(ring); e.add(ring);               // 5-spoke compressor → visible spin
+        const band = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.32, 16), bandM);
+        band.rotation.x = Math.PI / 2; band.position.z = 0.8; e.add(band);
+        const noz = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.58, 0.8, 16), nozM);
+        noz.rotation.x = Math.PI / 2; noz.position.z = -1.7; e.add(noz);
+        const glow = new THREE.Mesh(new THREE.ConeGeometry(0.4, 1.5, 12), glowBase());
+        glow.rotation.x = -Math.PI / 2; glow.position.z = -2.5; glow.layers.set(1); glows.push(glow); e.add(glow);
+        const vane = new THREE.Mesh(new THREE.BoxGeometry(0.09, 1.15, 1.7), engMat);
+        vane.position.set(s * 0.6, 0.55, -0.2); vane.rotation.z = -s * 0.55; e.add(vane);  // outer control vane
+        e.position.set(s * 1.25, 0.66, 1.3);
+        g.add(e);
+      }
+      engine(-1); engine(1);
+
+      // ---- energy binder: a crackling plasma field spanning the gap between the intakes ----
+      const field = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.3, 0.08), plasmaMat());
+      field.material.opacity = 0.34; field.position.set(0, 0.66, 1.7); field.renderOrder = 3; plasma.push(field); g.add(field);
+      // bright bolts arcing across the field, flicking on and off for the crackle
+      for (let i = 0; i < 6; i++) {
+        const bolt = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.08, 0.07), plasmaMat());
+        bolt.position.set(0, 0.14 + i * 0.2, 1.72); bolt.rotation.z = (i % 2 ? 0.55 : -0.55);
+        bolt.renderOrder = 3; sparks.push(bolt); g.add(bolt);
+      }
+
+      // ---- cockpit pod, tethered behind and below ----
+      const pod = new THREE.Mesh(new THREE.SphereGeometry(0.62, 16, 12), podM);
+      pod.scale.set(0.74, 0.68, 1.35); pod.position.set(0, 0.5, -1.7); g.add(pod);
+      const nose = new THREE.Mesh(new THREE.ConeGeometry(0.4, 1.2, 12), podM);
+      nose.rotation.x = Math.PI / 2; nose.position.set(0, 0.52, -0.85); g.add(nose);   // points to the engines
+      const fin = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.72, 0.95), bandM);
+      fin.position.set(0, 0.98, -2.45); g.add(fin);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.33, 0.06, 8, 16), chrome());
+      rim.rotation.x = Math.PI / 2; rim.position.set(0, 0.86, -1.7); g.add(rim);
+      // Anakin: sandy pilot with goggled flight cap
+      const pilot = driverFigure({ pose: 'sit', lean: 0.24, footDrop: 0.1, suit: 0x8a6f4a, vest: 0xcaa06a, helmet: 0x7a5a3a, visor: true, scale: 0.92 });
+      pilot.position.set(0, 0.56, -1.86); g.add(pilot);
+
+      // ---- plasma tethers: pod nose → each engine, arcing over the top so they read ----
+      for (const s of [-1, 1]) {
+        const seg = limb(g, plasmaMat(), 0.09, 0, 0.7, -0.3, s * 1.15, 1.0, 0.5);
+        plasma.push(seg);
+      }
+
+      navLights(g, 1.5, 2.6, -2.6, 0.66);
+      g.userData.size = { r: 2.3, len: 5.2 };
+      g.userData.hoverShow = 0.75;              // extra lift so it floats in the showroom too
+      g.userData.tick = function (t, boat) {
+        const sp = boat ? Math.hypot(boat.vel.x, boat.vel.z) : 7;
+        const rev = t * (9 + sp * 0.55);
+        for (const r of rings) r.rotation.z = rev;
+        const boost = boat ? (boat.boostHeat || 0) : 0.2;
+        for (const gl of glows) {
+          gl.scale.set(1, 0.8 + boost * 1.0 + 0.15 * Math.sin(t * 24), 1);
+          gl.material.opacity = 0.55 + 0.28 * Math.sin(t * 26 + gl.id) + boost * 0.22;
+        }
+        const fl = 0.6 + 0.28 * Math.sin(t * 30) + 0.16 * Math.sin(t * 63 + 1.3);
+        for (const pl of plasma) pl.material.opacity = Math.max(0.35, Math.min(1, fl));
+        for (let i = 0; i < sparks.length; i++) sparks[i].visible = Math.sin(t * 42 + i * 7.3) > 0.25;   // crackle
+      };
       return g;
     },
   };
