@@ -2,6 +2,7 @@
 (function () {
   const $ = (id) => document.getElementById(id);
   let boats = [], player = null, pilots = [];
+  let remotes = [], netSendT = 0;          // multiplayer: network-driven rival boats + broadcast throttle
   let mode = 'menu';                       // menu | race | paused
   let raceState = null;
   let landmarkTags = [];                   // {x, z, name, r2} for HUD callouts
@@ -64,47 +65,91 @@
     };
     RR.Menus.onResume = () => { mode = 'race'; RR.Engine.timeScale = 1; };
     RR.Menus.onQuit = quitToTitle;
+    setupNet();
+    if (RR.NetUI) RR.NetUI.init();
     RR.Engine.onUpdate(update);
     RR.Engine.start();
     setTimeout(() => { $('loading').style.display = 'none'; }, 250);
     window.RRTest.ready = true;
   }
 
+  // ---------- multiplayer wiring (dormant unless a room is joined) ----------
+  function setupNet() {
+    if (!RR.Net) return;
+    RR.Net.on('start', (info) => {
+      if (RR.Menus.hide) RR.Menus.hide();
+      RR.Audio.setMusic(false);
+      startRace(info.courseIdx | 0, 0, false, RR.Net.roster());
+      mode = 'race';
+    });
+    RR.Net.on('finish', (id, elapsed) => {
+      const b = remotes.find((x) => x.netId === id);
+      if (b) { b.finished = true; b.finishTime = elapsed; }
+    });
+    RR.Net.on('alldone', (results) => {
+      mode = 'results'; RR.HUD.show(false); RR.Audio.stopEngine();
+      if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(false);
+      if (RR.Menus.showNetResults) RR.Menus.showNetResults(results, raceState && raceState.course && raceState.course.id);
+    });
+  }
+
   // ---------- race lifecycle ----------
   function clearBoats() {
     for (const b of boats) RR.Engine.scene.remove(b.mesh);
     RR.FX.clearBoats();
-    boats = []; pilots = []; player = null;
+    boats = []; pilots = []; remotes = []; player = null;
   }
 
-  function startRace(courseIdx, vehicleIdx, timeTrial) {
+  // roster (multiplayer) = [{id, name, boatIdx, isSelf}] sorted identically on every client
+  function startRace(courseIdx, vehicleIdx, timeTrial, roster) {
     clearBoats();
     RR.Engine.timeScale = 1;                          // clear any pause/photo slo-mo from a prior race
-    const N = timeTrial ? 1 : 6;
     const catalog = RR.Boats.CATALOG;
-    // one-design racing: every rival runs the SAME hull as you (fair fight, pure skill),
-    // each in its own livery so you can tell the field apart at speed
-    const LIVERY = [0xd8dce0, 0x2f8f4f, 0x8a2fb0, 0xe07820, 0x16303f];
-    for (let i = 0; i < N; i++) {
-      const base = catalog[vehicleIdx];
-      const spec = i === 0 ? base : Object.assign({}, base, { hull: LIVERY[(i - 1) % LIVERY.length] });
-      const mesh = RR.Boats.build(spec);
-      RR.Engine.scene.add(mesh);
-      const b = RR.Physics.createBoat(spec, mesh);
-      b.isPlayer = i === 0;
-      boats.push(b);
-      RR.FX.registerBoat(b);
+    const mp = !!(roster && roster.length);
+
+    if (mp) {
+      // one boat per real player — each brings their OWN chosen boat; mine is the player
+      for (const r of roster) {
+        const spec = catalog[(r.boatIdx | 0) % catalog.length];
+        const mesh = RR.Boats.build(spec);
+        RR.Engine.scene.add(mesh);
+        const b = RR.Physics.createBoat(spec, mesh);
+        b.isPlayer = !!r.isSelf;
+        b.displayName = r.name;
+        if (!r.isSelf) { b.remote = true; b.netId = r.id; remotes.push(b); }
+        boats.push(b);
+        RR.FX.registerBoat(b);
+      }
+      player = boats.find((b) => b.isPlayer) || boats[0];
+    } else {
+      const N = timeTrial ? 1 : 6;
+      // one-design racing: every rival runs the SAME hull as you (fair fight, pure skill),
+      // each in its own livery so you can tell the field apart at speed
+      const LIVERY = [0xd8dce0, 0x2f8f4f, 0x8a2fb0, 0xe07820, 0x16303f];
+      for (let i = 0; i < N; i++) {
+        const base = catalog[vehicleIdx];
+        const spec = i === 0 ? base : Object.assign({}, base, { hull: LIVERY[(i - 1) % LIVERY.length] });
+        const mesh = RR.Boats.build(spec);
+        RR.Engine.scene.add(mesh);
+        const b = RR.Physics.createBoat(spec, mesh);
+        b.isPlayer = i === 0;
+        boats.push(b);
+        RR.FX.registerBoat(b);
+      }
+      player = boats[0];
     }
-    player = boats[0];
 
     raceState = RR.Race.start(courseIdx, boats, player);
+    raceState.mp = mp;
 
     pilots = [];
-    const diff = RR.Menus && RR.Menus.difficulty ? RR.Menus.difficulty() : 1;
-    for (let i = 1; i < boats.length; i++) {
-      const p = RR.AI.createPilot(boats[i], { path: raceState.route }, i - 1, diff);
-      boats[i].pilotName = p.name;
-      pilots.push(p);
+    if (!mp) {
+      const diff = RR.Menus && RR.Menus.difficulty ? RR.Menus.difficulty() : 1;
+      for (let i = 1; i < boats.length; i++) {
+        const p = RR.AI.createPilot(boats[i], { path: raceState.route }, i - 1, diff);
+        boats[i].pilotName = p.name;
+        pilots.push(p);
+      }
     }
 
     // effect + audio hooks
@@ -131,7 +176,8 @@
       if (player) { player.boostEnergy = Math.min(1, player.boostEnergy + 0.45); RR.Camera.kick(0.25); RR.HUD.flash('+BOOST'); }
     };
     RR.Race.onLap = () => { RR.Audio.checkpoint(); };
-    RR.Race.onPlayerFinish = (pos) => {
+    RR.Race.onPlayerFinish = (pos, time) => {
+      if (raceState.mp && RR.Net.active) RR.Net.sendFinish(time);   // tell the room my elapsed time
       RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.showPlacement(pos);
       const g = raceState && raceState.finishGate;
       if (g) {
@@ -254,14 +300,21 @@
     const pc = racing && !player.finished ? RR.Input : { throttle: player.finished ? 0.25 : 0, brake: 0, steer: RR.Input.steer * 0.4, boost: false };
     RR.Physics.update(player, dt, pc, t);
 
-    // AI
+    // AI (single-player only)
     for (const p of pilots) {
       RR.AI.update(p, dt, t, player.routeD);
       const c = racing ? p.ctl : aiCtl;
       RR.Physics.update(p.boat, dt, c, t);
     }
 
-    RR.Physics.collidePairs(boats);
+    // multiplayer: rivals are network-driven — interpolate them, and broadcast my own boat
+    if (raceState.mp && RR.Net.active) {
+      for (const b of remotes) RR.Net.applyRemote(b, dt);
+      netSendT -= dt;
+      if (netSendT <= 0) { RR.Net.sendState(player); netSendT = 1 / 14; }   // ~14 Hz
+    }
+
+    if (!raceState.mp) RR.Physics.collidePairs(boats);   // MP contact handled visually; no authoritative push (avoids fighting the net)
 
     // drawbridge warning: a bascule leaf rising just ahead sounds its horn + scatters gulls
     if (racing && RR.Bridges && RR.Bridges.openings) {
@@ -346,6 +399,16 @@
   window.RRTest = {
     ready: false,
     startRace: (c, v) => { RR.Menus.hide(); RR.Audio.setMusic(false); startRace(c || 0, v || 0, false); },
+    // multiplayer test hooks (mock transport = same-browser tabs talk over BroadcastChannel)
+    netJoin: (room, name, boatIdx) => RR.Net.join({ room, name, boatIdx: boatIdx || 0, transport: RR.Transports.mock() }),
+    netStart: (c) => RR.Net.startAsHost(c || 0),
+    netRoster: () => RR.Net.roster(),
+    netResults: () => RR.Net.results(),
+    netCount: () => RR.Net.count(),
+    netActive: () => !!(RR.Net && RR.Net.active),
+    netRemotes: () => remotes.map((b) => ({ id: b.netId, name: b.displayName, x: +b.pos.x.toFixed(1), z: +b.pos.z.toFixed(1), finished: !!b.finished })),
+    netPhase: () => (raceState ? raceState.phase : null),
+    selfProgress: () => (player ? { routeD: Math.round(player.routeD), lap: player.lap, finished: !!player.finished } : null),
     warp: (sec) => {
       // during warp the AI takes the player's wheel so the sim actually progresses
       if (player && !window.RRTest._autopilot) {

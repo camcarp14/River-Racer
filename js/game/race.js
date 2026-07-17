@@ -311,6 +311,7 @@
     S.time += dt;
 
     for (const b of S.boats) {
+      if (b.remote) continue;         // multiplayer rivals: progress + finish come over the network
       const hitCp = updateProgress(b, dt);
       if (hitCp && b === S.player && RACE.onCheckpoint) RACE.onCheckpoint(b.nextCp, S.checkpoints.length);
       checkFinish(b);

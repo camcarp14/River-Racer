@@ -9497,6 +9497,7 @@ window.CHICAGO = {
     S.time += dt;
 
     for (const b of S.boats) {
+      if (b.remote) continue;         // multiplayer rivals: progress + finish come over the network
       const hitCp = updateProgress(b, dt);
       if (hitCp && b === S.player && RACE.onCheckpoint) RACE.onCheckpoint(b.nextCp, S.checkpoints.length);
       checkFinish(b);
@@ -10118,11 +10119,407 @@ window.CHICAGO = {
 
 </script>
 <script>
+/* ===== js/net/net.js ===== */
+/* River Racer — multiplayer netplay core (transport-agnostic).
+   Single-player is completely untouched: none of this runs unless a room is joined.
+   A "transport" (Trystero P2P in production, a mock BroadcastChannel for tests) is
+   injected at join time and only needs: connect(room, meta) -> Promise, selfId,
+   on(evt, cb) for 'peer-join'|'peer-leave'|'message', send(obj), close(). */
+(function () {
+  const N = { active: false, room: null };
+  const U = () => RR.U;
+  const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+  let tp = null;
+  const self = { id: null, name: 'Racer', boatIdx: 0, ready: false };
+  const peers = new Map();                 // id -> {id, name, boatIdx, ready, buf, finished, finishTime}
+  const handlers = { roster: [], start: [], finish: [], alldone: [] };
+  let started = false, seed = 1, courseIdx = 0;
+
+  function emit(evt) { const a = Array.prototype.slice.call(arguments, 1); for (const f of handlers[evt]) f.apply(null, a); }
+  N.on = function (evt, cb) { if (handlers[evt]) handlers[evt].push(cb); };
+
+  N.join = function (opts) {
+    self.name = String(opts.name || 'Racer').slice(0, 24);
+    self.boatIdx = opts.boatIdx | 0;
+    tp = opts.transport;
+    N.room = opts.room;
+    N.active = true;
+    tp.on('peer-join', function (id, m) { addPeer(id, m); sendHello(); emit('roster'); });
+    tp.on('peer-leave', function (id) { peers.delete(id); emit('roster'); });
+    tp.on('message', onMessage);
+    return Promise.resolve(tp.connect(opts.room, helloMsg())).then(function () {
+      self.id = tp.selfId;
+      sendHello();
+      emit('roster');
+    });
+  };
+
+  function helloMsg() { return { t: 'hello', name: self.name, boatIdx: self.boatIdx, ready: self.ready }; }
+  function sendHello() { if (tp) tp.send(helloMsg()); }
+
+  function addPeer(id, m) {
+    if (id === self.id) return;
+    let p = peers.get(id);
+    if (!p) { p = { id: id, buf: null, finished: false, finishTime: 0 }; peers.set(id, p); }
+    if (m) { if (m.name != null) p.name = String(m.name).slice(0, 24); if (m.boatIdx != null) p.boatIdx = m.boatIdx | 0; if (m.ready != null) p.ready = !!m.ready; }
+    return p;
+  }
+
+  function onMessage(id, msg) {
+    if (!msg || id === self.id) return;
+    switch (msg.t) {
+      case 'hello': addPeer(id, msg); emit('roster'); break;
+      case 'ready': { const p = addPeer(id); p.ready = !!msg.ready; emit('roster'); break; }
+      case 'start':
+        if (!started) { started = true; seed = msg.seed; courseIdx = msg.courseIdx; emit('start', { seed: seed, courseIdx: courseIdx }); }
+        break;
+      case 'pos': { const p = peers.get(id); if (p) p.buf = mkBuf(msg); break; }
+      case 'finish': { const p = peers.get(id); if (p && !p.finished) { p.finished = true; p.finishTime = msg.e; emit('finish', id, msg.e); checkAllDone(); } break; }
+    }
+  }
+
+  // ---- lobby ----
+  N.self = function () { return self; };
+  N.roster = function () {
+    const list = [{ id: self.id, name: self.name, boatIdx: self.boatIdx, isSelf: true, ready: self.ready, finished: self._finished, finishTime: self._finishTime }];
+    peers.forEach(function (p) { list.push({ id: p.id, name: p.name || 'Racer', boatIdx: p.boatIdx || 0, isSelf: false, ready: !!p.ready, finished: !!p.finished, finishTime: p.finishTime }); });
+    list.sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
+    return list;
+  };
+  N.count = function () { return peers.size + 1; };
+  N.setReady = function (r) { self.ready = r; if (tp) tp.send({ t: 'ready', ready: r }); emit('roster'); };
+
+  // deterministic host: lowest id in the room decides start
+  N.isHost = function () {
+    let min = self.id;
+    peers.forEach(function (p) { if (p.id < min) min = p.id; });
+    return min === self.id;
+  };
+
+  N.startAsHost = function (course) {
+    if (started) return;
+    started = true;
+    courseIdx = course | 0;
+    seed = (Date.now() % 1000000) + 1;
+    if (tp) tp.send({ t: 'start', seed: seed, courseIdx: courseIdx });
+    emit('start', { seed: seed, courseIdx: courseIdx });
+  };
+
+  // ---- in-race position sync ----
+  N.sendState = function (b) {
+    if (!tp) return;
+    tp.send({ t: 'pos', x: r3(b.pos.x), y: r3(b.pos.y), z: r3(b.pos.z), h: r3(b.heading),
+      p: r3(b.visPitch), r: r3(b.visRoll), vx: r3(b.vel.x), vz: r3(b.vel.z), bh: r3(b.boostHeat || 0), d: r1(b.routeD) });
+  };
+  function mkBuf(m) { return { x: m.x, y: m.y, z: m.z, h: m.h, pitch: m.p, roll: m.r, vx: m.vx, vz: m.vz, bh: m.bh, d: m.d, at: nowMs() }; }
+
+  // drive a remote boat toward its latest network state, dead-reckoning across the gap
+  N.applyRemote = function (b, dt) {
+    const p = peers.get(b.netId);
+    if (!p || !p.buf) return;
+    const s = p.buf, age = Math.min(0.4, (nowMs() - s.at) / 1000);
+    const tx = s.x + s.vx * age, tz = s.z + s.vz * age;
+    b.pos.x = U().damp(b.pos.x, tx, 11, dt);
+    b.pos.z = U().damp(b.pos.z, tz, 11, dt);
+    b.pos.y = U().damp(b.pos.y, s.y, 9, dt);
+    b.heading = angDamp(b.heading, s.h, 11, dt);
+    b.visPitch = U().damp(b.visPitch, s.pitch, 8, dt);
+    b.visRoll = U().damp(b.visRoll, s.roll, 8, dt);
+    b.boostHeat = s.bh;
+    b.vel.x = s.vx; b.vel.z = s.vz;          // feed wake FX + water shader
+    if (!b.finished) b.routeD = s.d;          // trust reported progress for standings
+  };
+
+  // ---- finish / results ----
+  N.sendFinish = function (elapsed) {
+    self._finished = true; self._finishTime = elapsed;
+    if (tp) tp.send({ t: 'finish', e: elapsed });
+    checkAllDone();
+  };
+  function checkAllDone() {
+    const roster = N.roster();
+    if (roster.every(function (r) { return r.finished; })) emit('alldone', results());
+  }
+  function results() {
+    return N.roster().filter(function (r) { return r.finished; })
+      .sort(function (a, b) { return a.finishTime - b.finishTime; })
+      .map(function (r, i) { return { place: i + 1, name: r.name, time: r.finishTime, boatIdx: r.boatIdx, isSelf: r.isSelf }; });
+  }
+  N.results = results;
+
+  N.setBoat = function (idx) { self.boatIdx = idx | 0; sendHello(); emit('roster'); };
+
+  // rematch: clear the race latch + everyone's finish state so the host can start again
+  N.resetRace = function () {
+    started = false; self._finished = false; self._finishTime = 0;
+    peers.forEach(function (p) { p.finished = false; p.finishTime = 0; p.buf = null; });
+    emit('roster');
+  };
+
+  N.leave = function () {
+    if (tp) { try { tp.send({ t: 'bye' }); } catch (e) {} try { tp.close(); } catch (e) {} }
+    tp = null; peers.clear(); started = false; N.active = false;
+    self.ready = false; self._finished = false; self._finishTime = 0;
+    for (const k in handlers) handlers[k].length = 0;
+  };
+
+  function angDamp(a, target, lambda, dt) {
+    let d = ((target - a + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    return a + d * (1 - Math.exp(-lambda * dt));
+  }
+  function r3(v) { return Math.round(v * 1000) / 1000; }
+  function r1(v) { return Math.round(v * 10) / 10; }
+
+  RR.Net = N;
+})();
+
+</script>
+<script>
+/* ===== js/net/transport-mock.js ===== */
+/* River Racer — mock transport over BroadcastChannel. Same-origin browsing contexts
+   (e.g. multiple tabs) in one browser share it, so it drives the automated 2-player
+   tests and also works as a real "everyone on this one machine" fallback. Production
+   cross-machine play uses the Trystero P2P transport instead. */
+(function () {
+  RR.Transports = RR.Transports || {};
+
+  RR.Transports.mock = function () {
+    let ch = null, selfId = null, meta = null;
+    const peers = new Set();
+    const cbs = { 'peer-join': [], 'peer-leave': [], 'message': [] };
+    const fire = (e, a, b) => { for (const f of cbs[e]) f(a, b); };
+
+    function rid() { return 'm' + Math.floor(Math.random() * 1e9).toString(36) + Date.now().toString(36); }
+
+    const T = {
+      get selfId() { return selfId; },
+      on(evt, cb) { if (cbs[evt]) cbs[evt].push(cb); },
+      connect(room, m) {
+        selfId = rid(); meta = m || {};
+        ch = new BroadcastChannel('rr-' + room);
+        ch.onmessage = (ev) => {
+          const d = ev.data;
+          if (!d || d.id === selfId) return;
+          if (d.kind === 'hello' || d.kind === 'hello-ack') {
+            const isNew = !peers.has(d.id);
+            if (isNew) { peers.add(d.id); fire('peer-join', d.id, d.meta); }
+            if (d.kind === 'hello') ch.postMessage({ kind: 'hello-ack', id: selfId, meta: meta });
+          } else if (d.kind === 'leave') {
+            if (peers.delete(d.id)) fire('peer-leave', d.id);
+          } else if (d.kind === 'msg') {
+            if (!peers.has(d.id)) { peers.add(d.id); fire('peer-join', d.id, null); }
+            fire('message', d.id, d.data);
+          }
+        };
+        ch.postMessage({ kind: 'hello', id: selfId, meta: meta });
+        return Promise.resolve();
+      },
+      send(obj) { if (ch) ch.postMessage({ kind: 'msg', id: selfId, data: obj }); },
+      close() { if (ch) { try { ch.postMessage({ kind: 'leave', id: selfId }); } catch (e) {} ch.close(); ch = null; } peers.clear(); },
+    };
+    return T;
+  };
+})();
+
+</script>
+<script>
+/* ===== js/net/transport-trystero.js ===== */
+/* River Racer — production P2P transport over WebRTC, via Trystero.
+   Trystero handles signaling through free public infrastructure (no server, no cost)
+   and establishes direct browser-to-browser data channels. Position data then flows
+   peer-to-peer, so live racing is free at any volume.
+
+   Expects a vendored Trystero global at window.Trystero = { joinRoom, selfId }.
+   (The vendored build js/vendor/trystero.global.js sets this.) If it's missing —
+   e.g. opened offline from file:// — this returns null and the game stays single-player. */
+(function () {
+  RR.Transports = RR.Transports || {};
+
+  RR.Transports.trystero = function () {
+    const T = window.Trystero;
+    if (!T || !T.joinRoom) return null;
+
+    let room = null, sendMsg = null;
+    const cbs = { 'peer-join': [], 'peer-leave': [], 'message': [] };
+    const fire = (e, a, b) => { for (const f of cbs[e]) f(a, b); };
+
+    return {
+      get selfId() { return T.selfId; },
+      on(evt, cb) { if (cbs[evt]) cbs[evt].push(cb); },
+      connect(roomId /*, meta */) {
+        // relays: Trystero's default strategy; appId namespaces our rooms away from other apps
+        room = T.joinRoom({ appId: 'river-racer-arcade' }, String(roomId));
+        const pair = room.makeAction('m');
+        sendMsg = pair[0];
+        pair[1]((data, peerId) => fire('message', peerId, data));
+        room.onPeerJoin((id) => fire('peer-join', id, null));   // names arrive via our own 'hello' message
+        room.onPeerLeave((id) => fire('peer-leave', id));
+        return Promise.resolve();
+      },
+      send(obj) { if (sendMsg) { try { sendMsg(obj); } catch (e) { /* peer mid-drop */ } } },
+      close() { if (room) { try { room.leave(); } catch (e) {} room = null; } },
+    };
+  };
+})();
+
+</script>
+<script>
+/* ===== js/ui/netlobby.js ===== */
+/* River Racer — online lobby / name entry / results overlay.
+   The real lobby + leaderboard live in Slack; this is the thin in-game surface that
+   the Slack "Play" button drops you into (via ?room=CODE&name=NAME&boat=IDX), plus a
+   manual PLAY ONLINE entry so it also works from a shared link without Slack. */
+(function () {
+  const UI = {};
+  const $ = (s, r) => (r || document).querySelector(s);
+  let root, panels = {}, autoStart = 6;
+  // production transport is Trystero P2P; tests can override this factory
+  UI.transportFactory = function () { return RR.Transports && RR.Transports.trystero && RR.Transports.trystero(); };
+
+  const CSS = `
+  #net-ui{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;font-family:inherit;background:rgba(6,12,20,.55);backdrop-filter:blur(3px)}
+  #net-ui.on{display:flex}
+  #net-ui .np{background:linear-gradient(180deg,rgba(20,32,44,.96),rgba(12,20,30,.96));border:1px solid rgba(120,170,210,.28);border-radius:16px;padding:26px 30px;min-width:340px;max-width:440px;color:#e7eef4;box-shadow:0 18px 60px rgba(0,0,0,.5)}
+  #net-ui h2{margin:0 0 4px;font-size:22px;letter-spacing:.06em;color:#ffd479}
+  #net-ui .sub{opacity:.7;font-size:13px;margin-bottom:16px}
+  #net-ui label{display:block;font-size:12px;letter-spacing:.08em;opacity:.75;margin:12px 0 4px}
+  #net-ui input,#net-ui select{width:100%;box-sizing:border-box;background:rgba(8,14,22,.8);border:1px solid rgba(120,170,210,.3);color:#eef4f8;border-radius:9px;padding:10px 12px;font-size:15px;font-family:inherit}
+  #net-ui .row{display:flex;gap:10px}
+  #net-ui .row>*{flex:1}
+  #net-ui button{margin-top:16px;width:100%;background:linear-gradient(180deg,#2b6fb0,#1d4f86);border:0;color:#fff;font-weight:700;letter-spacing:.05em;padding:12px;border-radius:10px;font-size:15px;cursor:pointer;font-family:inherit}
+  #net-ui button:hover{filter:brightness(1.12)} #net-ui button:disabled{opacity:.5;cursor:default;filter:none}
+  #net-ui button.ghost{background:transparent;border:1px solid rgba(150,180,210,.35);color:#cfe0ee;font-weight:600}
+  #net-ui .seat{display:flex;align-items:center;gap:10px;padding:9px 12px;margin:6px 0;background:rgba(8,14,22,.6);border-radius:9px;border:1px solid rgba(120,170,210,.14)}
+  #net-ui .seat .dot{width:9px;height:9px;border-radius:50%;background:#39c06a;flex:0 0 auto}
+  #net-ui .seat b{flex:1;font-weight:600} #net-ui .seat .tag{font-size:11px;opacity:.6;letter-spacing:.05em}
+  #net-ui .host-badge{color:#ffd479;font-size:11px;letter-spacing:.08em}
+  #net-ui .code{font-size:26px;letter-spacing:.28em;color:#8fd0ff;font-weight:700;text-align:center;margin:2px 0 2px}
+  #net-ui ol{margin:8px 0 0;padding:0;list-style:none}
+  #net-ui ol li{display:flex;gap:12px;align-items:baseline;padding:8px 12px;margin:5px 0;background:rgba(8,14,22,.6);border-radius:8px}
+  #net-ui ol li .pl{font-size:18px;font-weight:800;color:#ffd479;width:26px}
+  #net-ui ol li.me{outline:1px solid rgba(255,212,121,.5)}
+  #net-ui ol li .tm{margin-left:auto;opacity:.85;font-variant-numeric:tabular-nums}
+  #net-play-btn{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:40;background:linear-gradient(180deg,#2b6fb0,#1d4f86);border:0;color:#fff;font-weight:700;letter-spacing:.08em;padding:11px 22px;border-radius:22px;font-size:14px;cursor:pointer;font-family:inherit;box-shadow:0 8px 24px rgba(0,0,0,.4);display:none}
+  `;
+
+  function boatOptions(sel) {
+    return RR.Boats.CATALOG.map((v, i) => `<option value="${i}"${i === sel ? ' selected' : ''}>${v.name}</option>`).join('');
+  }
+  function fmt(t) { const m = Math.floor(t / 60), s = (t - m * 60); return m + ':' + s.toFixed(1).padStart(4, '0'); }
+  function esc(s) { return String(s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])); }
+
+  UI.init = function () {
+    if (root) return;
+    const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
+    root = document.createElement('div'); root.id = 'net-ui'; document.body.appendChild(root);
+
+    const btn = document.createElement('button'); btn.id = 'net-play-btn'; btn.textContent = '▸ PLAY ONLINE';
+    btn.onclick = () => UI.openEntry(); document.body.appendChild(btn);
+    // show the button only on the title/menu (not mid-race)
+    setInterval(() => {
+      const onMenu = RR.Menus && RR.Menus.screen && (RR.Menus.screen() === 'title' || RR.Menus.screen() === 'vehicle' || RR.Menus.screen() === 'course');
+      btn.style.display = (!RR.Net.active && onMenu && UI.transportFactory()) ? 'block' : 'none';
+    }, 700);
+
+    RR.Net.on('roster', renderWaiting);
+    RR.Net.on('start', () => hide());
+    RR.Net.on('alldone', showResults);
+
+    // launched from Slack / a shared link?
+    const q = new URLSearchParams(location.search);
+    const room = q.get('room');
+    if (room) UI.openEntry({ room: room, name: q.get('name'), boat: parseInt(q.get('boat') || '', 10) });
+  };
+
+  UI.openEntry = function (pre) {
+    pre = pre || {};
+    const savedName = pre.name || localStorage.getItem('rr_name') || '';
+    const savedBoat = isFinite(pre.boat) ? pre.boat : (RR.Menus.selection ? RR.Menus.selection().vehicleIdx : 0);
+    const roomVal = pre.room || '';
+    root.innerHTML = `<div class="np">
+      <h2>PLAY ONLINE</h2>
+      <div class="sub">Race your coworkers live. Same room code = same race.</div>
+      <label>YOUR NAME</label><input id="ne-name" maxlength="24" placeholder="e.g. Cam" value="${esc(savedName)}">
+      <label>BOAT</label><select id="ne-boat">${boatOptions(savedBoat)}</select>
+      <label>ROOM CODE</label>
+      <div class="row"><input id="ne-room" maxlength="12" placeholder="ROOM" value="${esc(roomVal)}" style="text-transform:uppercase">
+      <button class="ghost" id="ne-new" style="margin-top:0;flex:0 0 auto;width:auto;padding:12px 16px">New</button></div>
+      <button id="ne-join">JOIN RACE</button>
+      <button class="ghost" id="ne-cancel">Cancel</button>
+    </div>`;
+    show();
+    $('#ne-new').onclick = () => { $('#ne-room').value = randCode(); };
+    if (!roomVal) $('#ne-room').value = randCode();
+    $('#ne-cancel').onclick = () => hide();
+    $('#ne-join').onclick = () => {
+      const name = ($('#ne-name').value || 'Racer').trim().slice(0, 24) || 'Racer';
+      const boat = parseInt($('#ne-boat').value, 10) || 0;
+      const rm = ($('#ne-room').value || '').trim().toUpperCase() || randCode();
+      localStorage.setItem('rr_name', name);
+      const tp = UI.transportFactory();
+      if (!tp) { alert('Online play needs to be opened from a hosted page (not a local file).'); return; }
+      RR.Net.join({ room: rm, name: name, boatIdx: boat, transport: tp }).then(renderWaiting);
+    };
+  };
+
+  function renderWaiting() {
+    if (!RR.Net.active) return;
+    // don't cover an in-progress race/results
+    if (RR.Net.self()._finished) return;
+    const roster = RR.Net.roster();
+    const host = RR.Net.isHost();
+    const me = RR.Net.self();
+    root.innerHTML = `<div class="np">
+      <h2>LOBBY</h2><div class="sub">Room</div>
+      <div class="code">${esc(RR.Net.room)}</div>
+      <div class="sub" style="text-align:center">${roster.length} racer${roster.length === 1 ? '' : 's'} — starts at ${autoStart} or when the host begins</div>
+      <div id="ne-seats"></div>
+      <label>YOUR BOAT</label><select id="ne-boat2">${boatOptions(me.boatIdx)}</select>
+      ${host ? '<button id="ne-start">START RACE</button>' : '<button disabled>Waiting for host to start…</button>'}
+      <button class="ghost" id="ne-leave">Leave</button>
+    </div>`;
+    show();
+    $('#ne-seats').innerHTML = roster.map((r) => `<div class="seat"><span class="dot"></span><b>${esc(r.name)}${r.isSelf ? ' (you)' : ''}</b><span class="tag">${esc(RR.Boats.CATALOG[r.boatIdx] ? RR.Boats.CATALOG[r.boatIdx].name : '')}</span>${r.id === minId(roster) ? '<span class="host-badge">HOST</span>' : ''}</div>`).join('');
+    $('#ne-boat2').onchange = (e) => RR.Net.setBoat(parseInt(e.target.value, 10) || 0);
+    $('#ne-leave').onclick = () => { RR.Net.leave(); hide(); };
+    if (host) $('#ne-start').onclick = () => RR.Net.startAsHost(RR.Menus.selection ? RR.Menus.selection().courseIdx : 0);
+    // auto-start when full (host fires it for everyone)
+    if (host && roster.length >= autoStart) RR.Net.startAsHost(RR.Menus.selection ? RR.Menus.selection().courseIdx : 0);
+  }
+
+  function showResults(results) {
+    root.innerHTML = `<div class="np">
+      <h2>RESULTS</h2><div class="sub">Room ${esc(RR.Net.room)}</div>
+      <ol>${results.map((r) => `<li class="${r.isSelf ? 'me' : ''}"><span class="pl">${r.place}</span><b>${esc(r.name)}</b><span class="tag">${esc(RR.Boats.CATALOG[r.boatIdx] ? RR.Boats.CATALOG[r.boatIdx].name : '')}</span><span class="tm">${fmt(r.time)}</span></li>`).join('')}</ol>
+      ${RR.Net.isHost() ? '<button id="ne-again">RACE AGAIN</button>' : '<button disabled>Waiting for host…</button>'}
+      <button class="ghost" id="ne-leave2">Leave</button>
+    </div>`;
+    show();
+    const again = $('#ne-again');
+    if (again) again.onclick = () => { RR.Net.resetRace(); RR.Net.startAsHost(RR.Menus.selection ? RR.Menus.selection().courseIdx : 0); };
+    $('#ne-leave2').onclick = () => { RR.Net.leave(); hide(); if (RR.Menus.showTitle) RR.Menus.showTitle(); };
+    // non-host: when the host restarts, RR.Net 'start' hides this and the race begins
+    RR.Net.on('start', () => hide());
+  }
+
+  function minId(roster) { let m = roster[0].id; for (const r of roster) if (r.id < m) m = r.id; return m; }
+  function randCode() { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < 4; i++) s += A[Math.floor(Math.random() * A.length)]; return s; }
+  function show() { root.classList.add('on'); }
+  function hide() { root.classList.remove('on'); }
+  UI.show = show; UI.hide = hide;
+
+  RR.NetUI = UI;
+})();
+
+</script>
+<script>
 /* ===== js/main.js ===== */
 /* River Racer — bootstrap + game flow */
 (function () {
   const $ = (id) => document.getElementById(id);
   let boats = [], player = null, pilots = [];
+  let remotes = [], netSendT = 0;          // multiplayer: network-driven rival boats + broadcast throttle
   let mode = 'menu';                       // menu | race | paused
   let raceState = null;
   let landmarkTags = [];                   // {x, z, name, r2} for HUD callouts
@@ -10185,47 +10582,91 @@ window.CHICAGO = {
     };
     RR.Menus.onResume = () => { mode = 'race'; RR.Engine.timeScale = 1; };
     RR.Menus.onQuit = quitToTitle;
+    setupNet();
+    if (RR.NetUI) RR.NetUI.init();
     RR.Engine.onUpdate(update);
     RR.Engine.start();
     setTimeout(() => { $('loading').style.display = 'none'; }, 250);
     window.RRTest.ready = true;
   }
 
+  // ---------- multiplayer wiring (dormant unless a room is joined) ----------
+  function setupNet() {
+    if (!RR.Net) return;
+    RR.Net.on('start', (info) => {
+      if (RR.Menus.hide) RR.Menus.hide();
+      RR.Audio.setMusic(false);
+      startRace(info.courseIdx | 0, 0, false, RR.Net.roster());
+      mode = 'race';
+    });
+    RR.Net.on('finish', (id, elapsed) => {
+      const b = remotes.find((x) => x.netId === id);
+      if (b) { b.finished = true; b.finishTime = elapsed; }
+    });
+    RR.Net.on('alldone', (results) => {
+      mode = 'results'; RR.HUD.show(false); RR.Audio.stopEngine();
+      if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(false);
+      if (RR.Menus.showNetResults) RR.Menus.showNetResults(results, raceState && raceState.course && raceState.course.id);
+    });
+  }
+
   // ---------- race lifecycle ----------
   function clearBoats() {
     for (const b of boats) RR.Engine.scene.remove(b.mesh);
     RR.FX.clearBoats();
-    boats = []; pilots = []; player = null;
+    boats = []; pilots = []; remotes = []; player = null;
   }
 
-  function startRace(courseIdx, vehicleIdx, timeTrial) {
+  // roster (multiplayer) = [{id, name, boatIdx, isSelf}] sorted identically on every client
+  function startRace(courseIdx, vehicleIdx, timeTrial, roster) {
     clearBoats();
     RR.Engine.timeScale = 1;                          // clear any pause/photo slo-mo from a prior race
-    const N = timeTrial ? 1 : 6;
     const catalog = RR.Boats.CATALOG;
-    // one-design racing: every rival runs the SAME hull as you (fair fight, pure skill),
-    // each in its own livery so you can tell the field apart at speed
-    const LIVERY = [0xd8dce0, 0x2f8f4f, 0x8a2fb0, 0xe07820, 0x16303f];
-    for (let i = 0; i < N; i++) {
-      const base = catalog[vehicleIdx];
-      const spec = i === 0 ? base : Object.assign({}, base, { hull: LIVERY[(i - 1) % LIVERY.length] });
-      const mesh = RR.Boats.build(spec);
-      RR.Engine.scene.add(mesh);
-      const b = RR.Physics.createBoat(spec, mesh);
-      b.isPlayer = i === 0;
-      boats.push(b);
-      RR.FX.registerBoat(b);
+    const mp = !!(roster && roster.length);
+
+    if (mp) {
+      // one boat per real player — each brings their OWN chosen boat; mine is the player
+      for (const r of roster) {
+        const spec = catalog[(r.boatIdx | 0) % catalog.length];
+        const mesh = RR.Boats.build(spec);
+        RR.Engine.scene.add(mesh);
+        const b = RR.Physics.createBoat(spec, mesh);
+        b.isPlayer = !!r.isSelf;
+        b.displayName = r.name;
+        if (!r.isSelf) { b.remote = true; b.netId = r.id; remotes.push(b); }
+        boats.push(b);
+        RR.FX.registerBoat(b);
+      }
+      player = boats.find((b) => b.isPlayer) || boats[0];
+    } else {
+      const N = timeTrial ? 1 : 6;
+      // one-design racing: every rival runs the SAME hull as you (fair fight, pure skill),
+      // each in its own livery so you can tell the field apart at speed
+      const LIVERY = [0xd8dce0, 0x2f8f4f, 0x8a2fb0, 0xe07820, 0x16303f];
+      for (let i = 0; i < N; i++) {
+        const base = catalog[vehicleIdx];
+        const spec = i === 0 ? base : Object.assign({}, base, { hull: LIVERY[(i - 1) % LIVERY.length] });
+        const mesh = RR.Boats.build(spec);
+        RR.Engine.scene.add(mesh);
+        const b = RR.Physics.createBoat(spec, mesh);
+        b.isPlayer = i === 0;
+        boats.push(b);
+        RR.FX.registerBoat(b);
+      }
+      player = boats[0];
     }
-    player = boats[0];
 
     raceState = RR.Race.start(courseIdx, boats, player);
+    raceState.mp = mp;
 
     pilots = [];
-    const diff = RR.Menus && RR.Menus.difficulty ? RR.Menus.difficulty() : 1;
-    for (let i = 1; i < boats.length; i++) {
-      const p = RR.AI.createPilot(boats[i], { path: raceState.route }, i - 1, diff);
-      boats[i].pilotName = p.name;
-      pilots.push(p);
+    if (!mp) {
+      const diff = RR.Menus && RR.Menus.difficulty ? RR.Menus.difficulty() : 1;
+      for (let i = 1; i < boats.length; i++) {
+        const p = RR.AI.createPilot(boats[i], { path: raceState.route }, i - 1, diff);
+        boats[i].pilotName = p.name;
+        pilots.push(p);
+      }
     }
 
     // effect + audio hooks
@@ -10252,7 +10693,8 @@ window.CHICAGO = {
       if (player) { player.boostEnergy = Math.min(1, player.boostEnergy + 0.45); RR.Camera.kick(0.25); RR.HUD.flash('+BOOST'); }
     };
     RR.Race.onLap = () => { RR.Audio.checkpoint(); };
-    RR.Race.onPlayerFinish = (pos) => {
+    RR.Race.onPlayerFinish = (pos, time) => {
+      if (raceState.mp && RR.Net.active) RR.Net.sendFinish(time);   // tell the room my elapsed time
       RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.showPlacement(pos);
       const g = raceState && raceState.finishGate;
       if (g) {
@@ -10375,14 +10817,21 @@ window.CHICAGO = {
     const pc = racing && !player.finished ? RR.Input : { throttle: player.finished ? 0.25 : 0, brake: 0, steer: RR.Input.steer * 0.4, boost: false };
     RR.Physics.update(player, dt, pc, t);
 
-    // AI
+    // AI (single-player only)
     for (const p of pilots) {
       RR.AI.update(p, dt, t, player.routeD);
       const c = racing ? p.ctl : aiCtl;
       RR.Physics.update(p.boat, dt, c, t);
     }
 
-    RR.Physics.collidePairs(boats);
+    // multiplayer: rivals are network-driven — interpolate them, and broadcast my own boat
+    if (raceState.mp && RR.Net.active) {
+      for (const b of remotes) RR.Net.applyRemote(b, dt);
+      netSendT -= dt;
+      if (netSendT <= 0) { RR.Net.sendState(player); netSendT = 1 / 14; }   // ~14 Hz
+    }
+
+    if (!raceState.mp) RR.Physics.collidePairs(boats);   // MP contact handled visually; no authoritative push (avoids fighting the net)
 
     // drawbridge warning: a bascule leaf rising just ahead sounds its horn + scatters gulls
     if (racing && RR.Bridges && RR.Bridges.openings) {
@@ -10467,6 +10916,16 @@ window.CHICAGO = {
   window.RRTest = {
     ready: false,
     startRace: (c, v) => { RR.Menus.hide(); RR.Audio.setMusic(false); startRace(c || 0, v || 0, false); },
+    // multiplayer test hooks (mock transport = same-browser tabs talk over BroadcastChannel)
+    netJoin: (room, name, boatIdx) => RR.Net.join({ room, name, boatIdx: boatIdx || 0, transport: RR.Transports.mock() }),
+    netStart: (c) => RR.Net.startAsHost(c || 0),
+    netRoster: () => RR.Net.roster(),
+    netResults: () => RR.Net.results(),
+    netCount: () => RR.Net.count(),
+    netActive: () => !!(RR.Net && RR.Net.active),
+    netRemotes: () => remotes.map((b) => ({ id: b.netId, name: b.displayName, x: +b.pos.x.toFixed(1), z: +b.pos.z.toFixed(1), finished: !!b.finished })),
+    netPhase: () => (raceState ? raceState.phase : null),
+    selfProgress: () => (player ? { routeD: Math.round(player.routeD), lap: player.lap, finished: !!player.finished } : null),
     warp: (sec) => {
       // during warp the AI takes the player's wheel so the sim actually progresses
       if (player && !window.RRTest._autopilot) {
