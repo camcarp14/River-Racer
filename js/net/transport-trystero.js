@@ -12,6 +12,8 @@
   RR.Transports.trystero = function () {
     const T = window.Trystero;
     if (!T || !T.joinRoom) return null;
+    // P2P signaling + WebRTC need a real (hosted) origin — never offer it from a file:// page
+    if (location.protocol !== 'http:' && location.protocol !== 'https:') return null;
 
     let room = null, sendMsg = null;
     const cbs = { 'peer-join': [], 'peer-leave': [], 'message': [] };
@@ -21,13 +23,13 @@
       get selfId() { return T.selfId; },
       on(evt, cb) { if (cbs[evt]) cbs[evt].push(cb); },
       connect(roomId /*, meta */) {
-        // relays: Trystero's default strategy; appId namespaces our rooms away from other apps
+        // appId namespaces our rooms away from other Trystero apps on the same relays
         room = T.joinRoom({ appId: 'river-racer-arcade' }, String(roomId));
-        const pair = room.makeAction('m');
-        sendMsg = pair[0];
-        pair[1]((data, peerId) => fire('message', peerId, data));
-        room.onPeerJoin((id) => fire('peer-join', id, null));   // names arrive via our own 'hello' message
-        room.onPeerLeave((id) => fire('peer-leave', id));
+        const action = room.makeAction('m');           // { send, onMessage } in Trystero 0.25
+        sendMsg = (obj) => action.send(obj);
+        action.onMessage = (data, meta) => fire('message', meta && meta.peerId, data);
+        room.onPeerJoin = (id) => fire('peer-join', id, null);   // names arrive via our own 'hello' message
+        room.onPeerLeave = (id) => fire('peer-leave', id);
         return Promise.resolve();
       },
       send(obj) { if (sendMsg) { try { sendMsg(obj); } catch (e) { /* peer mid-drop */ } } },
