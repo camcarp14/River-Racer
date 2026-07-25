@@ -598,7 +598,7 @@ window.CHICAGO = {
   {
    "name": "Franklin–Orleans St",
    "x": -455.8,
-   "z": 34.5,
+   "z": 33.3,
    "branch": "main",
    "kind": "bascule",
    "clearance": 6
@@ -606,7 +606,7 @@ window.CHICAGO = {
   {
    "name": "Wells St",
    "x": -323.2,
-   "z": 30.6,
+   "z": 33.3,
    "branch": "main",
    "kind": "l",
    "clearance": 5.5
@@ -614,7 +614,7 @@ window.CHICAGO = {
   {
    "name": "LaSalle St",
    "x": -198.9,
-   "z": 31.3,
+   "z": 33.3,
    "branch": "main",
    "kind": "bascule",
    "clearance": 5.8
@@ -622,7 +622,7 @@ window.CHICAGO = {
   {
    "name": "Clark St",
    "x": -74.6,
-   "z": 31.6,
+   "z": 33.3,
    "branch": "main",
    "kind": "bascule",
    "clearance": 5.8
@@ -630,7 +630,7 @@ window.CHICAGO = {
   {
    "name": "Dearborn St",
    "x": 49.7,
-   "z": 31.0,
+   "z": 33.3,
    "branch": "main",
    "kind": "bascule",
    "clearance": 5.8
@@ -638,15 +638,15 @@ window.CHICAGO = {
   {
    "name": "State St",
    "x": 174,
-   "z": 22.1,
+   "z": 22.2,
    "branch": "main",
    "kind": "bascule",
    "clearance": 6
   },
   {
    "name": "Wabash Ave",
-   "x": 307.2,
-   "z": -73.7,
+   "x": 306.6,
+   "z": -77.8,
    "branch": "main",
    "kind": "bascule",
    "clearance": 5.8
@@ -827,7 +827,7 @@ window.CHICAGO = {
    "z": -88.9,
    "kind": "mart",
    "h": 104,
-   "w": 210,
+   "w": 170,
    "d": 90,
    "c": 12562068,
    "dark": false,
@@ -848,7 +848,7 @@ window.CHICAGO = {
   {
    "name": "Marina City",
    "x": 124.3,
-   "z": -88.9,
+   "z": -24,
    "kind": "marina",
    "h": 179,
    "w": 90,
@@ -863,9 +863,9 @@ window.CHICAGO = {
    "z": -66.7,
    "kind": "boxglass",
    "h": 212,
-   "w": 60,
-   "d": 40,
-   "c": 3554631,
+   "w": 81,
+   "d": 42,
+   "c": 3354666,
    "dark": true,
    "gold": false
   },
@@ -886,7 +886,7 @@ window.CHICAGO = {
    "x": 439.2,
    "z": -144.5,
    "kind": "wrigley",
-   "h": 130,
+   "h": 133.5,
    "w": 55,
    "d": 35,
    "c": 15855072,
@@ -913,7 +913,7 @@ window.CHICAGO = {
    "h": 132,
    "w": 55,
    "d": 42,
-   "c": 14672870,
+   "c": 9076328,
    "dark": false,
    "gold": false
   },
@@ -937,7 +937,7 @@ window.CHICAGO = {
    "h": 197,
    "w": 50,
    "d": 50,
-   "c": 3488838,
+   "c": 3814442,
    "dark": false,
    "gold": false
   },
@@ -970,7 +970,7 @@ window.CHICAGO = {
    "x": 397.8,
    "z": 66.7,
    "kind": "deco",
-   "h": 112,
+   "h": 120.7,
    "w": 22,
    "d": 40,
    "c": 11905166,
@@ -1006,10 +1006,10 @@ window.CHICAGO = {
    "x": 455.8,
    "z": 155.6,
    "kind": "deco",
-   "h": 120,
+   "h": 153,
    "w": 30,
    "d": 42,
-   "c": 1915434,
+   "c": 1849900,
    "dark": false,
    "gold": true
   },
@@ -1246,7 +1246,7 @@ window.CHICAGO = {
    "x": -745.9,
    "z": 411.2,
    "kind": "boxglass",
-   "h": 157,
+   "h": 137,
    "w": 60,
    "d": 34,
    "c": 8360862,
@@ -1278,11 +1278,47 @@ window.CHICAGO = {
    "gold": false
   },
   {
-   "name": "Wolf Point East",
-   "x": -497.2,
-   "z": 44.5,
+   "name": "Old Chicago Main Post Office",
+   "x": -690,
+   "z": 1230,
+   "kind": "postoffice",
+   "h": 104,
+   "w": 100,
+   "d": 210,
+   "c": 13221537,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "Chicago Board of Trade",
+   "x": -207,
+   "z": 1000,
+   "kind": "bot",
+   "h": 184.4,
+   "w": 50,
+   "d": 50,
+   "c": 12760990,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "Wolf Point West",
+   "x": -702,
+   "z": -100,
    "kind": "boxglass",
-   "h": 194,
+   "h": 154,
+   "w": 40,
+   "d": 32,
+   "c": 9677236,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "Wolf Point East",
+   "x": -676,
+   "z": -46,
+   "kind": "wolfsail",
+   "h": 210,
    "w": 44,
    "d": 30,
    "c": 9414064,
@@ -1291,13 +1327,37 @@ window.CHICAGO = {
   },
   {
    "name": "Salesforce Tower",
-   "x": -563.5,
-   "z": 77.8,
-   "kind": "boxglass",
+   "x": -666,
+   "z": 52,
+   "kind": "wolfcrown",
    "h": 253,
    "w": 48,
    "d": 36,
    "c": 11123908,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "Apparel Center",
+   "x": -600,
+   "z": -110,
+   "kind": "boxstone",
+   "h": 76,
+   "w": 90,
+   "d": 70,
+   "c": 12104356,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "Fulton House",
+   "x": -800,
+   "z": -60,
+   "kind": "boxstone",
+   "h": 50,
+   "w": 34,
+   "d": 34,
+   "c": 9194035,
    "dark": false,
    "gold": false
   },
@@ -1310,6 +1370,18 @@ window.CHICAGO = {
    "w": 150,
    "d": 40,
    "c": 11971996,
+   "dark": false,
+   "gold": false
+  },
+  {
+   "name": "Tribune Freedom Center",
+   "x": -1367,
+   "z": -900,
+   "kind": "boxstone",
+   "h": 22,
+   "w": 200,
+   "d": 90,
+   "c": 10133670,
    "dark": false,
    "gold": false
   },

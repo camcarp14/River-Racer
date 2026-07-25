@@ -25,12 +25,24 @@
       s += texture2D(tDiffuse, vUv - px * 3.2308).rgb * 0.0702;
       gl_FragColor = vec4(s, 1.0);
     }`;
+  // The composite already runs in display (sRGB) space, so it is the right place to grade —
+  // zero extra passes. uLift is the fix for crushed blacks: it maps 0.0 onto a *tinted* floor
+  // instead of onto nothing, which is why no facade in the canyon reads as pure black any more.
   const COMP = `
-    uniform sampler2D tScene; uniform sampler2D tBloom; uniform float strength; varying vec2 vUv;
+    uniform sampler2D tScene; uniform sampler2D tBloom; uniform float strength;
+    uniform vec3 uLift, uGamma, uGain;
+    uniform float uSat, uVig;
+    varying vec2 vUv;
     void main(){
-      vec3 c = texture2D(tScene, vUv).rgb;
-      vec3 b = texture2D(tBloom, vUv).rgb;
-      gl_FragColor = vec4(c + b * strength, 1.0);
+      vec3 c = texture2D(tScene, vUv).rgb + texture2D(tBloom, vUv).rgb * strength;
+      c = clamp(c, 0.0, 1.0);
+      c = pow(c, uGamma);                       // per-channel gamma splits shadow/highlight hue
+      c = c * uGain + uLift * (1.0 - c);
+      float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+      c = mix(vec3(l), c, uSat);
+      float r = length(vUv - 0.5) * 1.42;
+      c *= 1.0 - uVig * pow(clamp(r, 0.0, 1.0), 2.4);
+      gl_FragColor = vec4(c, 1.0);
     }`;
 
   function rt(w, h, srgb) {
@@ -45,11 +57,37 @@
     brightRT = rt(hw, hh, false); blurA = rt(hw, hh, false); blurB = rt(hw, hh, false);
     cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
-    brightMat = new THREE.ShaderMaterial({ uniforms: { tDiffuse: { value: null }, threshold: { value: 0.75 } }, vertexShader: VS, fragmentShader: BRIGHT, depthTest: false, depthWrite: false });
+    brightMat = new THREE.ShaderMaterial({ uniforms: { tDiffuse: { value: null }, threshold: { value: 0.80 } }, vertexShader: VS, fragmentShader: BRIGHT, depthTest: false, depthWrite: false });
     blurMat = new THREE.ShaderMaterial({ uniforms: { tDiffuse: { value: null }, dir: { value: new THREE.Vector2() }, res: { value: new THREE.Vector2(hw, hh) } }, vertexShader: VS, fragmentShader: BLUR, depthTest: false, depthWrite: false });
-    compMat = new THREE.ShaderMaterial({ uniforms: { tScene: { value: null }, tBloom: { value: null }, strength: { value: 0.85 } }, vertexShader: VS, fragmentShader: COMP, depthTest: false, depthWrite: false });
+    compMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tScene: { value: null }, tBloom: { value: null }, strength: { value: 0.55 },
+        uLift: { value: new THREE.Vector3(0.020, 0.026, 0.036) },
+        uGamma: { value: new THREE.Vector3(0.98, 1.00, 1.02) },
+        uGain: { value: new THREE.Vector3(1.03, 1.01, 0.99) },
+        uSat: { value: 1.06 },
+        uVig: { value: 0.30 },
+      },
+      vertexShader: VS, fragmentShader: COMP, depthTest: false, depthWrite: false,
+    });
     window.addEventListener('resize', P.resize);
     ready = true;
+  };
+
+  // theme.js drives these per preset. Both are no-ops before init(), so load order can't throw.
+  P.setGrade = function (g) {
+    if (!ready || !g) return;
+    const u = compMat.uniforms;
+    if (g.lift) u.uLift.value.set(g.lift[0], g.lift[1], g.lift[2]);
+    if (g.gamma) u.uGamma.value.set(g.gamma[0], g.gamma[1], g.gamma[2]);
+    if (g.gain) u.uGain.value.set(g.gain[0], g.gain[1], g.gain[2]);
+    if (g.sat != null) u.uSat.value = g.sat;
+    if (g.vignette != null) u.uVig.value = g.vignette;
+  };
+  P.setBloom = function (b) {
+    if (!ready || !b) return;
+    if (b.threshold != null) brightMat.uniforms.threshold.value = b.threshold;
+    if (b.strength != null) compMat.uniforms.strength.value = b.strength;
   };
 
   P.resize = function () {

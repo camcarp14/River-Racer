@@ -113,26 +113,32 @@ const BRIDGES = [
 ];
 
 // ---------- landmarks ----------
-// kind picks the bespoke builder in js/world/landmarks.js
+// kind picks the bespoke builder in js/world/landmarks.js.
+// `gx`/`gz` override the lat/lon conversion with hand-reconciled GAME-frame metres. The baked
+// river centerlines are a medial-axis extraction that drifts ~50 m east / ~90 m south of WGS84
+// at the Wolf Point confluence, so buildings that must sit ON the water's edge are placed
+// against RR.River.paths directly rather than through the projection.
 const LANDMARKS = [
   // Main Stem — north bank, west → east
-  { name: 'Merchandise Mart', lat: 41.8888, lon: -87.6354, kind: 'mart', h: 104, w: 210, d: 90, c: 0xbfae94 },
+  { name: 'Merchandise Mart', lat: 41.8888, lon: -87.6354, kind: 'mart', h: 104, w: 170, d: 90, c: 0xbfae94 },
   { name: 'Reid Murdoch Center', lat: 41.8889, lon: -87.6312, kind: 'reid', h: 34, w: 98, d: 30, c: 0x9c4f33 },
-  { name: 'Marina City', lat: 41.8888, lon: -87.6285, kind: 'marina', h: 179, w: 90, d: 33, c: 0xcac4b8 },
-  { name: '330 N Wabash', lat: 41.8886, lon: -87.6268, kind: 'boxglass', h: 212, w: 60, d: 40, c: 0x363d47, dark: true },
+  // real Marina City stands ~15 m off the water over its own marina; the baked lat put it 82 m back
+  { name: 'Marina City', lat: 41.8888, lon: -87.6285, gz: -24, kind: 'marina', h: 179, w: 90, d: 33, c: 0xcac4b8 },
+  { name: '330 N Wabash', lat: 41.8886, lon: -87.6268, kind: 'boxglass', h: 212, w: 81, d: 42, c: 0x33302a, dark: true },
   { name: 'Trump Tower', lat: 41.8890, lon: -87.6260, kind: 'trump', h: 357, w: 78, d: 40, c: 0x9fb6c4 },
-  { name: 'Wrigley Building', lat: 41.8893, lon: -87.6247, kind: 'wrigley', h: 130, w: 55, d: 35, c: 0xf1ede0 },
+  { name: 'Wrigley Building', lat: 41.8893, lon: -87.6247, kind: 'wrigley', h: 133.5, w: 55, d: 35, c: 0xf1ede0 },
   { name: 'Tribune Tower', lat: 41.8905, lon: -87.6233, kind: 'tribune', h: 141, w: 40, d: 40, c: 0xc9bfa8 },
-  { name: '401 N Michigan', lat: 41.8897, lon: -87.6237, kind: 'boxglass', h: 132, w: 55, d: 42, c: 0xdfe3e6 },
+  { name: '401 N Michigan', lat: 41.8897, lon: -87.6237, kind: 'boxglass', h: 132, w: 55, d: 42, c: 0x8a7e68 },
   { name: 'NBC Tower', lat: 41.8901, lon: -87.6206, kind: 'nbc', h: 191, w: 42, d: 36, c: 0xcdc2a8 },
-  { name: 'Lake Point Tower', lat: 41.8917, lon: -87.6134, kind: 'lakepoint', h: 197, w: 50, d: 50, c: 0x353c46 },
+  { name: 'Lake Point Tower', lat: 41.8917, lon: -87.6134, kind: 'lakepoint', h: 197, w: 50, d: 50, c: 0x3a342a },
   // Main Stem — south bank, west → east
   { name: '333 W Wacker', lat: 41.8863, lon: -87.6370, kind: 'wacker333', h: 147, w: 74, d: 32, c: 0x2e5f57 },
   { name: 'LondonHouse', lat: 41.8877, lon: -87.6248, kind: 'london', h: 90, w: 42, d: 34, c: 0xd9cfb8 },
-  { name: '333 N Michigan', lat: 41.8874, lon: -87.6252, kind: 'deco', h: 112, w: 22, d: 40, c: 0xb5a88e },
+  { name: '333 N Michigan', lat: 41.8874, lon: -87.6252, kind: 'deco', h: 120.7, w: 22, d: 40, c: 0xb5a88e },
   { name: 'Mather Tower', lat: 41.8873, lon: -87.6260, kind: 'mather', h: 157, w: 20, d: 20, c: 0xd8cdb4 },
   { name: 'Jewelers Building', lat: 41.8868, lon: -87.6265, kind: 'jewelers', h: 159, w: 48, d: 48, c: 0xd3c7ac },
-  { name: 'Carbide & Carbon', lat: 41.8866, lon: -87.6245, kind: 'deco', h: 120, w: 30, d: 42, c: 0x1d3a2a, gold: true },
+  // 153 m, not 120 — at 120 the green bottle disappears behind its neighbours
+  { name: 'Carbide & Carbon', lat: 41.8866, lon: -87.6245, kind: 'deco', h: 153, w: 30, d: 42, c: 0x1c3a2c, gold: true },
   { name: 'Hyatt Regency', lat: 41.8876, lon: -87.6216, kind: 'boxglass', h: 109, w: 90, d: 34, c: 0x5a4a3a, dark: true },
   { name: 'Swissôtel', lat: 41.8877, lon: -87.6196, kind: 'swissotel', h: 140, w: 55, d: 55, c: 0xaebfca },
   { name: 'Aqua Tower', lat: 41.8860, lon: -87.6203, kind: 'aqua', h: 262, w: 60, d: 30, c: 0xdfe5e8 },
@@ -155,13 +161,25 @@ const LANDMARKS = [
   { name: '311 S Wacker', lat: 41.8774, lon: -87.6366, kind: 'crown311', h: 293, w: 52, d: 52, c: 0xc2a8a0 },
   { name: 'Union Station', lat: 41.8787, lon: -87.6402, kind: 'boxstone', h: 36, w: 100, d: 80, c: 0xcfc5ae },
   { name: 'Civic Opera House', lat: 41.8824, lon: -87.6374, kind: 'opera', h: 169, w: 82, d: 50, c: 0xc8bda6 },
-  { name: 'Boeing Building', lat: 41.8843, lon: -87.6390, kind: 'boxglass', h: 157, w: 60, d: 34, c: 0x7f939e },
+  { name: 'Boeing Building', lat: 41.8843, lon: -87.6390, kind: 'boxglass', h: 137, w: 60, d: 34, c: 0x7f939e },
   { name: '150 N Riverside', lat: 41.8848, lon: -87.6385, kind: 'riverside150', h: 228, w: 54, d: 30, c: 0x39525e },
   { name: 'River Point', lat: 41.8861, lon: -87.6396, kind: 'riverpoint', h: 224, w: 64, d: 30, c: 0x9fc2cf },
-  { name: 'Wolf Point East', lat: 41.8876, lon: -87.6360, kind: 'boxglass', h: 194, w: 44, d: 30, c: 0x8fa5b0 },
-  { name: 'Salesforce Tower', lat: 41.8873, lon: -87.6368, kind: 'boxglass', h: 253, w: 48, d: 36, c: 0xa9bcc4 },
+  // Old Chicago Main Post Office — the Eisenhower is punched clean through its base
+  { name: 'Old Chicago Main Post Office', gx: -690, gz: 1230, kind: 'postoffice', h: 104, w: 100, d: 210, c: 0xc9bea1 },
+  // caps the LaSalle St canyon; 9.4 m faceless Ceres on the pyramid
+  { name: 'Chicago Board of Trade', gx: -207, gz: 1000, kind: 'bot', h: 184.4, w: 50, d: 50, c: 0xc2b79e },
+  // Wolf Point trio — the peninsula NORTH of the Main Stem, east of the North Branch.
+  // The old lat/lon put East and Salesforce inside the channel; clampToLand then threw them
+  // onto the Loop bank, i.e. the wrong side of the river entirely.
+  { name: 'Wolf Point West', gx: -702, gz: -100, kind: 'boxglass', h: 154, w: 40, d: 32, c: 0x93a9b4 },
+  { name: 'Wolf Point East', gx: -676, gz: -46, kind: 'wolfsail', h: 210, w: 44, d: 30, c: 0x8fa5b0 },
+  { name: 'Salesforce Tower', gx: -666, gz: 52, kind: 'wolfcrown', h: 253, w: 48, d: 36, c: 0xa9bcc4 },
+  { name: 'Apparel Center', gx: -600, gz: -110, kind: 'boxstone', h: 76, w: 90, d: 70, c: 0xb8b2a4 },
+  { name: 'Fulton House', gx: -800, gz: -60, kind: 'boxstone', h: 50, w: 34, d: 34, c: 0x8c4a33 },
   // North Branch
   { name: 'Old Montgomery Ward', lat: 41.8963, lon: -87.6422, kind: 'boxstone', h: 32, w: 150, d: 40, c: 0xb6ad9c },
+  // the printing plant that sits on the Full River Run start line
+  { name: 'Tribune Freedom Center', gx: -1367, gz: -900, kind: 'boxstone', h: 22, w: 200, d: 90, c: 0x9aa0a6 },
   // Fulton River District, west bank of the South Branch — the user's office, an unmistakable orange slab
   { name: '111 N Canal (Ovative Group)', lat: 41.8847, lon: -87.6396, kind: 'canal111', h: 96, w: 64, d: 46, c: 0xf26a1c },
   // Loop / Grant Park easter-egg landmarks
@@ -181,7 +199,10 @@ const out = {
   paths: { north: northPath, south: southPath, main: mainPath, lakeGuide, lakeLoop },
   bridges: BRIDGES.map((b) => ({ name: b.name, x: X(b.lon), z: Z(b.lat), branch: b.br, kind: b.kind, clearance: b.cl })),
   landmarks: LANDMARKS.map((l) => ({
-    name: l.name, x: X(l.lon), z: Z(l.lat), kind: l.kind,
+    name: l.name,
+    x: l.gx !== undefined ? l.gx : X(l.lon),
+    z: l.gz !== undefined ? l.gz : Z(l.lat),
+    kind: l.kind,
     h: l.h, w: l.w, d: l.d, c: l.c, dark: !!l.dark, gold: !!l.gold,
   })),
   generic: { seed: 20260715, loopCenter: { x: -140, z: 980 } },

@@ -20,21 +20,26 @@
       uniforms: {
         uTime: { value: 0 },
         uNoise: { value: noiseTex },
-        uSunDir: { value: new THREE.Vector3(-0.72, 0.38, -0.16).normalize() },
+        uSunDir: { value: new THREE.Vector3(-0.5668, 0.6947, 0.4429).normalize() },
+        uSunColor: { value: new THREE.Color(0xffe9c8) },
         uCamPos: { value: new THREE.Vector3() },
-        // Chicago River green vs Lake Michigan blue
-        uDeepRiver: { value: new THREE.Color(0x1e4d43) },
-        uShallowRiver: { value: new THREE.Color(0x3e7d68) },
-        uDeepLake: { value: new THREE.Color(0x14496b) },
-        uShallowLake: { value: new THREE.Color(0x2e7d9e) },
-        uSkyLow: { value: new THREE.Color(0xffd9a0) },
-        uSkyHigh: { value: new THREE.Color(0x74a9c9) },
-        uFogColor: { value: new THREE.Color(0xd8c9a8) },
-        uFogNear: { value: 900 },
-        uFogFar: { value: 4200 },
+        // The Chicago River is opaque, algal, desaturated grey-green — Secchi depth under a
+        // metre. It is not teal. Lake Michigan really is turquoise over the sand shoals.
+        uDeepRiver: { value: new THREE.Color(0x2b3a34) },
+        uShallowRiver: { value: new THREE.Color(0x5e7a64) },
+        uDeepLake: { value: new THREE.Color(0x0f3559) },
+        uShallowLake: { value: new THREE.Color(0x2e8a99) },
+        uSkyLow: { value: new THREE.Color(0xd3e0e8) },
+        uSkyHigh: { value: new THREE.Color(0x4e86bd) },
+        uFogColor: { value: new THREE.Color(0xc3d2dd) },
+        uFogNear: { value: 520 },
+        uFogFar: { value: 3900 },
         uReflect: { value: null },
         uReflectMatrix: { value: new THREE.Matrix4() },
         uReflectStrength: { value: 0 },
+        // Chicago River foam is tan-green, never white. Green-river mode swaps it for pale mint.
+        uFoamTint: { value: new THREE.Color(0.84, 0.86, 0.80) },
+        uFineDetail: { value: 1 },     // autoQuality rung: drops the close-up octave under 44 fps
         uNumBoats: { value: 0 },
         uBoats: { value: Array.from({ length: 8 }, () => new THREE.Vector4()) },
       },
@@ -72,7 +77,7 @@
       fragmentShader: `
         uniform float uTime;
         uniform sampler2D uNoise;
-        uniform vec3 uSunDir, uCamPos;
+        uniform vec3 uSunDir, uSunColor, uCamPos;
         uniform vec3 uDeepRiver, uShallowRiver, uDeepLake, uShallowLake, uSkyLow, uSkyHigh;
         uniform vec3 uFogColor;
         uniform float uFogNear, uFogFar;
@@ -80,6 +85,8 @@
         uniform float uReflectStrength;
         uniform int uNumBoats;
         uniform vec4 uBoats[8];
+        uniform vec3 uFoamTint;
+        uniform float uFineDetail;
         varying vec3 vWorld;
         varying float vShore;
         varying float vLake;
@@ -94,14 +101,20 @@
           float n1 = texture2D(uNoise, uv1).r;
           float n2 = texture2D(uNoise, uv2).r;
           float n3 = texture2D(uNoise, uv3).r;   // fine octave: close-up sparkle detail
-          float bump = (n1 + n2 - 1.0) + (n3 - 0.5) * 0.4;
+          // The fine octaves ran to the horizon and aliased into a shimmer. Fade them out past
+          // 35 m: it kills the worst aliasing in the game and buys real texture under the hull.
+          float dcam = distance(uCamPos, vWorld);
+          float nearF = 1.0 - smoothstep(35.0, 140.0, dcam);
+          float n4 = 0.5;
+          if (uFineDetail > 0.5) n4 = texture2D(uNoise, vWorld.xz * 0.62 + vec2(uTime * 0.13, -uTime * 0.11)).r;
+          float bump = (n1 + n2 - 1.0) + ((n3 - 0.5) * 0.40 + (n4 - 0.5) * 0.26) * nearF;
           float sx = cos(vWorld.x * 0.11 + uTime * 1.35) * 0.0061 * vAmp + bump * 0.10;
           float sz = cos(vWorld.z * 0.13 - uTime * 1.02) * 0.0059 * vAmp + (n2 - 0.5) * 0.12 + (n3 - 0.5) * 0.05;
           vec3 N = normalize(vec3(-sx * 2.4, 1.0, -sz * 2.4));
 
           vec3 V = normalize(uCamPos - vWorld);
           float grazing = pow(1.0 - max(dot(N, V), 0.0), 4.8);
-          float fresnel = 0.04 + 0.96 * grazing;
+          float fresnel = 0.02 + 0.98 * grazing;
 
           vec3 deep = mix(uDeepRiver, uDeepLake, vLake);
           vec3 shallow = mix(uShallowRiver, uShallowLake, vLake);
@@ -110,9 +123,14 @@
           base = mix(base, base * 1.12 + vec3(0.03, 0.06, 0.04), smoothstep(0.55, 1.0, vShore) * 0.5 * (1.0 - vLake));
           // brighten swell crests a touch, darken body at glancing angles (glossier read)
           base *= (1.0 + max(vH, 0.0) * 0.45) * (1.0 - grazing * 0.22);
+          // The river meets vertical sheet pile and limestone, not a beach. The contact shadow
+          // in the last half-metre is what makes the water look like it is IN a channel.
+          float wallShade = smoothstep(0.84, 1.0, vShore);
+          base *= mix(1.0, 0.70, wallShade * (1.0 - vLake));
 
-          // sky reflection tint: warmer when looking toward the low western sun
-          float westness = clamp(dot(normalize(vec3(V.x, 0.0, V.z)), vec3(0.72, 0.0, 0.16)), 0.0, 1.0);
+          // sky reflection tint: warmer when looking back into the sun, wherever it currently is
+          vec3 sunH = normalize(vec3(uSunDir.x, 0.0, uSunDir.z) + vec3(0.0001, 0.0, 0.0));
+          float westness = clamp(dot(normalize(vec3(V.x, 0.0, V.z)), -sunH), 0.0, 1.0);
           vec3 sky = mix(uSkyHigh, uSkyLow, westness * 0.85 + 0.1);
 
           // real planar reflection of the skyline, rippled by the wave normal
@@ -126,35 +144,48 @@
             }
           }
 
-          vec3 col = mix(base, refl, fresnel * 0.9);
+          // turbidity split: the river is opaque and chop-rough, so it reflects far less than
+          // the lake. Two lines, and it is the difference between "river" and "swimming pool".
+          float reflMul = mix(0.62, 1.00, vLake);
+          vec3 col = mix(base, refl, clamp(fresnel * 0.9 * reflMul, 0.0, 1.0));
 
-          // sun glitter: tight warm spec, sparkle twinkles with the fast fine octave
+          // sun glitter. Squashing the normal horizontally stretches the glitter into a streak
+          // along the sun azimuth, which is what a real glitter path looks like.
           vec3 H = normalize(uSunDir + V);
-          float ndh = max(dot(N, H), 0.0);
-          float spec = pow(ndh, 360.0) * 3.0;
-          float sparkle = pow(ndh, 1100.0) * 6.0 * smoothstep(0.56, 0.72, n3) * (0.6 + 0.8 * n2);
-          col += vec3(1.0, 0.80, 0.50) * (spec + sparkle);
+          vec3 Ng = normalize(vec3(N.x * 0.55, N.y, N.z * 0.55));
+          float ndh = max(dot(Ng, H), 0.0);
+          float spec = pow(ndh, 300.0) * 2.4;
+          float sparkle = pow(ndh, 900.0) * 7.0 * smoothstep(0.54, 0.74, n3) * (0.55 + 0.9 * n2);
+          col += uSunColor * (spec + sparkle);
 
           // foam grain: break flat white up with the mid noise octave
           float foamGrain = 0.6 + 0.8 * n2;
 
-          // bank foam: soft lapping line at the seawalls
-          float foamBand = smoothstep(0.78, 0.97, vShore + bump * 0.14 + 0.05 * sin(uTime * 1.7 + vWorld.x * 0.5 + vWorld.z * 0.4));
-          col = mix(col, vec3(0.90, 0.91, 0.87), clamp(foamBand * foamGrain, 0.0, 1.0) * 0.5 * (1.0 - vLake * 0.55));
+          // bank foam: a thin scum line against the wall, not a surf break
+          float foamBand = smoothstep(0.905, 1.0, vShore + bump * 0.10 + 0.035 * sin(uTime * 1.9 + vWorld.x * 0.55 + vWorld.z * 0.42));
+          col = mix(col, uFoamTint, clamp(foamBand * foamGrain, 0.0, 1.0) * 0.34 * (1.0 - vLake * 0.6));
 
-          // bow-wave foam churned up around each moving boat
-          float boatFoam = 0.0;
+          // Wake. The Kelvin half-angle is 19.47 deg — a constant of deep-water physics and
+          // instantly recognisable — so the arms diverge at lat = along * tan(19.47) = 0.3532.
+          float bowFoam = 0.0, trailFoam = 0.0;
           for (int i = 0; i < 8; i++) {
             if (i >= uNumBoats) break;
             vec4 b = uBoats[i];
             vec2 d = vWorld.xz - b.xy;
-            float dist = length(d);
             vec2 fwd = vec2(sin(b.w), cos(b.w));
-            float f = dot(d, fwd);
-            boatFoam += smoothstep(6.0, 1.2, dist) * (0.35 + 0.65 * smoothstep(-1.5, 3.5, f)) * b.z;
+            vec2 rgt = vec2(fwd.y, -fwd.x);
+            float along = -dot(d, fwd);                 // metres BEHIND the boat
+            float lat = abs(dot(d, rgt));
+            bowFoam += smoothstep(5.5, 1.0, length(d)) * b.z * 0.9;
+            float trail = smoothstep(26.0, 0.0, along) * step(0.0, along);
+            trailFoam += trail * smoothstep(2.4 + along * 0.10, 0.0, lat) * b.z * 0.55;
+            float arm = abs(lat - along * 0.3532);
+            trailFoam += trail * smoothstep(1.8, 0.0, arm) * b.z * 0.45;
           }
-          boatFoam = clamp(boatFoam * foamGrain, 0.0, 1.0);
-          col = mix(col, vec3(0.95, 0.95, 0.91), boatFoam * 0.55);
+          trailFoam = clamp(trailFoam * foamGrain, 0.0, 1.0);
+          bowFoam = clamp(bowFoam * foamGrain, 0.0, 1.0);
+          col = mix(col, uFoamTint, trailFoam * 0.55);
+          col = mix(col, min(uFoamTint * 1.07, vec3(1.0)), bowFoam * 0.55);
 
           float fog = smoothstep(uFogNear, uFogFar, distance(uCamPos, vWorld));
           col = mix(col, uFogColor, fog);
@@ -179,7 +210,9 @@
       const wHalf = path.w[i] + 2.5;
       const lx = -tz, lz = tx;
       const a = RR.River.waveAmp(path.x[i], path.z[i]);
-      const lk = isLakePath ? RR.U.smoothstep(RR.River.lakeWestX - 150, RR.River.lakeWestX + 300, path.x[i]) : 0;
+      // river and lake water really are different colours and they meet at the lock — blend
+      // over 120 m either side of it rather than at a hard edge
+      const lk = isLakePath ? RR.U.smoothstep(RR.River.lakeWestX - 120, RR.River.lakeWestX + 120, path.x[i]) : 0;
       // the river ribbon dives under the lake sheet at its mouth so the seam never
       // shows as a bright edge-on strip across the exit
       const endFade = isLakePath ? Math.max(0, (i - (n - 5)) / 4) : 0;
@@ -242,7 +275,7 @@
       const x = lg.attributes.position.getX(i), z = lg.attributes.position.getZ(i);
       amp[i] = RR.U.lerp(1.0, 3.3, RR.U.smoothstep(R.lakeWestX, R.lakeWestX + 420, x));
       shoreA[i] = 0;
-      lakeA[i] = RR.U.smoothstep(R.lakeWestX - 150, R.lakeWestX + 300, x);   // matches the river ribbon blend
+      lakeA[i] = RR.U.smoothstep(R.lakeWestX - 120, R.lakeWestX + 120, x);   // matches the river ribbon blend
     }
     lg.setAttribute('aAmp', new THREE.BufferAttribute(amp, 1));
     lg.setAttribute('aShore', new THREE.BufferAttribute(shoreA, 1));

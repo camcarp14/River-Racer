@@ -51,6 +51,33 @@
   }
   CITY.tintGeom = tintGeom;
 
+  // tintGeom + a vertical ambient-occlusion ramp baked into the same vertex-colour buffer.
+  // Street level in a canyon receives a fraction of the sky, and the eye reads that gradient as
+  // "this mass meets the ground" — without it every tower looks like it is floating on a decal.
+  // topMul brightens the last 5 m under the parapet, where the sky is unoccluded.
+  function tintGeomAO(geo, hex, jitter, rng, y0, y1, floorMul, topMul) {
+    tintGeom(geo, hex, jitter, rng);
+    if (y1 === undefined) return geo;
+    const fm = floorMul === undefined ? 0.66 : floorMul;
+    const tm = topMul === undefined ? 1 : topMul;
+    const pos = geo.attributes.position, col = geo.attributes.color;
+    geo.computeBoundingBox();
+    const top = geo.boundingBox.max.y;
+    const span = Math.max(1e-3, y1 - y0);
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i);
+      let f = fm + (1 - fm) * U().clamp((y - y0) / span, 0, 1);
+      if (tm !== 1 && y > top - 5) f *= tm;
+      col.setXYZ(i,
+        U().clamp(col.getX(i) * f, 0, 1),
+        U().clamp(col.getY(i) * f, 0, 1),
+        U().clamp(col.getZ(i) * f, 0, 1));
+    }
+    col.needsUpdate = true;
+    return geo;
+  }
+  CITY.tintGeomAO = tintGeomAO;
+
   // box with UVs scaled so the facade texture repeats per floor / per bay
   function towerGeom(w, h, d, x, z, rotY) {
     const g = new THREE.BoxGeometry(w, h, d);
@@ -74,51 +101,259 @@
   }
   CITY.towerGeom = towerGeom;
 
-  // shared facade texture: window grid with sun-struck variance
-  function facadeTexture() {
-    const tex = U().canvasTexture(128, 128, (ctx, w, h) => {
-      ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
-      const rng = U().mulberry(52);
-      // one tile = one bay × one floor; draw 4×4 window cells for texture density
-      for (let y = 0; y < 4; y++) {
-        for (let x = 0; x < 4; x++) {
-          const glint = rng();
-          const v = glint > 0.86 ? 235 : 38 + rng() * 42;
-          const warm = glint > 0.86;
-          ctx.fillStyle = warm ? `rgb(${v},${v * 0.92 | 0},${v * 0.7 | 0})` : `rgb(${v * 0.65 | 0},${v * 0.78 | 0},${v * 0.85 | 0})`;
-          ctx.fillRect(x * 32 + 5, y * 32 + 6, 22, 18);
-        }
-      }
-    });
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    return tex;
-  }
+  // ==================== FACADE FAMILY SYSTEM ====================
+  // Ten independent 256×256 RepeatWrapping tiles — deliberately NOT an atlas. towerGeom drives u
+  // past 20 on a wide tower, so addressing an atlas cell needs fract(), whose derivative spikes at
+  // every tile seam and drops the GPU to the lowest mip: a dark 1-px line down every window bay.
+  //
+  // THE POLARITY RULE, which is the whole point: on a curtain wall the vision glass MIRRORS THE SKY
+  // and is LIGHTER than its frame; on masonry the punched opening is a hole and is DARKER than the
+  // wall. Getting that backwards is what makes a city read as perforated black cardboard.
+  // One tile = one bay (3.0 m) × one floor (3.6 m) — the constants baked into towerGeom.
+  const FAM = [
+    { key: 'CURTAIN', seed: 1101, frame: '#7d868c', spandrel: '#98a1a7', glassHi: '#dce9f0', glassLo: '#a9bfd0',
+      lites: 2, margin: 4, mullion: 5, glassTop: 10, glassBot: 150, sill: '#b6bec4', revealA: 0.10, grain: 0,
+      tints: [0xb9c0c6, 0xa6b0b8, 0xc8cdd0, 0x94a0a8],
+      nightDensity: 0.42, warm: '#ffcf85', cool: '#cfe0ff', warmFrac: 0.70, nightMul: 1.00 },
 
-  // emissive map aligned to the facade UVs: a scatter of lit windows for night mode
-  function nightWindows() {
-    const tex = U().canvasTexture(128, 128, (ctx, w, h) => {
-      ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, w, h);
-      const rng = U().mulberry(313);
-      for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
-        if (rng() < 0.5) {
-          ctx.fillStyle = rng() < 0.72 ? '#ffcf82' : '#bcd6ff';   // warm interiors, some cool
-          ctx.fillRect(x * 32 + 5, y * 32 + 6, 22, 18);
-        }
-      }
-    });
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    return tex;
-  }
+    // ART's spec hexes were tuned before the night preset landed at exposure 1.45 + bloom 1.45;
+    // at full strength a moonlit east face becomes one white slab. Halved, the highlight still
+    // travels across the glass as the sun moves, which is the whole reason these four are Phong.
+    { key: 'MIES', seed: 1202, frame: '#17191c', spandrel: '#202429', glassHi: '#55636e', glassLo: '#2c363f',
+      lites: 2, margin: 3, mullion: 8, glassTop: 8, glassBot: 168, sill: '#24282c', revealA: 0.06, grain: 0,
+      centreRib: '#2a2e33',                                  // the applied I-beam mullion — the whole building
+      tints: [0x2a2e33, 0x232629, 0x33383d], shininess: 70, specular: 0x252a30,
+      nightDensity: 0.30, warm: '#ffcf85', cool: '#dfe8ff', warmFrac: 0.45, nightMul: 1.15 },
 
-  let cityMat;
-  CITY.material = function () {
-    if (!cityMat) {
-      cityMat = new THREE.MeshLambertMaterial({
-        vertexColors: true, map: facadeTexture(),
-        emissiveMap: nightWindows(), emissive: 0xffffff, emissiveIntensity: 0,   // theme raises this at night
-      });
+    { key: 'LIMESTONE', seed: 1303, frame: '#d9d2c1', spandrel: '#cdc5b3', glassHi: '#8fa3b0', glassLo: '#5c7183',
+      lites: 1, margin: 62, mullion: 6, glassTop: 26, glassBot: 196, sill: '#efe9db', revealA: 0.30, grain: 0.06,
+      courseH: 32, courseCol: 'rgba(120,110,92,0.22)',
+      tints: [0xd8d0be, 0xcfc6b2, 0xe2dbcb, 0xc6bda9],
+      nightDensity: 0.34, warm: '#ffca7a', cool: '#cfe0ff', warmFrac: 0.86, nightMul: 0.75 },
+
+    { key: 'REDBRICK', seed: 1404, frame: '#8d4a35', spandrel: null, glassHi: '#6d7f8c', glassLo: '#3f4e5a',
+      lites: 1, margin: 66, mullion: 8, glassTop: 30, glassBot: 190, sill: '#7a3a26', revealA: 0.26, grain: 0,
+      brick: { mortar: '#b3a494', a: '#7a3d2b', b: '#a45a3e' }, lintel: '#2e3236',
+      tints: [0x9a5138, 0x8a4530, 0x7d3f2d, 0xa85e42],
+      nightDensity: 0.22, warm: '#ffb964', cool: '#cfe0ff', warmFrac: 0.88, nightMul: 0.55 },
+
+    { key: 'TERRACOTTA', seed: 1505, frame: '#efe9dc', spandrel: '#e6dfd0', glassHi: '#8ea3b2', glassLo: '#5f7484',
+      lites: 2, margin: 8, mullion: 7, glassTop: 22, glassBot: 176, sill: '#faf5ea', revealA: 0.22, grain: 0.03,
+      ornament: { y: 232, h: 14, a: '#e8e0cf', b: '#d3c9b4' },
+      tints: [0xf2ece0, 0xe9e2d3, 0xfaf5ea], shininess: 14, specular: 0x151412,   // glazed terracotta is glossy
+      nightDensity: 0.30, warm: '#ffd39a', cool: '#cfe0ff', warmFrac: 0.84, nightMul: 0.70 },
+
+    { key: 'PINKGRANITE', seed: 1606, frame: '#b58a80', spandrel: '#9c7268', glassHi: '#7d8f92', glassLo: '#4b5c62',
+      lites: 2, margin: 6, mullion: 9, glassTop: 16, glassBot: 160, sill: '#c9a096', revealA: 0.16, grain: 0.04,
+      courseH: 64, courseCol: 'rgba(90,60,54,0.28)',          // large panel joints — the postmodern tell
+      tints: [0xbf8f84, 0xa9776c, 0xd0a196, 0x8f6258],
+      nightDensity: 0.26, warm: '#ffc98a', cool: '#cfe0ff', warmFrac: 0.82, nightMul: 0.80 },
+
+    { key: 'GREENGLASS', seed: 1707, frame: '#3f5a54', spandrel: '#2c443f', glassHi: '#7fb8a6', glassLo: '#3d6f62',
+      lites: 2, margin: 3, mullion: 6, glassTop: 6, glassBot: 176, sill: '#47645d', revealA: 0.05, grain: 0,
+      tints: [0x6d9a8b, 0x5b8a7c, 0x7fae9d], shininess: 66, specular: 0x2b3b37,
+      nightDensity: 0.34, warm: '#ffcf85', cool: '#cfe6df', warmFrac: 0.40, nightMul: 1.05 },
+
+    { key: 'BLUEGLASS', seed: 1808, frame: '#4a6070', spandrel: '#35505f', glassHi: '#a7cfe2', glassLo: '#4a7f9e',
+      lites: 2, margin: 3, mullion: 5, glassTop: 6, glassBot: 182, sill: '#56728a', revealA: 0.05, grain: 0,
+      tints: [0x7fa8c0, 0x6d99b4, 0x93bcd2, 0x5d88a4], shininess: 72, specular: 0x2e4049,
+      nightDensity: 0.40, warm: '#ffcf85', cool: '#d6e9ff', warmFrac: 0.35, nightMul: 1.20 },
+
+    { key: 'CONCRETE', seed: 1909, frame: '#b7b1a4', spandrel: '#a8a294', glassHi: '#7d8b93', glassLo: '#4e5c66',
+      lites: 1, margin: 40, mullion: 7, glassTop: 22, glassBot: 184, sill: '#c6c0b2', revealA: 0.24, grain: 0.07,
+      courseH: 11, courseCol: 'rgba(90,86,78,0.25)', snapTie: 'rgba(70,66,60,0.30)',   // board-form marks + ties
+      tints: [0xb9b3a6, 0xaba498, 0xc7c1b3],
+      nightDensity: 0.28, warm: '#ffc98a', cool: '#cfe0ff', warmFrac: 0.84, nightMul: 0.70 },
+
+    { key: 'RETAIL', seed: 2010, frame: '#2c3036', spandrel: null, glassHi: '#cfd8d4', glassLo: '#8fa39c',
+      lites: 2, margin: 4, mullion: 4, glassTop: 4, glassBot: 214, sill: null, revealA: 0.04, grain: 0,
+      awning: { y: 4, h: 22, palette: ['#d8412f', '#f0a92b', '#2f7dd8', '#36a852', '#1f6f5c'] },
+      fascia: { y: 226, h: 10, col: '#1a1d21' },
+      tints: [0xdedad2, 0xc8c4bc],
+      nightDensity: 0.85, warm: '#ffdca8', cool: '#cfe0ff', warmFrac: 0.90, nightMul: 1.60 },
+  ];
+  for (const f of FAM) Object.freeze(f);
+  Object.freeze(FAM);
+  CITY.FAM = FAM;
+
+  // ---- tiny colour helpers for the canvas painters (strings, not THREE.Color) ----
+  const hx = (s) => [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16), parseInt(s.slice(5, 7), 16)];
+  function mixHex(a, b, t) {
+    const A = hx(a), B = hx(b);
+    return `rgb(${(A[0] + (B[0] - A[0]) * t) | 0},${(A[1] + (B[1] - A[1]) * t) | 0},${(A[2] + (B[2] - A[2]) * t) | 0})`;
+  }
+  function dimHex(a, k) { const A = hx(a); return `rgb(${A[0] * k | 0},${A[1] * k | 0},${A[2] * k | 0})`; }
+
+  function speckle(ctx, rng, a) {                 // stone grain: additive salt-and-pepper
+    const dark = `rgba(0,0,0,${a})`, lite = `rgba(255,255,255,${(a * 0.8).toFixed(3)})`;
+    for (let i = 0; i < 900; i++) {
+      ctx.fillStyle = (i & 1) ? dark : lite;
+      ctx.fillRect(rng() * 256, rng() * 256, 2, 2);
     }
-    return cityMat;
+  }
+  function runningBond(ctx, rng, S) {
+    const B = S.brick, BW = 21, BH = 9;
+    ctx.fillStyle = B.mortar; ctx.fillRect(0, 0, 256, 256);
+    for (let row = 0, y = 0; y < 256; y += BH, row++) {
+      const off = (row & 1) ? -BW / 2 : 0;
+      for (let x = off; x < 256; x += BW) {
+        ctx.fillStyle = mixHex(B.a, B.b, rng());
+        ctx.fillRect(x + 1, y + 1, BW - 1, BH - 1);
+      }
+    }
+  }
+
+  // The shared painter. Draw order matters: step 6 (the reveal shadow on the head and the LEFT
+  // jamb only) is what tells the eye a window is set INTO a wall rather than printed on it.
+  // One consistent shadow side implies one light direction; with the sun in the SW, shade left.
+  function facadeTile(S) {
+    const tex = U().canvasTexture(256, 256, (ctx) => {
+      const rng = U().mulberry(S.seed);
+      ctx.fillStyle = S.frame; ctx.fillRect(0, 0, 256, 256);
+      if (S.brick) runningBond(ctx, rng, S);
+      if (S.grain) speckle(ctx, rng, S.grain);
+      if (S.spandrel) { ctx.fillStyle = S.spandrel; ctx.fillRect(0, S.glassBot, 256, 256 - S.glassBot); }
+      const pitch = (256 - 2 * S.margin) / S.lites;
+      for (let i = 0; i < S.lites; i++) {
+        const x0 = S.margin + i * pitch + S.mullion;
+        const w = pitch - 2 * S.mullion;
+        const g = ctx.createLinearGradient(0, S.glassTop, 0, S.glassBot);
+        g.addColorStop(0, S.glassHi); g.addColorStop(1, S.glassLo);
+        ctx.fillStyle = g; ctx.fillRect(x0, S.glassTop, w, S.glassBot - S.glassTop);
+        const j = 0.86 + rng() * 0.28;                     // per-lite brightness: blinds up or down
+        ctx.fillStyle = j < 1 ? `rgba(0,0,0,${(1 - j).toFixed(3)})` : `rgba(255,255,255,${(j - 1).toFixed(3)})`;
+        ctx.fillRect(x0, S.glassTop, w, S.glassBot - S.glassTop);
+        if (S.revealA > 0) {
+          ctx.fillStyle = `rgba(0,0,0,${S.revealA})`;
+          ctx.fillRect(x0, S.glassTop, w, 5);
+          ctx.fillRect(x0, S.glassTop, 5, S.glassBot - S.glassTop);
+        }
+        if (S.lintel) { ctx.fillStyle = S.lintel; ctx.fillRect(x0 - 2, S.glassTop - 7, w + 4, 7); }
+        if (S.sill) { ctx.fillStyle = S.sill; ctx.fillRect(x0 - 3, S.glassBot, w + 6, 6); }
+        if (S.centreRib) { ctx.fillStyle = S.centreRib; ctx.fillRect(x0 + w / 2 - 2, S.glassTop, 4, S.glassBot - S.glassTop); }
+        if (S.awning) {
+          ctx.fillStyle = S.awning.palette[(rng() * S.awning.palette.length) | 0];
+          ctx.fillRect(x0 - 2, S.awning.y, w + 4, S.awning.h);
+        }
+      }
+      if (S.courseH) {
+        ctx.fillStyle = S.courseCol;
+        for (let y = S.courseH; y < 256; y += S.courseH) ctx.fillRect(0, y, 256, 1);
+      }
+      if (S.snapTie) {
+        ctx.fillStyle = S.snapTie;
+        for (let y = 32; y < 256; y += 64) for (let x = 32; x < 256; x += 64) ctx.fillRect(x, y, 3, 3);
+      }
+      if (S.ornament) {
+        const O = S.ornament;
+        for (let x = 0; x < 256; x += 8) { ctx.fillStyle = ((x / 8) & 1) ? O.a : O.b; ctx.fillRect(x, O.y, 8, O.h); }
+      }
+      if (S.fascia) { ctx.fillStyle = S.fascia.col; ctx.fillRect(0, S.fascia.y, 256, S.fascia.h); }
+    });
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.anisotropy = 8;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+    return tex;
+  }
+
+  // Night emissive: same grid, same lite rectangles, so it registers exactly with the albedo.
+  function nightTile(S) {
+    const tex = U().canvasTexture(256, 256, (ctx) => {
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 256, 256);
+      const rng = U().mulberry(S.seed ^ 0x9e37);
+      const pitch = (256 - 2 * S.margin) / S.lites;
+      for (let i = 0; i < S.lites; i++) {
+        if (rng() > S.nightDensity) continue;
+        const x0 = S.margin + i * pitch + S.mullion, w = pitch - 2 * S.mullion;
+        let c = rng() < S.warmFrac ? S.warm : S.cool;
+        // Offices are not all lit to the same level. Without this spread every lit pane clips
+        // to white under emissiveIntensity 1.35 and the tower renders as one bloomed slab.
+        let k = 0.42 + rng() * 0.44;
+        if (rng() < 0.14) k *= 0.32;                       // corridor / emergency lighting, way down
+        ctx.fillStyle = dimHex(c, k);
+        ctx.fillRect(x0 + 2, S.glassTop + 2, w - 4, S.glassBot - S.glassTop - 4);
+      }
+    });
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.anisotropy = 8;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+    return tex;
+  }
+
+  const famMats = new Array(FAM.length);
+  function famMaterial(i) {
+    if (famMats[i]) return famMats[i];
+    const S = FAM[i];
+    const o = {
+      vertexColors: true, map: facadeTile(S),
+      emissiveMap: nightTile(S), emissive: 0xffffff, emissiveIntensity: 0,   // theme raises this at night
+    };
+    let m;
+    if (S.shininess) { o.shininess = S.shininess; o.specular = new THREE.Color(S.specular); m = new THREE.MeshPhongMaterial(o); }
+    else m = new THREE.MeshLambertMaterial(o);
+    m.userData.nightMul = S.nightMul;
+    m.userData.family = i;
+    famMats[i] = m;
+    return m;
+  }
+
+  // The tile already carries the family's colour, and the vertex tint carries the building's:
+  // multiplied together, a dark family (MIES frame #17191c, GREENGLASS #3f5a54) lands below
+  // #17191c, i.e. pure black, which breaks the "nothing pure black" rule and erases the
+  // polarity work. Divide the tint by the tile's own luminance so the product lands on the
+  // authored hex. Hue is untouched — only the level — so the families still read apart.
+  const famNorms = new Array(FAM.length), famLuma = new Array(FAM.length);
+  function famNorm(i) {
+    if (famNorms[i]) return famNorms[i];
+    const img = famMaterial(i).map.image;
+    const d = img.getContext('2d').getImageData(0, 0, img.width, img.height).data;
+    let sum = 0;
+    for (let p = 0; p < d.length; p += 4) sum += 0.2126 * d[p] + 0.7152 * d[p + 1] + 0.0722 * d[p + 2];
+    famLuma[i] = Math.max(0.04, sum / (d.length / 4) / 255);
+    famNorms[i] = U().clamp(1 / famLuma[i], 1, 6);
+    return famNorms[i];
+  }
+  CITY.famNorm = famNorm;
+  CITY.famNormalize = function (geo, f) {
+    const i = f | 0, k = famNorm(i), col = geo.attributes.color;
+    if (!col) return geo;
+    // Rule 9: nothing pure black. A near-black hex (Willis 0x191c20) on a near-black tile
+    // (MIES frame #17191c) multiplies to nothing at all, and a tower with no facade left in it
+    // is a cut-out, not a building. Floor the product at roughly #2a2d31.
+    const minV = 0.050 / famLuma[i];
+    for (let n = 0; n < col.count; n++) {
+      let r = col.getX(n) * k, g = col.getY(n) * k, b = col.getZ(n) * k;
+      const lu = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      if (lu > 1e-5 && lu < minV) { const s = minV / lu; r *= s; g *= s; b *= s; }
+      col.setXYZ(n, Math.min(1, r), Math.min(1, g), Math.min(1, b));
+    }
+    col.needsUpdate = true;
+    return geo;
+  };
+
+  // fam undefined → family 0 CURTAIN, so every existing zero-arg caller keeps working
+  CITY.material = function (fam) {
+    const i = (fam === undefined || fam === null || !FAM[fam | 0]) ? 0 : (fam | 0);
+    return famMaterial(i);
+  };
+  CITY.materials = function () {
+    for (let i = 0; i < FAM.length; i++) famMaterial(i);
+    return famMats;
+  };
+
+  // Chicago builds in legible eras: masonry low-rise, limestone/terracotta mid-rise,
+  // steel-and-glass towers, and a postmodern granite bulge in the 80s.
+  CITY.pickFamily = function (rng, h, x, z) {
+    const west = x < -600;                    // West Loop / Fulton Market: brick + concrete
+    const north = z < -200;                   // River North / Streeterville: newer glass
+    let bag;
+    if (h < 30) bag = west ? [3, 3, 3, 2, 8] : [3, 2, 9, 2, 4];
+    else if (h < 90) bag = west ? [3, 2, 8, 5, 2] : [2, 4, 2, 5, 3];
+    else if (h < 180) bag = north ? [7, 6, 1, 8, 5] : [1, 5, 6, 2, 8];
+    else bag = north ? [7, 7, 1, 8, 6] : [1, 8, 7, 6, 5];
+    return bag[(rng() * bag.length) | 0];
   };
 
   // solid (windowless) vertex-colored material for walls, roofs, piers
@@ -126,6 +361,20 @@
   CITY.flatMaterial = function () {
     if (!flatMat) flatMat = new THREE.MeshLambertMaterial({ vertexColors: true });
     return flatMat;
+  };
+
+  // Chicago floodlights its riverfront landmarks from below. Cheapest correct model is one
+  // additive shell, not lights: the vertex-colour falloff with height IS the effect.
+  CITY.floodShell = function (geoms) {
+    if (!geoms || !geoms.length) return null;
+    const m = new THREE.Mesh(mergeGeoms(geoms), new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, blending: THREE.AdditiveBlending,
+      depthWrite: false, fog: true,
+    }));
+    m.renderOrder = 2;
+    m.layers.set(1);                          // additive shells in the reflection pass = ghost blobs
+    m.visible = false;                        // Theme turns it on for dusk + night
+    return m;
   };
 
   // Upper Wacker / street grid sits a full level (~20 ft) above the river, matching the
@@ -260,15 +509,24 @@
     // (the water's-edge retaining wall + lower promenade are built by RR.Riverwalk)
 
     // shared dressing/greenery builders (flat vertex-colored geometry)
+    // Two canopy layers, because one sphere on a stick is a lollipop and two is a tree: the
+    // upper mass is offset and lighter, so the silhouette breaks and the light has a top side.
+    // Second layer only within 260 m of a centreline — past that it is fog, not foliage.
     function treeAt(arr, px, pz, scale) {
       const s = scale || 1;
-      const trunk = new THREE.CylinderGeometry(0.22 * s, 0.32 * s, 2.6 * s, 5);
-      trunk.translate(px, GROUND_Y + 1.3 * s, pz);
+      const trunk = new THREE.CylinderGeometry(0.22 * s, 0.34 * s, 3.2 * s, 5);
+      trunk.translate(px, GROUND_Y + 1.6 * s, pz);
       tintGeom(trunk, 0x4a3524, 0, rng); arr.push(trunk);
-      const crown = new THREE.SphereGeometry((2.1 + rng() * 1.5) * s, 7, 6);
-      crown.scale(1, 0.82, 1);
-      crown.translate(px, GROUND_Y + (4.0 + rng()) * s, pz);
-      tintGeom(crown, rng() > 0.5 ? 0x4d7a3a : 0x5d8a42, 0.22, rng); arr.push(crown);
+      const r = (2.1 + rng() * 1.5) * s;
+      const lower = new THREE.SphereGeometry(r, 7, 6);
+      lower.scale(1, 0.72, 1);
+      lower.translate(px, GROUND_Y + 3.6 * s, pz);
+      tintGeom(lower, 0x3f6a30, 0.18, rng); arr.push(lower);
+      if (landClearance(px, pz) < 260) {
+        const upper = new THREE.SphereGeometry(r * 0.72, 7, 6);
+        upper.translate(px + (rng() - 0.5) * r * 0.5, GROUND_Y + 5.4 * s, pz + (rng() - 0.5) * r * 0.5);
+        tintGeom(upper, 0x5d8a42, 0.18, rng); arr.push(upper);
+      }
     }
     function benchAt(arr, px, pz, tx, tz) {
       const ang = Math.atan2(tx, tz), nx = -tz, nz = tx;
@@ -302,66 +560,174 @@
 
     // ---------- generic tower field on the street grid ----------
     const BLOCK = 96, STREET = 22;
-    const palettes = [0x8f9aa3, 0x76828c, 0xa39a8a, 0x5d666e, 0x8c8478, 0x9fa8b0, 0x6b7480, 0xb0a798, 0xc4b9a4, 0x7d8891, 0x9a8f7c];
-    const geoms = [];          // window-mapped tower shells
-    const detailGeoms = [];    // flat: rooftop clutter, park ground, plazas
+    const famGeoms = FAM.map(() => []);   // window-mapped tower shells, bucketed by facade family
+    const detailGeoms = [];    // flat: cornices, rooftop clutter, park ground, plazas
     const dressGeoms = [];     // flat: trees, lamps, benches, planters
     const lm = C.landmarks;
     const cx0 = C.generic.loopCenter.x, cz0 = C.generic.loopCenter.z;
+    const MASONRY = { 2: 1, 3: 1, 4: 1, 5: 1, 8: 1 };
+    const AO0 = GROUND_Y, AO1 = GROUND_Y + 16;
+    const antennaCell = new Map();        // one mast per 600 m cell, on its tallest building
 
-    function roofClutter(cx, cz, topY, w, d) {
-      if (rng() > 0.42) {
-        const pw = w * (0.26 + rng() * 0.34), pd = d * (0.26 + rng() * 0.34), ph = 2.5 + rng() * 6;
-        const g = new THREE.BoxGeometry(pw, ph, pd);
-        g.translate(cx + (rng() - 0.5) * w * 0.35, topY + ph / 2, cz + (rng() - 0.5) * d * 0.35);
-        tintGeom(g, 0x666c72, 0.12, rng); detailGeoms.push(g);
+    function shade(hex, k) {
+      const r = Math.min(255, ((hex >> 16) & 255) * k) | 0;
+      const g = Math.min(255, ((hex >> 8) & 255) * k) | 0;
+      const b = Math.min(255, (hex & 255) * k) | 0;
+      return (r << 16) | (g << 8) | b;
+    }
+    function flatBox(w, h, d, cx, cy, cz, hex, rot) {
+      const g = new THREE.BoxGeometry(w, h, d);
+      if (rot) g.rotateY(rot);
+      g.translate(cx, cy, cz);
+      tintGeom(g, hex, 0, rng);
+      detailGeoms.push(g);
+      return g;
+    }
+
+    // A box that ends in a flat top face is a bug. Masonry gets band course / parapet / coping;
+    // glass gets a louvred plant floor and a parapet fin.
+    function crown(cx, cz, topY, w, d, fam, tint, rot) {
+      if (MASONRY[fam]) {
+        flatBox(w + 1.4, 0.55, d + 1.4, cx, topY - 2.6, cz, shade(tint, 1.08), rot);
+        flatBox(w + 0.5, 2.30, d + 0.5, cx, topY - 1.15, cz, shade(tint, 0.94), rot);
+        flatBox(w + 1.0, 0.35, d + 1.0, cx, topY + 0.18, cz, shade(tint, 1.14), rot);
+      } else {
+        flatBox(w - 0.6, 3.20, d - 0.6, cx, topY + 1.6, cz, 0x4a5057, rot);
+        flatBox(w + 0.3, 0.90, d + 0.3, cx, topY + 3.6, cz, 0x2f343a, rot);
       }
-      if (rng() > 0.6) {
-        const rad = 1.2 + rng() * 1.3, th = 2.4 + rng() * 3;
+    }
+
+    // Vertical fins. A flat wall stops being flat the moment it has a shadow every 9 m —
+    // only worth the triangles where you can actually see it from the water.
+    function pilasters(cx, cz, w, d, h, tint) {
+      const along = w >= d ? w : d;
+      const n = Math.min(4, 1 + Math.floor(along / 9));
+      if (n < 2) return;
+      const step = along / n;
+      for (let k = 1; k < n; k++) {
+        const o = -along / 2 + k * step;
+        if (w >= d) {
+          for (const s of [-1, 1]) flatBox(0.55, h, 0.35, cx + o, GROUND_Y + h / 2, cz + s * (d / 2 + 0.10), shade(tint, 0.88));
+        } else {
+          for (const s of [-1, 1]) flatBox(0.35, h, 0.55, cx + s * (w / 2 + 0.10), GROUND_Y + h / 2, cz + o, shade(tint, 0.88));
+        }
+      }
+    }
+
+    // Weighted roof kit. The wooden tank on a low masonry loft is the single most Chicago
+    // object on a roof, and the red obstruction lights cost nothing at all.
+    // `tier` is the visibility band: 2 = on the water, 1 = mid, 0 = deep inland. There are ~3300
+    // filler buildings, so the full kit everywhere costs a third of a million triangles for
+    // roof furniture nobody can resolve past the second block.
+    function roofKit(cx, cz, topY, w, d, h, fam, tier) {
+      const mn = Math.min(w, d);
+      const eo = mn * 0.30;
+      flatBox(eo, 4.2, eo, cx + (rng() - 0.5) * w * 0.4, topY + 2.1, cz + (rng() - 0.5) * d * 0.4, 0x6b7178);
+      if (h > 180 && RR.Theme) RR.Theme.addLamp(cx, topY + 1.2, cz, 0xff2a1e);
+      if (tier === 0) return;
+      if (h > 55 && rng() < (tier === 2 ? 0.55 : 0.30)) {
+        const rad = 1.4 + rng() * 1.2, th = 2.6 + rng() * 1.4;
         const tx = cx + (rng() - 0.5) * w * 0.4, tz = cz + (rng() - 0.5) * d * 0.4;
         const g = new THREE.CylinderGeometry(rad, rad, th, 8);
         g.translate(tx, topY + th / 2, tz);
-        tintGeom(g, 0x4a4034, 0.12, rng); detailGeoms.push(g);
+        tintGeom(g, 0x51565c, 0.10, rng); detailGeoms.push(g);
+        const hood = new THREE.CylinderGeometry(rad * 0.9, rad * 0.9, 0.5, 8);
+        hood.translate(tx, topY + th + 0.25, tz);
+        tintGeom(hood, 0x3f444a, 0, rng); detailGeoms.push(hood);
       }
-      if (rng() > 0.72) {
-        const ah = 4 + rng() * 12;
-        const g = new THREE.CylinderGeometry(0.1, 0.22, ah, 4);
-        g.translate(cx + (rng() - 0.5) * w * 0.25, topY + ah / 2, cz + (rng() - 0.5) * d * 0.25);
-        tintGeom(g, 0x2c2f33, 0, rng); detailGeoms.push(g);
+      if (h > 90 && rng() < 0.60) {
+        const pw = w * (0.30 + rng() * 0.25), pd = d * (0.30 + rng() * 0.25), ph = 3.0 + rng() * 4.5;
+        const px = cx + (rng() - 0.5) * w * 0.25, pz = cz + (rng() - 0.5) * d * 0.25;
+        flatBox(pw, ph, pd, px, topY + ph / 2, pz, 0x666c72);
+        flatBox(pw - 0.3, 0.9, pd - 0.3, px, topY + ph * 0.72, pz, 0x2b2f34);     // louvre band
+      }
+      if (tier < 2) return;
+      // the wooden tank on a low brick loft — the roofscape detail everyone recognises
+      if (h < 80 && (fam === 2 || fam === 3 || fam === 4) && rng() < 0.45) {
+        const tx = cx + (rng() - 0.5) * w * 0.3, tz = cz + (rng() - 0.5) * d * 0.3;
+        for (let k = 0; k < 4; k++) {
+          const a = k * Math.PI / 2 + 0.79;
+          flatBox(0.18, 2.6, 0.18, tx + Math.cos(a) * 1.35, topY + 1.3, tz + Math.sin(a) * 1.35, 0x4a4034);
+        }
+        const barrel = new THREE.CylinderGeometry(1.7, 1.7, 3.6, 8);
+        barrel.translate(tx, topY + 4.4, tz);
+        tintGeom(barrel, 0x6e4c2e, 0.10, rng); detailGeoms.push(barrel);
+        const hoop = new THREE.CylinderGeometry(1.76, 1.76, 0.16, 8);
+        hoop.translate(tx, topY + 4.4, tz);
+        tintGeom(hoop, 0x3a3a3c, 0, rng); detailGeoms.push(hoop);
+        const cap = new THREE.ConeGeometry(1.85, 1.1, 8);
+        cap.translate(tx, topY + 6.75, tz);
+        tintGeom(cap, 0x4a4034, 0, rng); detailGeoms.push(cap);
+      }
+      if (rng() < 0.25) {                                                          // parapet davit
+        const dx = cx + (w / 2 - 1.2) * (rng() < 0.5 ? -1 : 1), dz = cz + (rng() - 0.5) * d * 0.5;
+        flatBox(0.14, 2.2, 0.14, dx, topY + 1.1, dz, 0x585d63);
+        flatBox(1.6, 0.14, 0.14, dx + 0.8, topY + 2.2, dz, 0x585d63);
       }
     }
 
     // place one building, footprint keep-out checked; returns true if placed
     function placeBuilding(bxx, bzz, w, d, dLoop, loRise) {
       const halfDiag = Math.hypot(w, d) * 0.5;
-      if (landClearance(bxx, bzz) < halfDiag + 2) return false;          // whole footprint must be on dry land
+      const clear = landClearance(bxx, bzz);
+      if (clear < halfDiag + 2) return false;                            // whole footprint on dry land
       if (bxx > C.lake.openWaterX - halfDiag - 18) return false;
       let h;
       if (loRise) h = 14 + rng() * 46;
       else h = (20 + rng() * rng() * 165) * U().clamp(1.4 - dLoop / 2100, 0.3, 1.2);
-      if (landClearance(bxx, bzz) < 70) h = Math.min(h, 34 + rng() * 60);  // step down toward the water
+      if (clear < 70) h = Math.min(h, 34 + rng() * 60);                  // step down toward the water
       h = Math.max(11, h);
-      const g = towerGeom(w, h, d, bxx, bzz, 0);
-      g.translate(0, GROUND_Y, 0);
-      tintGeom(g, palettes[Math.floor(rng() * palettes.length)], 0.22, rng);
-      geoms.push(g);
-      // ground-floor retail band (darker base) for street-level realism
-      const band = towerGeom(w + 0.4, 4.5, d + 0.4, bxx, bzz, 0);
-      band.translate(0, GROUND_Y, 0);
-      tintGeom(band, 0x3b3f45, 0.1, rng); geoms.push(band);
-      // parapet cap for a crisp roofline (flat, so it doesn't glow at night)
-      const cap = new THREE.BoxGeometry(w + 0.8, 1.3, d + 0.8);
-      cap.translate(bxx, GROUND_Y + h - 0.35, bzz);
-      tintGeom(cap, 0x565c64, 0.14, rng); detailGeoms.push(cap);
-      if (h > 90 && rng() > 0.4) {                                       // setback crown
-        const g2 = towerGeom(w * 0.62, h * 0.28, d * 0.62, bxx, bzz, 0);
-        g2.translate(0, GROUND_Y + h, 0);
-        tintGeom(g2, palettes[Math.floor(rng() * palettes.length)], 0.22, rng);
-        geoms.push(g2);
-        roofClutter(bxx, bzz, GROUND_Y + h + h * 0.28, w * 0.62, d * 0.62);
-      } else {
-        roofClutter(bxx, bzz, GROUND_Y + h, w, d);
+
+      const fam = CITY.pickFamily(rng, h, bxx, bzz);
+      const T = FAM[fam].tints;
+      const tint = T[(rng() * T.length) | 0];
+      const masonry = !!MASONRY[fam];
+      let topW = w, topD = d, topRot = 0;
+
+      function shaft(sw, sd, y0, hh, rot) {
+        const g = towerGeom(sw, hh, sd, bxx, bzz, rot);
+        g.translate(0, GROUND_Y + y0, 0);
+        tintGeomAO(g, tint, 0.16, rng, AO0, AO1, 0.66, 1.06);
+        CITY.famNormalize(g, fam);
+        famGeoms[fam].push(g);
       }
+
+      if (masonry && h > 120) {
+        // the 1923 zoning ordinance, which is why the pre-war skyline is a field of ziggurats
+        shaft(w, d, 0, h * 0.62, 0);
+        shaft(w * 0.72, d * 0.72, h * 0.62, h * 0.24, 0);
+        shaft(w * 0.46, d * 0.46, h * 0.86, h * 0.14, 0);
+        topW = w * 0.46; topD = d * 0.46;
+      } else if (!masonry && h > 150) {
+        shaft(w, d, 0, h * 0.88, 0);
+        shaft(w * 0.70, d * 0.70, h * 0.88, h * 0.12, Math.PI / 4);
+        topW = w * 0.70; topD = d * 0.70; topRot = Math.PI / 4;
+      } else {
+        shaft(w, d, 0, h, 0);
+      }
+
+      // projecting retail podium + the canopy line: this is what makes street level read
+      // from a boat, where you are looking UP at the first 8 m and nothing else
+      const RT = FAM[9].tints;
+      const band = towerGeom(w + 1.2, 4.5, d + 1.2, bxx, bzz, 0);
+      band.translate(0, GROUND_Y, 0);
+      tintGeomAO(band, RT[(rng() * RT.length) | 0], 0.10, rng, AO0, AO1, 0.66, 1);
+      CITY.famNormalize(band, 9);
+      famGeoms[9].push(band);
+
+      const tier = clear < 260 ? 2 : clear < 820 ? 1 : 0;
+      const topY = GROUND_Y + h;
+      if (tier > 0) crown(bxx, bzz, topY, topW, topD, fam, tint, topRot);
+      else flatBox(topW + 1.0, 1.1, topD + 1.0, bxx, topY - 0.35, bzz, shade(tint, 1.10), topRot);
+      if (tier === 2) {
+        flatBox(w + 2.0, 0.5, d + 2.0, bxx, GROUND_Y + 4.3, bzz, 0x3a3e44);       // canopy line
+        if (h >= 60) pilasters(bxx, bzz, w, d, h, tint);
+      }
+      roofKit(bxx, bzz, topY, topW, topD, h, fam, tier);
+
+      const ck = Math.round(bxx / 600) + ',' + Math.round(bzz / 600);
+      const prev = antennaCell.get(ck);
+      if (!prev || h > prev.h) antennaCell.set(ck, { h, x: bxx, z: bzz, topY, w: topW, d: topD });
       return true;
     }
 
@@ -432,6 +798,26 @@
     {
       const backGeoms = [];
       const bRng = U().mulberry(7777);
+      // Haze is thickest at ground level, so a uniformly-tinted box reads as a paper cut-out no
+      // matter how good the fog is. Bake the aerial perspective INTO the vertex colour: fog at
+      // the base, the tower's own hue at the top.
+      const fogHex = (scene.fog && scene.fog.color) ? scene.fog.color.getHex() : 0xc3d2dd;
+      const cF = new THREE.Color().setHex(fogHex);
+      const ringHues = [0x8793a0, 0x9a8f7c, 0x7d8891, 0xa39a8a, 0x6b7480];
+      const cH = new THREE.Color();
+      function tintRing(g, hex) {
+        cH.setHex(hex);
+        const pos = g.attributes.position, n = pos.count;
+        const col = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) {
+          const t = U().clamp(pos.getY(i) / 180, 0, 1);
+          const k = 0.25 + 0.60 * t;
+          _c.setRGB(cF.r + (cH.r - cF.r) * k, cF.g + (cH.g - cF.g) * k, cF.b + (cH.b - cF.b) * k);
+          _c.convertSRGBToLinear();
+          col[i * 3] = _c.r; col[i * 3 + 1] = _c.g; col[i * 3 + 2] = _c.b;
+        }
+        g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      }
       for (let a = 0; a < Math.PI * 2; a += 0.04) {
         const rad = 2750 + bRng() * 1000;
         const bx = cx0 + Math.cos(a) * rad, bz = cz0 + Math.sin(a) * rad;
@@ -440,13 +826,15 @@
         // ring used to plant a tan wall of towers straight across the river mouth
         if (bx > C.lake.openWaterX - 60) continue;
         if (landClearance(bx, bz) < Math.max(w, d) * 0.71 + 6) continue;
-        const h = 44 + bRng() * bRng() * 250;
+        let h = 38 + Math.pow(bRng(), 2.4) * 320;
+        if (bRng() < 0.06) h *= 1.9;                      // a few spikes break the mid-rise band
         const g = new THREE.BoxGeometry(w, h, d);
         g.translate(bx, h / 2, bz);
-        tintGeom(g, 0x8793a0, 0.14, bRng);
+        tintRing(g, shade(ringHues[(bRng() * ringHues.length) | 0], 0.93 + bRng() * 0.14));
         backGeoms.push(g);
       }
       const back = new THREE.Mesh(mergeGeoms(backGeoms), CITY.flatMaterial());
+      back.name = 'city-ring';
       scene.add(back);
     }
 
@@ -472,19 +860,45 @@
       }
     }
 
-    // ---------- merge everything into a few draw calls ----------
-    for (let i = 0; i < geoms.length; i += 400) {
-      const mesh = new THREE.Mesh(mergeGeoms(geoms.slice(i, i + 400)), CITY.material());
-      mesh.castShadow = true; mesh.receiveShadow = true;
-      scene.add(mesh);
+    // ---------- one antenna mast per 600 m cell, on that cell's tallest roof ----------
+    for (const a of antennaCell.values()) {
+      if (a.h < 55) continue;
+      const ah = 12 + rng() * 22;
+      const mast = new THREE.CylinderGeometry(0.10, 0.22, ah, 4);
+      mast.translate(a.x, a.topY + ah / 2, a.z);
+      tintGeom(mast, 0x2c2f33, 0, rng); detailGeoms.push(mast);
+      for (let k = 0; k < 3; k++) {
+        const ang = k * Math.PI * 2 / 3 + 0.4;
+        const gx = a.x + Math.cos(ang) * a.w * 0.42, gz = a.z + Math.sin(ang) * a.d * 0.42;
+        const len = Math.hypot(gx - a.x, gz - a.z, ah * 0.5);
+        const guy = new THREE.CylinderGeometry(0.06, 0.06, len, 3);
+        guy.rotateZ(Math.atan2(gx - a.x, ah * 0.5));
+        guy.rotateY(-Math.atan2(gz - a.z, gx - a.x));
+        guy.translate((a.x + gx) / 2, a.topY + ah * 0.25, (a.z + gz) / 2);
+        tintGeom(guy, 0x2c2f33, 0, rng); detailGeoms.push(guy);
+      }
+      if (RR.Theme) RR.Theme.addLamp(a.x, a.topY + ah + 0.6, a.z, 0xff2a1e);
+    }
+
+    // ---------- merge everything into a few draw calls, bucketed by facade family ----------
+    for (let f = 0; f < famGeoms.length; f++) {
+      const bucket = famGeoms[f];
+      for (let i = 0; i < bucket.length; i += 400) {
+        const mesh = new THREE.Mesh(mergeGeoms(bucket.slice(i, i + 400)), CITY.material(f));
+        mesh.name = 'city-fam' + f;
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        scene.add(mesh);
+      }
     }
     for (let i = 0; i < detailGeoms.length; i += 700) {
       const mesh = new THREE.Mesh(mergeGeoms(detailGeoms.slice(i, i + 700)), CITY.flatMaterial());
+      mesh.name = 'city-detail';
       mesh.castShadow = true; mesh.receiveShadow = true;
       scene.add(mesh);
     }
     for (let i = 0; i < dressGeoms.length; i += 700) {
       const mesh = new THREE.Mesh(mergeGeoms(dressGeoms.slice(i, i + 700)), CITY.flatMaterial());
+      mesh.name = 'city-dress';
       mesh.castShadow = true;
       mesh.layers.set(1);              // street furniture skips the reflection pass
       scene.add(mesh);

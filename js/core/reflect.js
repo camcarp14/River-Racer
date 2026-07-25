@@ -1,7 +1,7 @@
 /* River Racer — planar reflections: a mirror camera renders the world across the
    water plane (y=0) into a texture the water shader samples. Real skyline mirroring. */
 (function () {
-  const R = { enabled: true };
+  const R = { enabled: true, strength: 0.62 };   // strength is per-preset (theme.js writes P.water.refl)
   let rt, vcam, ready = false;
 
   const reflectorPos = new THREE.Vector3();
@@ -13,8 +13,9 @@
   const target = new THREE.Vector3();
   const textureMatrix = new THREE.Matrix4();
 
-  // half-res is plenty — the reflection is rippled and blended, so the cost saving is invisible
-  function size() { return [Math.max(256, (window.innerWidth * 0.5) | 0), Math.max(256, (window.innerHeight * 0.5) | 0)]; }
+  // 0.42-res is plenty — the tap is distorted by the wave normal before it is sampled, so the
+  // 29% pixel saving is invisible and it is the largest single win in the frame budget.
+  function size() { return [Math.max(256, (window.innerWidth * 0.42) | 0), Math.max(256, (window.innerHeight * 0.42) | 0)]; }
 
   R.init = function () {
     const [w, h] = size();
@@ -48,10 +49,14 @@
     vcam.position.copy(view);
     vcam.up.set(0, 1, 0).applyMatrix4(rot).reflect(normal);
     vcam.lookAt(target);
-    vcam.far = camera.far;
+    // build our own projection rather than copying the main camera's: the far plane has to really
+    // move to 2600 for the cull frustum to shrink, and that cull is where the saving is.
+    vcam.fov = camera.fov;
     vcam.aspect = camera.aspect;
+    vcam.near = camera.near;
+    vcam.far = 2600;                                  // nothing past 2.6 km survives the ripple + blend
     vcam.updateMatrixWorld();
-    vcam.projectionMatrix.copy(camera.projectionMatrix);
+    vcam.updateProjectionMatrix();
 
     textureMatrix.set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
     textureMatrix.multiply(vcam.projectionMatrix).multiply(vcam.matrixWorldInverse);
@@ -72,7 +77,7 @@
     const u = W.material.uniforms;
     u.uReflect.value = rt.texture;
     u.uReflectMatrix.value.copy(textureMatrix);
-    u.uReflectStrength.value = 0.62;
+    u.uReflectStrength.value = R.strength;
   };
 
   RR.Reflect = R;

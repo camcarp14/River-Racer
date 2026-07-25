@@ -1,6 +1,6 @@
 /* River Racer — renderer, scene, main loop, adaptive quality */
 (function () {
-  const E = { SKIP_REFLECT: 1, autoQuality: true, timeScale: 1, rawDt: 0 };
+  const E = { SKIP_REFLECT: 1, autoQuality: true, timeScale: 1, rawDt: 0, wantShadows: true };
   E.setAutoQuality = function (on) { E.autoQuality = on; };
   let renderer, scene, camera;
   let updateFns = [];
@@ -25,27 +25,50 @@
     camera.position.set(0, 40, 120);
     camera.layers.enable(E.SKIP_REFLECT);   // main view shows everything; the reflection cam skips layer 1
 
-    // golden-hour key light from the west (sun low over the river canyon)
-    const sun = new THREE.DirectionalLight(0xffdcae, 1.55);
-    sun.position.set(-0.72, 0.38, -0.16).multiplyScalar(1400);
+    // Key light. Chicago is 41.9 N and the Main Branch runs east-west, so the sun belongs in the
+    // SOUTHERN half of the sky: north-bank walls face south and burn, south-bank walls stay cool.
+    // E.sunDir / E.sunDist are the single source of truth — theme.js writes them, trackShadow reads.
+    E.sunDir = new THREE.Vector3(-0.5668, 0.6947, 0.4429).normalize();
+    E.sunDist = 1400;
+    const sun = new THREE.DirectionalLight(0xffeed8, 1.85);
+    sun.position.copy(E.sunDir).multiplyScalar(E.sunDist);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.near = 200; sun.shadow.camera.far = 3200;
-    sun.shadow.camera.left = -320; sun.shadow.camera.right = 320;
-    sun.shadow.camera.top = 320; sun.shadow.camera.bottom = -320;
-    sun.shadow.bias = -0.0004;
-    sun.shadow.normalBias = 2.0;
+    sun.shadow.camera.near = 100; sun.shadow.camera.far = 3400;
+    sun.shadow.camera.left = -360; sun.shadow.camera.right = 360;
+    sun.shadow.camera.top = 360; sun.shadow.camera.bottom = -360;
+    sun.shadow.bias = -0.00055;
+    sun.shadow.normalBias = 0.9;
     sun.layers.enable(E.SKIP_REFLECT);      // lights must reach layer-1 objects too (layers gate illumination)
     scene.add(sun);
     scene.add(sun.target);
     E.sun = sun;
 
-    const hemi = new THREE.HemisphereLight(0xcfe3f0, 0x44505c, 0.68);
+    // Two unshadowed directionals. Lambert lights per-vertex in r14x, so these are nearly free,
+    // and one key in a canyon is what crushes the shaded bank to black.
+    E.fillDir = new THREE.Vector3(0.5567, 0.5000, -0.6634).normalize();
+    const fill = new THREE.DirectionalLight(0x8fb4d8, 0.34);   // cold north-sky fill, opens the shaded bank
+    fill.castShadow = false;
+    fill.layers.enable(E.SKIP_REFLECT);
+    fill.position.copy(E.fillDir).multiplyScalar(900);
+    scene.add(fill); scene.add(fill.target);
+    E.fill = fill;
+
+    // river bounce, aimed UP from below the world: bridge soffits, cornice undersides and hull
+    // bottoms otherwise render as flat black slabs because nothing in the rig ever hits them.
+    const bounce = new THREE.DirectionalLight(0x6f8f72, 0.22);
+    bounce.castShadow = false;
+    bounce.layers.enable(E.SKIP_REFLECT);
+    bounce.position.set(0, -600, 90);
+    scene.add(bounce); scene.add(bounce.target);
+    E.bounce = bounce;
+
+    const hemi = new THREE.HemisphereLight(0xa8c8e8, 0x6e6a60, 0.95);
     hemi.layers.enable(E.SKIP_REFLECT);
     scene.add(hemi);
     E.hemi = hemi;
 
-    scene.fog = new THREE.Fog(0xd8c9a8, 900, 4200);
+    scene.fog = new THREE.Fog(0xc3d2dd, 520, 3900);
 
     window.addEventListener('resize', onResize);
 
@@ -65,7 +88,11 @@
   // shadow camera follows a world position (the player) so the map stays sharp
   E.trackShadow = function (x, z) {
     E.sun.target.position.set(x, 0, z);
-    E.sun.position.set(x - 0.72 * 1400, 0.38 * 1400, z - 0.16 * 1400);
+    E.sun.position.copy(E.sunDir).multiplyScalar(E.sunDist).add(E.sun.target.position);
+    E.fill.target.position.set(x, 0, z);
+    E.fill.position.copy(E.fillDir).multiplyScalar(900).add(E.fill.target.position);
+    E.bounce.target.position.set(x, 0, z);
+    E.bounce.position.set(x, -600, z + 90);
   };
 
   E.onUpdate = function (fn) { updateFns.push(fn); };
@@ -104,10 +131,23 @@
       if (E.autoQuality) {
         if (fpsEMA < 47 && pixelScale > 0.55) { pixelScale = Math.max(0.55, pixelScale - 0.15); onResize(); }
         else if (fpsEMA > 57 && pixelScale < 1) { pixelScale = Math.min(1, pixelScale + 0.1); onResize(); }
-        if (RR.Reflect) { if (fpsEMA < 40 && RR.Reflect.enabled) RR.Reflect.enabled = false; else if (fpsEMA > 54 && !RR.Reflect.enabled) RR.Reflect.enabled = true; }
+        if (RR.Reflect) {
+          if (fpsEMA < 40 && RR.Reflect.enabled) {
+            RR.Reflect.enabled = false;
+            if (RR.Water && RR.Water.material) RR.Water.material.uniforms.uReflectStrength.value = 0;
+          } else if (fpsEMA > 54 && !RR.Reflect.enabled) RR.Reflect.enabled = true;
+        }
+        // shader rungs before bloom: dome cloud octaves 3 -> 1, then the water's close-up octave.
+        // Never swap materials here — a program recompile mid-race stalls far worse than it saves.
+        if (RR.Sky && RR.Sky.mat && RR.Sky.mat.uniforms.uCloudOctaves) {
+          RR.Sky.mat.uniforms.uCloudOctaves.value = fpsEMA < 44 ? 1 : (fpsEMA > 55 ? 3 : RR.Sky.mat.uniforms.uCloudOctaves.value);
+        }
+        if (RR.Water && RR.Water.material && RR.Water.material.uniforms.uFineDetail) {
+          RR.Water.material.uniforms.uFineDetail.value = fpsEMA < 44 ? 0 : (fpsEMA > 55 ? 1 : RR.Water.material.uniforms.uFineDetail.value);
+        }
         if (RR.Post) { if (fpsEMA < 32 && RR.Post.enabled) RR.Post.enabled = false; else if (fpsEMA > 50 && !RR.Post.enabled) RR.Post.enabled = true; }
         if (fpsEMA < 26 && renderer.shadowMap.enabled) { renderer.shadowMap.enabled = false; E.sun.castShadow = false; }
-        else if (fpsEMA > 52 && !renderer.shadowMap.enabled) { renderer.shadowMap.enabled = true; E.sun.castShadow = true; }
+        else if (fpsEMA > 52 && !renderer.shadowMap.enabled) { renderer.shadowMap.enabled = true; E.sun.castShadow = E.wantShadows; }
       }
     }
 
