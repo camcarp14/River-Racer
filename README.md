@@ -27,6 +27,16 @@ Along the banks, modeled from their actual footprints and heights:
 - **Lake Shore Drive**: an elevated viaduct streaming with traffic runs the whole lakefront, crossing the river mouth on the **Link Bridge** with its four monumental Art-Moderne pylons — with lakefront parkland, a winding trail, trees and a seawall between the Drive and the water.
 - The **Chicago Harbor Lock** (real 24 m chamber — a genuine pinch at speed), a built-out **Navy Pier** — Pier Park, Festival Hall, the domed ballroom, a carousel and string-lit promenade — crowned by the **Centennial Wheel**: a proper Ferris wheel with a double steel rim, hub, and hanging gondolas that spins on its true axle and blazes with color-cycling LEDs at night. Plus the **Chicago Harbor Lighthouse** and a **living harbor**: moored sailboats, yachts under sail, nav buoys, a lake freighter, and the Gold Coast and Museum Campus skylines low on the far shore. Out on the open water, a **glowing chevron ribbon and lit pylons** mark the racing line so you never lose the course.
 
+## Modes
+
+| Mode | What it is |
+|---|---|
+| **Race** | Six boats, one course, ROOKIE / SKIPPER / LEGEND rivals |
+| **The Chicago Cup** | Four rounds across all four courses, points after each, standings carried between them |
+| **Time Trial** | You against your own best line — a translucent **ghost** of your record run drives it alongside you, with a live delta |
+| **Architecture Tour** | No clock, no rivals. Idle down the river while the docent panel names what you are passing |
+| **Multiplayer** | Real cross-machine P2P rooms — share a link, everyone brings their own boat |
+
 ## Courses
 
 | Course | Water |
@@ -42,7 +52,7 @@ Pick your ride in a **live 3D showroom** — the boat idles on the lake chop wit
 
 **Original music, zero audio files**: a soulful Chicago-house groove on the title screen and a driving 126 BPM race track once the flag drops — all synthesized live in WebAudio, with the engines mixed low so the music rides on top.
 
-**Chicago easter eggs**: find **Cloud Gate (The Bean)** on its plaza, **Buckingham Fountain** firing its jets ringed by **Chicago flags**, the **Chicago Theatre marquee**, and yes — **the Rat Hole**.
+**Chicago easter eggs** — the point of the whole thing. **Cloud Gate** on its plaza and **Buckingham Fountain** firing its jets; the **Picasso**, **Calder's Flamingo**, Oldenburg's **Bat Column** and **Chagall's Four Seasons**, each snapped to the street intersection you actually see it from; the **Centennial Fountain** firing its real hourly 60 m arc straight across the racing line; a car sailing off the Marina City garage exactly as it does in *The Hunter* (1980); **Art on theMART** thrown across the Mart's river face after dark; the **Municipal Y** standing on Wolf Point, because that Y *is* this river; the **Eastland** memorial and the **1871** marker where it started; the **Rubber Duck Derby**, the **Playpen**, **"meet me under the clock"**, and yes — **the Rat Hole**. Hand-lettered signage for the **Billy Goat**, **Malört**, **NO KETCHUP**, **Mr Beef**, the **Green Mill** and **Chess Records** rides on a single draw call.
 
 ## Controls
 
@@ -53,9 +63,10 @@ Pick your ride in a **live 3D showroom** — the boat idles on the lake chop wit
 | `A` `D` / `←` `→` | Steer |
 | `Shift` | Boost (drains fast, refills slow — spend it wisely) |
 | `C` | Camera (chase / close / hull) |
-| `N` | Time of day (day / sunset / night) |
+| `N` | Time of day (day / sunset / **dusk** / night) |
 | `G` | Dye the river green (St. Patrick's Day) |
 | `P` | Photo mode (orbit camera, HUD off) |
+| `[` `]` | Cycle cinematic camera shots |
 | `R` | Reset to course |
 | `Esc` | Pause |
 
@@ -65,16 +76,22 @@ Gamepad (left stick + triggers) and touch (left half steers, right half throttle
 
 - Plain JavaScript + a vendored three.js — classic script tags, works from `file://`
 - Custom water shader (analytic swell + scrolling ripple normals, Fresnel sky, sun glitter, bank foam) whose wave field is mirrored on the CPU so hulls actually ride it
-- Whole-city geometry merging (one material for every generic tower), adaptive pixel-ratio scaling, shadow camera that follows the player
+- **Ten facade families** — limestone, black anodised Mies steel, common brick, terracotta, pink granite, green and blue glass, concrete, curtain wall, retail — each a 256px tile of one 3.0 m bay by one 3.6 m floor, with geometry bucketed per family. Which one a building gets is decided by a **district model**: the Loop and Main Stem banks run limestone and black steel; brick pools into Fulton Market, River North and Printer's Row, where Chicago actually keeps it
+- Four time-of-day presets (day / sunset / dusk / night), a colour grade folded into the bloom composite rather than a second pass, and a baked vertical AO ramp in vertex colour standing in for SSAO at no cost
+- Whole-city geometry merging, adaptive pixel-ratio scaling, shadow camera that follows the player
 - 100% procedural WebAudio: five engine timbres, spray, horns, gulls, and a menu synth loop — zero audio files
 - AI rivals with racing lines, corner anticipation, rubber-banding and Chicago-appropriate names (say hi to Deep Dish Dre)
-- Race data: checkpoints, standings, best times in `localStorage`
+- Race data: checkpoints, standings, best times in `localStorage`; ghosts recorded to a 20 Hz ring buffer, quantised to Int16 and base64'd to ~30 KB per course and hull
+- The whole city is **deterministic** — every procedural placement runs off a seeded `mulberry32`, so the skyline is identical on every load and on every machine
 
 ## Development
 
 ```
 npm install          # playwright for the test harness
-node tools/screenshot.js          # headless smoke test + screenshots
+node tools/check.js               # fast load check — fails on any console error (~30s)
+node tools/check.js --shot=NAME --cam=x,y,z --look=x,y,z [--time=night]
+                                  # park a free camera anywhere and render one frame
+node tools/screenshot.js          # full headless smoke test + screenshots (~90s)
 node tools/deepwarp.js --course=1 # drive a course to the finish, screenshotting
 node tools/bake_data.js           # regenerate js/data/chicago.js
 node tools/build_singlefile.js    # rebuild play/RiverRacer.html
