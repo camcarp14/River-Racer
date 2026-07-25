@@ -1097,7 +1097,7 @@
               RR.FX.spray(b.pos.x, 0.7, b.pos.z, (Math.random() - 0.5) * 7, 5 + Math.random() * 3,
                 (Math.random() - 0.5) * 7, 4, 2.6, 2.0);
             }
-            if (b === pl && RR.Camera && RR.Camera.trauma) RR.Camera.trauma(0.2);
+            if (b === pl && RR.Camera && RR.Camera.kick) RR.Camera.kick(0.2);
           }
         }
       }

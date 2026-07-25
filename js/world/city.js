@@ -382,6 +382,10 @@
   const GROUND_Y = 6.0;
   CITY.GROUND_Y = GROUND_Y;
 
+  // the Loop street module: everything planted on the grid (filler towers, the ground texture)
+  // reads off these, so the painted carriageway lands in the gap the towers leave
+  const BLOCK_W = 96, STREET_W = 22, BLOCK_PITCH = BLOCK_W + STREET_W;
+
   // keep-out: signed clearance to the NEAREST water edge — channels AND the lake basin.
   // >0 on dry land, <0 over water. Nothing but the bridges is ever built where this is <0.
   function landClearance(x, z) {
@@ -421,20 +425,34 @@
 
     // ---------- ground: bank aprons hugging every channel + a coarse cell grid with
     // water cells skipped (the river must stay open water — no slab over the channels) ----------
+    // What you see between the towers IS the street grid, so paint the real module rather than
+    // graph paper: 96 m blocks on a 118 m pitch — exactly the grid the filler-tower field below
+    // is planted on, so the carriageway always lands in the gap between buildings. Chicago's grid
+    // is true north-south, which is why the diagonal river reads as a cut across it.
+    const GROUND_UV = BLOCK_PITCH;                     // one texture tile = one block + one street
     const groundTex = U().canvasTexture(256, 256, (ctx, w, h) => {
-      ctx.fillStyle = '#565b61'; ctx.fillRect(0, 0, w, h);
+      const S = w / BLOCK_PITCH;                       // px per metre
+      const s0 = (BLOCK_W / 2) * S, s1 = (BLOCK_W / 2 + STREET_W) * S;   // street band, px
+      const walk = 4 * S;                              // sidewalk each side of the carriageway
+      ctx.fillStyle = '#63645b'; ctx.fillRect(0, 0, w, h);              // block interior: alleys, lots, low roofs
       const g = U().mulberry(99);
-      for (let i = 0; i < 900; i++) {
-        const v = 75 + g() * 28;
-        ctx.fillStyle = `rgba(${v},${v + 4},${v + 8},0.5)`;
-        ctx.fillRect(g() * w, g() * h, 2, 2);
+      for (let i = 0; i < 1400; i++) {                 // grain, so the flat areas are never dead flat
+        const v = 78 + g() * 30;
+        ctx.fillStyle = `rgba(${v},${v + 3},${v - 2},0.45)`;
+        ctx.fillRect(g() * w, g() * h, 2 + g() * 3, 2 + g() * 3);
       }
-      ctx.strokeStyle = 'rgba(28,30,34,0.85)';
-      ctx.lineWidth = 6;
-      for (let i = 0; i <= 2; i++) {
-        ctx.beginPath(); ctx.moveTo(i * 128, 0); ctx.lineTo(i * 128, h); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(0, i * 128); ctx.lineTo(w, i * 128); ctx.stroke();
-      }
+      ctx.fillStyle = '#8b8879';                       // concrete walk on both kerb lines
+      ctx.fillRect(s0, 0, s1 - s0, h); ctx.fillRect(0, s0, w, s1 - s0);
+      ctx.fillStyle = '#3e4147';                       // asphalt carriageway (drawn last: owns the intersection)
+      ctx.fillRect(s0 + walk, 0, s1 - s0 - walk * 2, h);
+      ctx.fillRect(0, s0 + walk, w, s1 - s0 - walk * 2);
+      ctx.strokeStyle = 'rgba(196,176,96,0.30)';       // centre line, faint enough to never alias into a stripe
+      ctx.lineWidth = Math.max(1, 0.4 * S);
+      ctx.setLineDash([5 * S, 4 * S]);
+      const mid = (s0 + s1) / 2;
+      ctx.beginPath(); ctx.moveTo(mid, 0); ctx.lineTo(mid, h); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(w, mid); ctx.stroke();
+      ctx.setLineDash([]);
     });
     groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping;
     const groundMat = new THREE.MeshLambertMaterial({ map: groundTex, color: 0x9aa0a6 });
@@ -460,7 +478,7 @@
           const ox = p.x[i] - tz * outer * s, oz = p.z[i] + tx * outer * s;
           const ok = landClearance(ix, iz) > 0 && landClearance(ox, oz) > 0 && ix < openX - 6 && ox < openX - 6;
           verts.push(ix, GROUND_Y, iz, ox, GROUND_Y, oz);
-          uvs.push(ix / 32, iz / 32, ox / 32, oz / 32);
+          uvs.push(ix / GROUND_UV, iz / GROUND_UV, ox / GROUND_UV, oz / GROUND_UV);
           if (vi >= 2 && ok && prevOK) {
             if (s === 1) idx.push(vi - 2, vi - 1, vi, vi - 1, vi + 1, vi);
             else idx.push(vi - 2, vi, vi - 1, vi - 1, vi, vi + 1);
@@ -495,7 +513,9 @@
           g.rotateX(-Math.PI / 2);
           g.translate(cx, GROUND_Y - 0.04, cz);
           const uv = g.attributes.uv;
-          for (let i = 0; i < uv.count; i++) uv.setXY(i, (cx + (uv.getX(i) - 0.5) * CELL) / 32, (cz + (uv.getY(i) - 0.5) * CELL) / 32);
+          // rotateX(-90°) sends the plane's +v to world -z, so v must be negated or every cell
+          // mirrors its neighbour and the street grid breaks at each 64 m tile seam
+          for (let i = 0; i < uv.count; i++) uv.setXY(i, (cx + (uv.getX(i) - 0.5) * CELL) / GROUND_UV, (cz - (uv.getY(i) - 0.5) * CELL) / GROUND_UV);
           cells.push(g);
         }
       }
@@ -559,7 +579,7 @@
     }
 
     // ---------- generic tower field on the street grid ----------
-    const BLOCK = 96, STREET = 22;
+    const BLOCK = BLOCK_W, STREET = STREET_W;
     const famGeoms = FAM.map(() => []);   // window-mapped tower shells, bucketed by facade family
     const detailGeoms = [];    // flat: cornices, rooftop clutter, park ground, plazas
     const dressGeoms = [];     // flat: trees, lamps, benches, planters
@@ -826,8 +846,12 @@
         // ring used to plant a tan wall of towers straight across the river mouth
         if (bx > C.lake.openWaterX - 60) continue;
         if (landClearance(bx, bz) < Math.max(w, d) * 0.71 + 6) continue;
-        let h = 38 + Math.pow(bRng(), 2.4) * 320;
-        if (bRng() < 0.06) h *= 1.9;                      // a few spikes break the mid-rise band
+        // Nothing on the horizon may out-top Willis (442 m). Outside the Loop the real city tops
+        // out around 180 m, and an untextured 640 m slab beating the actual skyline from the lake
+        // reads as a rendering fault, not a distant tower.
+        let h = 38 + Math.pow(bRng(), 2.4) * 200;
+        if (bRng() < 0.06) h *= 1.55;                     // a few spikes break the mid-rise band
+        h = Math.min(h, 240);
         const g = new THREE.BoxGeometry(w, h, d);
         g.translate(bx, h / 2, bz);
         tintRing(g, shade(ringHues[(bRng() * ringHues.length) | 0], 0.93 + bRng() * 0.14));

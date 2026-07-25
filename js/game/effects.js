@@ -73,42 +73,143 @@
   }
 
   // ---------- spray particles: one shared points cloud ----------
+  // A spray sheet is thousands of centimetre-scale droplets, not a handful of soft discs. Every
+  // point here is sized in real metres, stays translucent (thrown water never reads as opaque
+  // white — it would also cross the bloom threshold and turn into a lens flare), shrinks and fades
+  // to nothing over its life, and smears along its own screen-space travel when it moves fast,
+  // which is how a camera actually records a droplet. Anything about to hit the lens fades out
+  // rather than splatting a white disc across the frame.
   const MAXP = 900;
-  let pGeo, pPts, pool, poolIdx = 0;
+  const P_GRAV = 13;
+  let pGeo, pPts, pMat, pool, poolIdx = 0;
   function initParticles(scene) {
     pGeo = new THREE.BufferGeometry();
     const pos = new Float32Array(MAXP * 3);
-    const attr = new Float32Array(MAXP * 3);       // vx spare: [size, born, life]
+    const drop = new Float32Array(MAXP * 4);       // [diameter in metres, alpha, edge hardness, seed]
+    const vel = new Float32Array(MAXP * 3);        // world velocity, for the motion smear
+    for (let i = 0; i < MAXP; i++) pos[i * 3 + 1] = -50;
     pGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+    pGeo.setAttribute('aDrop', new THREE.BufferAttribute(drop, 4).setUsage(THREE.DynamicDrawUsage));
+    pGeo.setAttribute('aVel', new THREE.BufferAttribute(vel, 3).setUsage(THREE.DynamicDrawUsage));
     pool = [];
-    // g = gravity multiplier: 1 for water spray, 0 for the weightless speed streaks
-    for (let i = 0; i < MAXP; i++) pool.push({ x: 0, y: -50, z: 0, vx: 0, vy: 0, vz: 0, life: 0, age: 99, size: 1, g: 1 });
-    const tex = U().canvasTexture(64, 64, (ctx) => {
-      const g = ctx.createRadialGradient(32, 32, 2, 32, 32, 30);
-      g.addColorStop(0, 'rgba(255,255,255,0.95)');
-      g.addColorStop(0.5, 'rgba(235,245,250,0.5)');
-      g.addColorStop(1, 'rgba(235,245,250,0)');
-      ctx.fillStyle = g; ctx.fillRect(0, 0, 64, 64);
+    // g = gravity multiplier: 1 for a heavy drop, ~0.3 for mist that hangs, 0 for speed streaks
+    for (let i = 0; i < MAXP; i++) {
+      pool.push({ x: 0, y: -50, z: 0, vx: 0, vy: 0, vz: 0, life: 0, age: 99,
+        s0: 0.1, a0: 0.2, core: 0.3, seed: 0, g: 1, drag: 1, fp: 1.3, sMin: 0.4 });
+    }
+    pMat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false,
+      uniforms: {
+        uH: { value: 720 }, uAspect: { value: 16 / 9 },
+        uCol: { value: new THREE.Vector3(0.93, 0.96, 0.98) },   // cool white; the river is green
+        uCamVel: { value: new THREE.Vector3() },
+      },
+      vertexShader: `
+        uniform float uH;
+        uniform float uAspect;
+        uniform vec3 uCamVel;
+        attribute vec4 aDrop;
+        attribute vec3 aVel;
+        varying float vA;
+        varying float vCore;
+        varying float vRot;
+        varying float vStretch;
+        varying float vSeed;
+        void main() {
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix * mv;
+          float depth = max(0.05, -mv.z);
+          float px = aDrop.x * projectionMatrix[1][1] * 0.5 * uH / depth;
+          // smear along motion RELATIVE TO THE LENS: a droplet keeping pace with a chase camera
+          // is still on screen and must stay round, however fast the world says it is going
+          vec4 cp2 = projectionMatrix * (mv + modelViewMatrix * vec4((aVel - uCamVel) * 0.02, 0.0));
+          vec2 s1 = gl_Position.xy / max(1e-4, gl_Position.w);
+          vec2 s2 = cp2.xy / max(1e-4, cp2.w);
+          vec2 d = (s2 - s1) * vec2(uAspect, 1.0) * uH * 0.5;
+          float dl = length(d);
+          // torn water is never round: every droplet carries its own ellipticity, and fast ones
+          // stretch further along their travel
+          vStretch = max(clamp(dl / max(px, 1.5), 1.0, 2.5), 1.0 + 0.45 * fract(aDrop.w * 0.618));
+          vRot = dl > 0.75 ? atan(d.y, d.x) : aDrop.w;
+          vCore = aDrop.z;
+          vSeed = aDrop.w;
+          // a droplet that would cover a fat patch of screen is a lens blob, not spray, whatever
+          // the camera distance — so fade on projected SIZE, not just on depth, and cap the sprite
+          vA = aDrop.y * smoothstep(0.55, 2.0, depth) * mix(1.0, 0.12, smoothstep(24.0, 70.0, px));
+          gl_PointSize = clamp(px * vStretch, 1.0, 44.0);
+        }`,
+      fragmentShader: `
+        uniform vec3 uCol;
+        varying float vA;
+        varying float vCore;
+        varying float vRot;
+        varying float vStretch;
+        varying float vSeed;
+        void main() {
+          vec2 d = gl_PointCoord - 0.5;
+          float ca = cos(vRot), sa = sin(vRot);
+          vec2 q = vec2(d.x * ca + d.y * sa, d.y * ca - d.x * sa);
+          q.y *= vStretch;                       // long axis along travel, thin across it
+          float r = length(q) * 2.0;
+          // ragged rim. Torn water has one; a lens blob does not, and that tell is the whole
+          // difference between "spray" and "someone smudged the camera".
+          float ang = atan(q.y, q.x + 1e-5);
+          r *= 1.0 + 0.14 * sin(ang * 3.0 + vSeed) + 0.07 * sin(ang * 5.0 - vSeed * 2.3);
+          float a = vA * (1.0 - smoothstep(vCore, 1.0, r));
+          if (a < 0.004) discard;
+          gl_FragColor = vec4(uCol, a);
+        }`,
     });
-    const mat = new THREE.PointsMaterial({ size: 1.6, map: tex, transparent: true, depthWrite: false, opacity: 0.85, sizeAttenuation: true });
-    pPts = new THREE.Points(pGeo, mat);
+    pPts = new THREE.Points(pGeo, pMat);
     pPts.frustumCulled = false;
     pPts.renderOrder = 3;
     pPts.layers.set(1);
+    // gl_PointSize is device pixels, so the shader needs the height of the buffer it is drawing
+    // into — bloom renders the scene to an off-screen target, not straight to the canvas.
+    pPts.onBeforeRender = function (r) {
+      const t = r.getRenderTarget();
+      const w = t ? t.width : r.domElement.width, h = t ? t.height : r.domElement.height;
+      pMat.uniforms.uH.value = h;
+      pMat.uniforms.uAspect.value = w / Math.max(1, h);
+    };
     scene.add(pPts);
   }
 
+  // FROZEN signature — other modules call it. size is a multiplier, not a diameter.
+  // The mist/drop mix is deliberate: fine mist alone reads as fog, drops alone read as buckshot.
   FX.spray = function (x, y, z, vx, vy, vz, count, spread, size) {
+    // sized for the chase camera, which rides ~20 m astern: a droplet has to be ~0.2-0.6 m across
+    // to project to the handful of pixels that reads as a droplet from back there. Sub-linear in
+    // size so the big callers (geysers pass 3.4) get chunkier water without getting blobs.
+    const base = 0.15 + 0.17 * Math.pow(size || 1, 0.75);
     for (let i = 0; i < count; i++) {
       const p = pool[poolIdx]; poolIdx = (poolIdx + 1) % MAXP;
-      p.x = x; p.y = y; p.z = z;
-      p.vx = vx + (Math.random() - 0.5) * spread;
-      p.vy = vy + Math.random() * spread * 0.7;
-      p.vz = vz + (Math.random() - 0.5) * spread;
-      p.life = 0.5 + Math.random() * 0.5;
+      const heavy = Math.random() < 0.28;
+      const jit = base * 1.6;
+      p.x = x + (Math.random() - 0.5) * jit;
+      p.y = y + (Math.random() - 0.5) * jit * 0.6;
+      p.z = z + (Math.random() - 0.5) * jit;
+      const sp = spread * (heavy ? 0.75 : 1.35);
+      p.vx = vx + (Math.random() - 0.5) * sp;
+      p.vy = vy * (heavy ? 1 : 0.8) + Math.random() * sp * 0.7;
+      p.vz = vz + (Math.random() - 0.5) * sp;
       p.age = 0;
-      p.size = size || 1;
-      p.g = 1;
+      p.seed = Math.random() * 6.283;
+      // Lives are short on purpose: the boat outruns its own spray at 30 m/s, so anything that
+      // survives half a second is no longer spray — it is a blob loitering in front of the lens.
+      if (heavy) {
+        p.s0 = base * (1.2 + Math.random() * 1.0);
+        p.a0 = 0.36 + Math.random() * 0.16;      // peak alpha stays well under opaque
+        p.core = 0.45 + Math.random() * 0.25;
+        p.life = 0.35 + Math.random() * 0.45;
+        p.g = 1; p.drag = 0.55; p.fp = 1.3; p.sMin = 0.55;
+      } else {
+        p.s0 = base * (0.5 + Math.random() * 0.8);
+        p.a0 = 0.20 + Math.random() * 0.14;
+        p.core = 0.02 + Math.random() * 0.18;
+        p.life = 0.22 + Math.random() * 0.26;
+        p.g = 0.3; p.drag = 2.6; p.fp = 2.0; p.sMin = 0.3;
+      }
     }
   };
 
@@ -131,25 +232,51 @@
       p.y = boat.pos.y + 0.6 + Math.random() * 4.2;
       p.z = boat.pos.z + c * ahead - s * side;
       p.vx = -boat.vel.x * 1.25; p.vy = 0; p.vz = -boat.vel.z * 1.25;
-      p.life = 0.30; p.age = 0; p.size = 0.6; p.g = 0;
+      // hairline and faint: the shader smears these along their own travel, so a streak is what
+      // the motion makes it, not a sprite big enough to be mistaken for spray.
+      p.life = 0.26; p.age = 0;
+      p.s0 = 0.16; p.a0 = 0.22; p.core = 0.25; p.seed = Math.random() * 6.283;
+      p.g = 0; p.drag = 0; p.fp = 1.1; p.sMin = 0.7;
     }
   }
 
+  const camPrev = new THREE.Vector3();
   function updateParticles(dt) {
     const pos = pGeo.attributes.position.array;
+    const drp = pGeo.attributes.aDrop.array;
+    const vel = pGeo.attributes.aVel.array;
+    const cp = RR.Engine.camera.position, cv = pMat.uniforms.uCamVel.value;
+    if (dt > 5e-4) {
+      cv.set((cp.x - camPrev.x) / dt, (cp.y - camPrev.y) / dt, (cp.z - camPrev.z) / dt);
+      const m = cv.length();
+      if (m > 90) cv.multiplyScalar(90 / m);   // a camera snap between races must not smear the world
+    }
+    camPrev.copy(cp);
     for (let i = 0; i < MAXP; i++) {
       const p = pool[i];
-      if (p.age < p.life) {
-        p.age += dt;
-        p.vy -= 13 * p.g * dt;
-        p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
-        if (p.y < -0.2) p.age = p.life;
-        pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
-      } else {
-        pos[i * 3 + 1] = -50;
-      }
+      const o = i * 3, q = i * 4;
+      if (p.age >= p.life) { pos[o + 1] = -50; drp[q + 1] = 0; continue; }
+      p.age += dt;
+      p.vy -= P_GRAV * p.g * dt;
+      const k = Math.max(0, 1 - p.drag * dt);      // air drag: mist stalls and hangs, drops carry
+      p.vx *= k; p.vy *= k; p.vz *= k;
+      p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+      const u = Math.min(1, p.age / p.life);
+      // dissolve into the surface instead of blinking out. The threshold sits below y=0 because
+      // lake swell runs to half a metre and spray in a trough must not vanish in mid-air; the
+      // water is opaque and writes depth, so anything genuinely under it is hidden regardless.
+      const sink = U().clamp((p.y + 0.35) / 0.3, 0, 1);
+      if (p.y < -0.35) p.age = p.life;
+      pos[o] = p.x; pos[o + 1] = p.y; pos[o + 2] = p.z;
+      vel[o] = p.vx; vel[o + 1] = p.vy; vel[o + 2] = p.vz;
+      drp[q] = p.s0 * (p.sMin + (1 - p.sMin) * (1 - u));
+      drp[q + 1] = p.a0 * Math.pow(1 - u, p.fp) * Math.min(1, p.age * 20) * sink;
+      drp[q + 2] = p.core;
+      drp[q + 3] = p.seed;
     }
     pGeo.attributes.position.needsUpdate = true;
+    pGeo.attributes.aDrop.needsUpdate = true;
+    pGeo.attributes.aVel.needsUpdate = true;
   }
 
   // ---------- confetti: bright multicolor celebration pieces ----------
@@ -279,31 +406,39 @@
         const ez = boat.pos.z - s * side * boat.radius * 0.7 + c * boat.radius * 0.7;
         FX.spray(ex, wy + 0.05, ez,
           boat.vel.x * 0.14 + c * side * 1.6, 1.5 + wash * 2.8, boat.vel.z * 0.14 - s * side * 1.6,
-          1, 1.5 + wash, 1.1);
+          2, 1.5 + wash, 0.95);
       }
       return;
     }
-    if (fire(boat, 'hull', 24 * intensity * near, dt)) {
-      const side = Math.random() < 0.5 ? -1 : 1;
+    // A planing hull throws its sheet off the forward chine: forward, outward and LOW, hugging the
+    // water — not a fountain over the deck. The two shoulders alternate so it reads as one
+    // continuous sheet rather than a stutter of puffs on random sides.
+    if (fire(boat, 'hull', 46 * (0.3 + 0.7 * intensity) * near, dt)) {
+      const side = (boat._fxSide = -(boat._fxSide || 1));
+      const fwd = boat.radius * (Math.random() * 1.15 - 0.2);   // spread down the chine, not one point
+      // clear of the waterline and outboard of the hull: a sheet that peels below the surface is
+      // eaten by the water's depth buffer, and one inside the beam hides behind the boat
       FX.spray(
-        boat.pos.x + s * boat.radius * 0.5 + c * side * boat.radius * 0.55,
-        boat.pos.y + 0.15,
-        boat.pos.z + c * boat.radius * 0.5 - s * side * boat.radius * 0.55,
-        boat.vel.x * 0.35 + c * side * (2 + intensity * 5),
-        1.6 + intensity * 2.6,
-        boat.vel.z * 0.35 - s * side * (2 + intensity * 5),
-        2, 1.6, 1);
+        boat.pos.x + s * fwd + c * side * boat.radius * 0.85,
+        U().waterHeight(boat.pos.x, boat.pos.z, t, RR.River.waveAmp(boat.pos.x, boat.pos.z)) + 0.3,
+        boat.pos.z + c * fwd - s * side * boat.radius * 0.85,
+        // leaves the chine at near hull speed — water peeled off the bow is already moving with
+        // the boat; air drag is what makes it fall astern, and that is what shapes the plume
+        boat.vel.x * 0.82 + c * side * (2.4 + intensity * 6.5),
+        1.3 + intensity * 2.3,
+        boat.vel.z * 0.82 - s * side * (2.4 + intensity * 6.5),
+        5, 1.6, 0.8);
     }
     // boost: a rooster tail off the stern so the burn is unmistakable. It is thrown WIDE, not
     // straight up, because straight up is exactly where the chase camera is looking.
-    if (boat.boostHeat > 0.4 && speed > 8 && fire(boat, 'boost', 18 * near, dt)) {
+    if (boat.boostHeat > 0.4 && speed > 8 && fire(boat, 'boost', 22 * near, dt)) {
       const side = Math.random() < 0.5 ? -1 : 1;
       FX.spray(
         boat.pos.x - s * boat.radius * 1.3 + c * side * boat.radius * 0.5,
         boat.pos.y + 0.25,
         boat.pos.z - c * boat.radius * 1.3 - s * side * boat.radius * 0.5,
-        -boat.vel.x * 0.34 + c * side * 3.5, 3.4 + intensity * 3.4, -boat.vel.z * 0.34 - s * side * 3.5,
-        2, 3.0, 1.8);
+        boat.vel.x * 0.3 + c * side * 3.5, 3.0 + intensity * 3.0, boat.vel.z * 0.3 - s * side * 3.5,
+        3, 3.2, 1.3);
     }
     // hard turns throw a rooster fan
     if (Math.abs(boat.visRoll) > 0.18 && speed > 12 && fire(boat, 'turn', 26 * near, dt)) {
@@ -312,10 +447,10 @@
         boat.pos.x - s * boat.radius * 0.6 + c * side * boat.radius * 0.7,
         boat.pos.y + 0.2,
         boat.pos.z - c * boat.radius * 0.6 - s * side * boat.radius * 0.7,
-        boat.vel.x * 0.25 + c * side * (5 + intensity * 8),
+        boat.vel.x * 0.62 + c * side * (5 + intensity * 8),
         2.8 + intensity * 3.4,
-        boat.vel.z * 0.25 - s * side * (5 + intensity * 8),
-        3, 2.6, 1.4);
+        boat.vel.z * 0.62 - s * side * (5 + intensity * 8),
+        3, 2.6, 1.1);
     }
   }
 
@@ -356,7 +491,7 @@
   }
 
   FX.splashBurst = function (x, y, z, intensity) {
-    FX.spray(x, y + 0.2, z, 0, 3.5 + intensity * 5, 0, Math.floor(12 + intensity * 26), 4.5 + intensity * 3, 1.6);
+    FX.spray(x, y + 0.2, z, 0, 3.5 + intensity * 5, 0, Math.floor(16 + intensity * 30), 4.2 + intensity * 3, 2.0);
   };
 
   // ---------- near miss: threading the needle at speed pays boost ----------
@@ -395,12 +530,14 @@
     }
     boat._scrapeWas = on;
     if (!on) return;
-    const w = boat.water;
-    if (!w) return;
     if (!fire(boat, 'scrape', boat.isPlayer ? 16 : 8, dt)) return;
+    // boat.water aliases river.js's one shared scratch, so by now it holds whichever hull was
+    // queried last — ask again for THIS boat or the spray peels off someone else's wall
+    const w = RR.River.waterQuery(boat.pos.x, boat.pos.z, boat.hint);
+    if (!w) return;
     // spray peels off the quay on the side the hull is riding
     const px = boat.pos.x - w.nx * (boat.radius * 0.8), pz = boat.pos.z - w.nz * (boat.radius * 0.8);
-    FX.spray(px, boat.pos.y + 0.25, pz, -w.nx * 4 + boat.vel.x * 0.25, 2.2, -w.nz * 4 + boat.vel.z * 0.25, 2, 2.2, 1.1);
+    FX.spray(px, boat.pos.y + 0.25, pz, -w.nx * 4 + boat.vel.x * 0.25, 2.2, -w.nz * 4 + boat.vel.z * 0.25, 3, 2.2, 0.9);
   }
 
   const wakes = new Map();

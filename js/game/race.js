@@ -103,8 +103,10 @@
       geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
       const tex = chevronTex(); tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      // Painted-on, not additive: adding gold to deep-blue lake water lands on lime, and on the
+      // near-black night lake it clips to pure white. Normal blending keeps the chevrons gold.
       const ribbon = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-        map: tex, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+        map: tex, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }));
       ribbon.renderOrder = 2; ribbon.layers.set(1);
       gateGroup.add(ribbon);
       state.lakeRibbon = { tex };
@@ -400,6 +402,14 @@
       RR.Physics.applyVisual(b);
     });
     return S;
+  };
+
+  // Tearing the race down on the way back to the title. The ghost mesh is ours alone — main.js
+  // only knows about real boats — so without this it sits on the water behind the menu flythrough.
+  RACE.end = function () {
+    if (gateGroup) { RR.Engine.scene.remove(gateGroup); gateGroup = null; }
+    clearGhost();
+    S = null;
   };
 
   // track progress; returns true the frame the boat crosses a checkpoint

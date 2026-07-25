@@ -699,7 +699,10 @@
     }
 
     // ---------- per-frame: wheel, wheel LEDs, lighthouse characteristic, lock cycle ----------
-    const _gm = new THREE.Matrix4(), _gq = new THREE.Quaternion(), _gp = new THREE.Vector3();
+    const _gm = new THREE.Matrix4(), _gp = new THREE.Vector3();
+    // two scratch quaternions, never one: the gondolas need a permanent identity — a real wheel
+    // hangs its cars level however far it has turned — and the lock leaves rewrite theirs each frame
+    const _qHang = new THREE.Quaternion(), _qGate = new THREE.Quaternion();
     const _gs = new THREE.Vector3(1, 1, 1), _up = new THREE.Vector3(0, 1, 0);
     const LIT = { night: 1, dusk: 0.72, sunset: 0.35, day: 0 };   // dusk is blue hour, not daylight
     let gateF = 0;                                               // 0 = wide open, 1 = mitred shut
@@ -710,7 +713,7 @@
       for (let i = 0; i < w.N; i++) {
         const a = base + (i / w.N) * Math.PI * 2;
         _gp.set(Math.cos(a) * w.r, Math.sin(a) * w.r, 0);        // hung from the non-spinning parent
-        _gm.compose(_gp, _gq, _gs);
+        _gm.compose(_gp, _qHang, _gs);
         w.gonds.setMatrixAt(i, _gm);
       }
       w.gonds.instanceMatrix.needsUpdate = true;
@@ -740,8 +743,8 @@
       for (let i = 0; i < leaves.length; i++) {
         const L = leaves[i];
         _gp.set(L.x, 2.0, L.z);
-        _gq.setFromAxisAngle(_up, L.open + (L.shut - L.open) * gateF);
-        _gm.compose(_gp, _gq, _gs);
+        _qGate.setFromAxisAngle(_up, L.open + (L.shut - L.open) * gateF);
+        _gm.compose(_gp, _qGate, _gs);
         gateMesh.setMatrixAt(i, _gm);
       }
       gateMesh.instanceMatrix.needsUpdate = true;

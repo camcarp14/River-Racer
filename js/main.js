@@ -246,6 +246,7 @@
     RR.Audio.stopEngine();
     if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(false);
     clearBoats();
+    if (RR.Race.end) RR.Race.end();
     raceState = null;
   }
 
@@ -316,7 +317,10 @@
       if (RR.Menus.screen() === 'vehicle' && showBoat) {
         // showroom: slow orbit around the boat bobbing on the lake chop
         const amp = RR.River.waveAmp(SHOW.x, SHOW.z);
-        showBoat.position.y = RR.U.waterHeight(SHOW.x, SHOW.z, t, amp) + 0.18 + (showBoat.userData.hoverShow || 0);
+        // the lake sheet renders 9 cm below the analytic wave field, so a boat parked at +0.18
+        // shows 30 cm of daylight under its chines from 4 m away — every hull is modelled with
+        // its designed waterline on the group origin, so sit that origin just into the water
+        showBoat.position.y = RR.U.waterHeight(SHOW.x, SHOW.z, t, amp) - 0.16 + (showBoat.userData.hoverShow || 0);
         showBoat.rotation.set(Math.sin(t * 0.7) * 0.035, t * 0.4, Math.sin(t * 0.55) * 0.045);
         if (showBoat.userData.tick) showBoat.userData.tick(t, null);   // spin turbines / flicker plasma on display
         const cam = RR.Engine.camera;

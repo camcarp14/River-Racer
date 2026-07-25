@@ -85,7 +85,9 @@
     geo.computeVertexNormals();
   }
 
-  // red port / green starboard / white stern nav lights (glow at night via bloom)
+  // red port / green starboard / white stern nav lights (glow at night via bloom).
+  // shapeHull tapers the sheer to a point, so bowZ/halfBeam must be picked where the hull is
+  // still wide — set at max beam right up at the stem they float free of the boat entirely.
   function navLights(g, halfBeam, bowZ, sternZ, y) {
     const add = (col, x, z) => {
       const m = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 6),
@@ -218,7 +220,7 @@
       const rider = driverFigure({ pose: 'stand', lean: 0.8, suit: 0x22262e, vest: spec.deck, helmet: spec.accent, visor: true,
         handL: [-0.3, 0.42, 0.92], handR: [0.3, 0.42, 0.92], scale: 0.95 });
       rider.position.set(0, 0.66, -0.3); g.add(rider);
-      navLights(g, 0.5, 1.3, -1.5, 0.72);
+      navLights(g, 0.34, 0.95, -1.5, 0.70);
       g.userData.size = { r: 1.4, len: 3.2 };
       return g;
     },
@@ -229,9 +231,13 @@
       shapeHull(hullGeo, 7.8, 2.35, 1.05, 0.7);
       const hull = new THREE.Mesh(hullGeo, mat(spec.hull, { roughness: 0.22, metalness: 0.35 }));
       hull.position.y = 0.5; g.add(hull);
-      // topside racing stripe wrapping the sheer
-      const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.42, 0.22, 7.0), mat(spec.accent, { roughness: 0.3 }));
-      stripe.position.set(0, 0.86, 0.2); g.add(stripe);
+      // Topside racing stripe wrapping the sheer. It has to take the hull's own bow taper:
+      // as a plain box it hung a metre of flat wing off either side of the stem.
+      const stripeGeo = new THREE.BoxGeometry(2.42, 0.22, 7.0, 2, 1, 12);
+      stripeGeo.translate(0, 0, 0.2);
+      shapeHull(stripeGeo, 7.8, 2.42, 0, 0);
+      const stripe = new THREE.Mesh(stripeGeo, mat(spec.accent, { roughness: 0.3 }));
+      stripe.position.set(0, 0.86, 0); g.add(stripe);
       // foredeck + cockpit tub
       const deckGeo = new THREE.BoxGeometry(2.0, 0.22, 6.8, 2, 1, 6); shapeHull(deckGeo, 6.8, 2.0, 0.22, 0.9);
       const deck = new THREE.Mesh(deckGeo, mat(spec.deck, { roughness: 0.35, metalness: 0.15 }));
@@ -251,7 +257,7 @@
         const cowl = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.7, 0.6), mat(0x14161a, { metalness: 0.5 })); cowl.position.set(s, 0.8, -3.95); g.add(cowl);
         const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.7, 0.24), mat(0x1a1d22)); leg.position.set(s, 0.25, -4.0); g.add(leg);
       }
-      cleat(g, 0.9, 3.0, 1.12); cleat(g, -0.9, 3.0, 1.12);
+      cleat(g, 0.55, 2.2, 1.12); cleat(g, -0.55, 2.2, 1.12);   // on the foredeck, not out past the taper
       // helm wheel + seated pilot at the starboard seat; rescue hull ships a firefighter
       const fire = spec.id === 'rescue';
       const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.03, 6, 14), mat(0x14161c, { metalness: 0.5 }));
@@ -265,7 +271,7 @@
         handL: [-0.15, 0.12, 0.58], handR: [0.15, 0.12, 0.58],
       });
       drv.position.set(0.4, 1.52, -1.0); g.add(drv);
-      navLights(g, 1.05, 3.4, -4.0, 1.1);
+      navLights(g, 0.70, 2.4, -4.0, 1.1);
       g.userData.size = { r: 2.4, len: 7.8 };
       return g;
     },
@@ -281,7 +287,10 @@
       const podGeo = new THREE.BoxGeometry(0.82, 0.6, 5.4, 2, 1, 8); shapeHull(podGeo, 5.4, 0.82, 0.6, 1.0);
       const pod = new THREE.Mesh(podGeo, mat(spec.deck, { roughness: 0.3, metalness: 0.2 })); pod.position.set(0, 0.6, 0.1); g.add(pod);
       // sponsor stripe
-      const str = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 5.0), mat(spec.hull, { roughness: 0.3 })); str.position.set(0, 0.9, 0.1); g.add(str);
+      const strGeo = new THREE.BoxGeometry(0.5, 0.06, 5.0, 1, 1, 12);
+      strGeo.translate(0, 0, 0.1);
+      shapeHull(strGeo, 5.4, 0.5, 0, 0);                      // follows the pod's nose, not past it
+      const str = new THREE.Mesh(strGeo, mat(spec.hull, { roughness: 0.3 })); str.position.set(0, 0.9, 0); g.add(str);
       const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.42, 10, 8), glassMat()); canopy.scale.set(0.85, 0.75, 1.5); canopy.position.set(0, 1.0, -0.5); g.add(canopy);
       const halo = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.05, 6, 12, Math.PI), chrome()); halo.rotation.x = Math.PI / 2; halo.position.set(0, 1.05, -0.5); g.add(halo);
       // rear wing
@@ -291,7 +300,7 @@
       // reclined pilot: only helmet + shoulders show under the glass, legs run into the hull
       const pilot = driverFigure({ pose: 'recline', lean: 0.35, suit: spec.hull, helmet: spec.accent, visor: true, legs: false, arms: false });
       pilot.position.set(0, 0.48, -0.78); g.add(pilot);
-      navLights(g, 1.3, 2.4, -2.0, 0.7);
+      navLights(g, 1.16, 1.9, -2.0, 0.7);
       g.userData.size = { r: 2.2, len: 5.4 };
       return g;
     },
@@ -313,7 +322,10 @@
       const deckGeo = new THREE.BoxGeometry(1.9, 0.16, 6.2, 2, 1, 6); shapeHull(deckGeo, 6.2, 1.9, 0.16, 0.8);
       const deck = new THREE.Mesh(deckGeo, wood); deck.position.set(0, 1.0, 0.1); g.add(deck);
       // chrome waterline + trim
-      const trimT = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.05, 6.0), chrome()); trimT.position.set(0, 0.98, 0.1); g.add(trimT);
+      const trimGeo = new THREE.BoxGeometry(2.2, 0.05, 6.0, 2, 1, 12);
+      trimGeo.translate(0, 0, 0.1);
+      shapeHull(trimGeo, 6.6, 2.2, 0, 0);                     // sheer strake, tapered with the hull
+      const trimT = new THREE.Mesh(trimGeo, chrome()); trimT.position.set(0, 0.98, 0); g.add(trimT);
       const bench = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.32, 1.0), mat(spec.seat, { roughness: 0.9, metalness: 0 })); bench.position.set(0, 1.06, -0.4); g.add(bench);
       windshield(g, 1.5, 0.42, 1.32, 0.7, -0.3, 0xcfcabc);
       // wheel
@@ -321,12 +333,12 @@
       // flag mast
       const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.6, 5), chrome()); mast.position.set(0, 1.3, -3.05); g.add(mast);
       const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.25), new THREE.MeshStandardMaterial({ color: spec.seat, side: THREE.DoubleSide })); flag.position.set(0.2, 1.48, -3.05); g.add(flag);
-      cleat(g, 0.85, 2.7, 1.02);
+      cleat(g, 0.45, 2.0, 1.02); cleat(g, -0.45, 2.0, 1.02);
       // relaxed captain on the bench, flat cap, right hand on the wheel
       const capt = driverFigure({ pose: 'sit', lean: 0.08, footDrop: 0.06, suit: 0xe8e2d0, cap: 0x5b3a1e,
         handR: [0.02, 0.1, 0.55] });
       capt.position.set(-0.35, 1.16, -0.42); g.add(capt);
-      navLights(g, 0.95, 2.9, -3.1, 1.02);
+      navLights(g, 0.64, 2.0, -3.1, 1.02);
       g.userData.size = { r: 2.1, len: 6.6 };
       return g;
     },
@@ -506,7 +518,8 @@
       navLights(g, 1.9, 2.4, PZ - 1.0, EY);
       g.userData.size = { r: 2.7, len: 9.0 };
       g.userData.noFlame = true;               // boost shows on the engine glows, not a stern cone
-      g.userData.hoverShow = 0.8;              // extra lift so it floats in the showroom too
+      g.userData.hoverShow = 1.14;             // extra lift so it floats in the showroom too
+                                               // (absorbs main.js seating the hulled boats 0.34 lower)
       g.userData.tick = function (t, boat) {
         const sp = boat ? Math.hypot(boat.vel.x, boat.vel.z) : 7;
         const rev = t * (10 + sp * 0.5);

@@ -475,8 +475,8 @@
       const q = U().pathNearest(main, x, guessZ);
       if (q.d > 8 && q.d < main.len - 8) fn(q.d);
     }
-    // Marina City's own marina — the reason the towers were built, and missing from a boat game
-    northAt(124, -6, (d) => boatSlips(main, d, -1, 3));
+    // Marina City's own slips are built with the towers, in landmarks.js — do not lay a second
+    // set of fingers over them here, the docks interpenetrate and the piles double up.
     // Trump's river terrace
     northAt(331, -70, (d) => {
       const a = U().pathAt(main, d, {});
