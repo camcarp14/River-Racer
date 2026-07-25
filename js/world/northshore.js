@@ -13,9 +13,25 @@
     const C = window.CHICAGO;
     const GY = 2.2;                      // lakefront slab level (matches Olive Park)
     const CGY = RR.City.GROUND_Y;        // city plateau level (6.0)
-    const shafts = [];                   // window-facade geoms → RR.City.material()
     const flats = [];                    // everything else → flatMaterial
     const scene = RR.Engine.scene;
+
+    // ---- facade families (W2's city.js), all guarded: without them the wall still builds on
+    // the single legacy material, it just goes back to reading as one flat surface. ----
+    const HASFAM = !!(RR.City.FAM && RR.City.materials && RR.City.pickFamily);
+    const NFAM = HASFAM ? RR.City.FAM.length : 1;
+    const MASONRY = { 2: 1, 3: 1, 4: 1, 5: 1, 8: 1 };
+    const shafts = [];                   // family bucket i → array of window-facade geoms
+    for (let i = 0; i < NFAM; i++) shafts.push([]);
+    const famTints = (f) => (HASFAM && RR.City.FAM[f] && RR.City.FAM[f].tints) || [0xc8b490, 0xe8e4da, 0x98a0a8];
+    const pickFam = (h, x, z) => (HASFAM ? RR.City.pickFamily(rng, h, x, z) : 0);
+    function shaftTint(g, hex, jit, fam) {
+      if (RR.City.tintGeomAO) RR.City.tintGeomAO(g, hex, jit, rng, GY, GY + 16, 0.66, 1.06);
+      else RR.City.tintGeom(g, hex, jit, rng);
+      if (RR.City.famNormalize) RR.City.famNormalize(g, HASFAM ? fam : 0);
+      return g;
+    }
+    function pushShaft(g, fam) { shafts[HASFAM ? fam : 0].push(g); }
 
     function boxAt(arr, w, h, d, x, y, z, col, rotY, jit) {
       const g = new THREE.BoxGeometry(w, h, d);
@@ -30,14 +46,53 @@
       RR.City.tintGeom(g, col, 0.06, rng);
       arr.push(g);
     }
+    function shade(hex, k) {
+      const r = Math.min(255, ((hex >> 16) & 255) * k) | 0;
+      const g = Math.min(255, ((hex >> 8) & 255) * k) | 0;
+      const b = Math.min(255, (hex & 255) * k) | 0;
+      return (r << 16) | (g << 8) | b;
+    }
+    function crown(cx, cz, topY, w, d, fam, tint, rot) {
+      if (MASONRY[fam]) {
+        boxAt(flats, w + 1.4, 0.55, d + 1.4, cx, topY - 2.6, cz, shade(tint, 1.08), rot, 0);
+        boxAt(flats, w + 0.5, 2.30, d + 0.5, cx, topY - 1.15, cz, shade(tint, 0.94), rot, 0);
+        boxAt(flats, w + 1.0, 0.35, d + 1.0, cx, topY + 0.18, cz, shade(tint, 1.14), rot, 0);
+      } else {
+        boxAt(flats, w - 0.6, 3.20, d - 0.6, cx, topY + 1.6, cz, 0x4a5057, rot, 0);
+        boxAt(flats, w + 0.3, 0.90, d + 0.3, cx, topY + 3.6, cz, 0x2f343a, rot, 0);
+      }
+    }
+    function roofKit(cx, cz, topY, w, d, h, fam) {
+      const eo = Math.min(w, d) * 0.30;
+      boxAt(flats, eo, 4.2, eo, cx + (rng() - 0.5) * w * 0.4, topY + 2.1, cz + (rng() - 0.5) * d * 0.4, 0x6b7178, 0, 0.06);
+      if (h > 180 && RR.Theme) RR.Theme.addLamp(cx, topY + 1.2, cz, 0xff2a1e);
+      if (h > 90 && rng() < 0.55) {
+        const pw = w * (0.30 + rng() * 0.25), pd = d * (0.30 + rng() * 0.25), ph = 3.0 + rng() * 4.5;
+        const px = cx + (rng() - 0.5) * w * 0.25, pz = cz + (rng() - 0.5) * d * 0.25;
+        boxAt(flats, pw, ph, pd, px, topY + ph / 2, pz, 0x666c72, 0, 0.05);
+        boxAt(flats, pw - 0.3, 0.9, pd - 0.3, px, topY + ph * 0.72, pz, 0x2b2f34, 0, 0);
+      }
+      if (h > 55 && rng() < 0.4) {
+        const rad = 1.4 + rng() * 1.2, th = 2.6 + rng() * 1.4;
+        cylAt(flats, rad, rad, th, 8, cx + (rng() - 0.5) * w * 0.4, topY + th / 2, cz + (rng() - 0.5) * d * 0.4, 0x51565c);
+      }
+    }
+    // Two canopy layers, second only within 260 m of a centreline — CUT #1. Lincoln Park is elm.
     function treeAt(x, z, s, baseY) {
       const b = baseY == null ? GY : baseY;
-      cylAt(flats, 0.2 * s, 0.3 * s, 2.4 * s, 5, x, b + 1.2 * s, z, 0x4a3524);
-      const crown = new THREE.SphereGeometry((1.9 + rng() * 1.3) * s, 6, 5);
-      crown.scale(1, 0.8, 1);
-      crown.translate(x, b + (3.7 + rng()) * s, z);
-      RR.City.tintGeom(crown, rng() > 0.5 ? 0x41703a : 0x527d40, 0.2, rng);
-      flats.push(crown);
+      cylAt(flats, 0.22 * s, 0.34 * s, 3.0 * s, 5, x, b + 1.5 * s, z, 0x4a3524);
+      const r = (1.9 + rng() * 1.3) * s;
+      const lower = new THREE.SphereGeometry(r, 7, 6);
+      lower.scale(1, 0.72, 1);
+      lower.translate(x, b + 3.6 * s, z);
+      RR.City.tintGeom(lower, 0x4d7238, 0.18, rng);
+      flats.push(lower);
+      if (RR.City.landClearance(x, z) < 260) {
+        const upper = new THREE.SphereGeometry(r * 0.72, 7, 6);
+        upper.translate(x + (rng() - 0.5) * r * 0.5, b + 5.4 * s, z + (rng() - 0.5) * r * 0.5);
+        RR.City.tintGeom(upper, 0x5d8a42, 0.18, rng);
+        flats.push(upper);
+      }
     }
     function lampAt(x, z, baseY) {
       const b = baseY == null ? GY : baseY;
@@ -100,7 +155,7 @@
         RR.City.tintGeom(cone, [0xd94f30, 0xe8b53a, 0x3a7bd9, 0xd457a0][i % 4], 0.05, rng);
         flats.push(cone);
       }
-      NS.tags.push({ name: 'OAK STREET BEACH', x: 2057, z: -1010, r2: 200 * 200 });
+      NS.tags.push({ name: 'OAK STREET BEACH', sub: 'THE LOOP FROM THE SAND · FREE SINCE 1895', x: 2057, z: -1010, r2: 200 * 200 });
     }
 
     // ================= NORTH AVENUE BEACH =================
@@ -132,7 +187,7 @@
         RR.City.tintGeom(cone, [0x3a7bd9, 0xd94f30, 0x39a06a, 0xe8b53a][i % 4], 0.05, rng);
         flats.push(cone);
       }
-      NS.tags.push({ name: 'NORTH AVENUE BEACH', x: 2890, z: -1060, r2: 220 * 220 });
+      NS.tags.push({ name: 'NORTH AVENUE BEACH', sub: 'THE BEACH HOUSE IS A SHIP · 1999 · 22 ACRES OF SAND', x: 2890, z: -1060, r2: 220 * 220 });
     }
 
     // ================= LINCOLN PARK strip (trees between the Drive and the shore) =================
@@ -148,9 +203,9 @@
       boxAt(flats, 40, 7, 16, tx, GY + 3.5, tz, 0x8a4a34, 0, 0.06);
       boxAt(flats, 42, 1.6, 18, tx, GY + 7.8, tz, 0x5f7362);                     // green roof
       for (let i = -3; i <= 3; i++) boxAt(flats, 3.2, 4.4, 0.5, tx + i * 5.4, GY + 2.6, tz + 8.1, 0x2c2620); // arches
-      NS.tags.push({ name: 'THEATER ON THE LAKE', x: tx, z: tz, r2: 120 * 120 });
+      NS.tags.push({ name: 'THEATER ON THE LAKE', sub: 'PERKINS FELLOWS & HAMILTON · 1920 · A TB SANATORIUM', x: tx, z: tz, r2: 120 * 120 });
     }
-    NS.tags.push({ name: 'LINCOLN PARK', x: 3300, z: -1150, r2: 260 * 260 });
+    NS.tags.push({ name: 'LINCOLN PARK', sub: '1,208 ACRES · WAS THE CITY CEMETERY UNTIL 1860', x: 3300, z: -1150, r2: 260 * 260 });
 
     // ================= LAKE SHORE DRIVE =================
     // The viaduct (x=1359, deck 11.1) ends at z=-940. Sweep northeast down to the
@@ -211,7 +266,10 @@
       RR.City.tintGeom(cab, 0x1c2126, 0, rng); carGeoms.push(cab);
     }
     const CARCOLS = [0xd8dce0, 0x8a1f1f, 0x1f3f8a, 0x2c2f33, 0xb8b23a, 0x676c72, 0x8a5b2c];
-    const nsCars = new THREE.InstancedMesh(RR.City.mergeGeoms(carGeoms), new THREE.MeshLambertMaterial({}), 26);
+    // vertexColors must be on for instanceColor to reach the fragment shader — three's
+    // color_fragment chunk only multiplies vColor under USE_COLOR, so without this every car
+    // silently renders the same off-white.
+    const nsCars = new THREE.InstancedMesh(RR.City.mergeGeoms(carGeoms), new THREE.MeshLambertMaterial({ vertexColors: true }), 26);
     nsCars.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     const carState = [];
     for (let i = 0; i < 26; i++) {
@@ -224,14 +282,36 @@
 
     // ================= THE TOWER WALL =================
     // detailed residential builder: window shaft + balcony strips / floor bands / bays
-    const PAL = [0xc8b490, 0xe8e4da, 0x9c5340, 0x2e3b46, 0x98a0a8, 0xd8b8a8, 0xb5a284];
-    function resi(x, z, w, d, h, col, style) {
-      const g = RR.City.towerGeom(w, h, d, x, z, 0);
-      g.translate(0, GY, 0);
-      RR.City.tintGeom(g, col, 0.16, rng);
-      shafts.push(g);
-      boxAt(flats, w + 0.4, 3.6, d + 0.4, x, GY + 1.8, z, 0x3b3f45, 0, 0.08);     // street-level base
-      boxAt(flats, w + 0.7, 1.1, d + 0.7, x, GY + h - 0.3, z, 0x565c64, 0, 0.1);  // parapet
+    function resi(x, z, w, d, h, col, style, famIn) {
+      const fam = famIn == null ? pickFam(h, x, z) : famIn;
+      const T = famTints(fam);
+      const tint = col == null ? T[(rng() * T.length) | 0] : col;
+      const masonry = !!MASONRY[fam];
+      let topW = w, topD = d, topRot = 0;
+      function shaft(sw, sd, y0, hh, rot) {
+        const g = RR.City.towerGeom(sw, hh, sd, x, z, rot);
+        g.translate(0, GY + y0, 0);
+        shaftTint(g, tint, 0.16, fam);
+        pushShaft(g, fam);
+      }
+      if (masonry && h > 120) {                                 // the 1923 ziggurat
+        shaft(w, d, 0, h * 0.62, 0);
+        shaft(w * 0.72, d * 0.72, h * 0.62, h * 0.24, 0);
+        shaft(w * 0.46, d * 0.46, h * 0.86, h * 0.14, 0);
+        topW = w * 0.46; topD = d * 0.46;
+      } else if (!masonry && h > 150) {                         // rotated chamfer
+        shaft(w, d, 0, h * 0.88, 0);
+        shaft(w * 0.70, d * 0.70, h * 0.88, h * 0.12, Math.PI / 4);
+        topW = w * 0.70; topD = d * 0.70; topRot = Math.PI / 4;
+      } else {
+        shaft(w, d, 0, h, 0);
+      }
+      const RT = famTints(9);
+      const band = RR.City.towerGeom(w + 1.2, 4.5, d + 1.2, x, z, 0);
+      band.translate(0, GY, 0);
+      shaftTint(band, RT[(rng() * RT.length) | 0], 0.10, 9);
+      pushShaft(band, 9);
+      boxAt(flats, w + 2.0, 0.5, d + 2.0, x, GY + 4.3, z, 0x3a3e44, 0, 0.04);     // canopy line
       if (style === 0) {                                        // balcony strips on the lake face
         const n = Math.max(2, Math.floor(w / 8));
         for (let i = 0; i < n; i++) {
@@ -247,13 +327,8 @@
           boxAt(flats, 2.4, h * 0.94, 2.4, x + sx * (w / 2 - 0.6), GY + h * 0.47, z + sz * (d / 2 - 0.6), 0xd8d4c8, 0, 0.12);
         }
       }
-      if (rng() < 0.3) cylAt(flats, 1.1, 1.3, 2.6, 8, x + (rng() - 0.5) * w * 0.4, GY + h + 1.3, z + (rng() - 0.5) * d * 0.4, 0x4a4034);
-      if (h > 100 && rng() < 0.5) {                             // setback crown
-        const g2 = RR.City.towerGeom(w * 0.6, h * 0.22, d * 0.6, x, z, 0);
-        g2.translate(0, GY + h, 0);
-        RR.City.tintGeom(g2, col, 0.16, rng);
-        shafts.push(g2);
-      }
+      crown(x, z, GY + h, topW, topD, fam, tint, topRot);
+      roofKit(x, z, GY + h, topW, topD, h, fam);
     }
 
     // ---- Gold Coast icons at the west end (in real south→north order) ----
@@ -263,19 +338,22 @@
       for (const [dx, dz, hh, r] of [[0, 8, 205, 13], [16, -6, 160, 11], [-15, -8, 120, 10]]) {
         const hex = new THREE.CylinderGeometry(r, r, hh, 6);
         hex.translate(ox + dx, GY + hh / 2, oz + dz);
-        RR.City.tintGeom(hex, PINK, 0.08, rng);
-        shafts.push(hex);
+        shaftTint(hex, PINK, 0.08, 5);
+        pushShaft(hex, 5);                                      // pink granite, the 1983 tell
+        const cap = new THREE.CylinderGeometry(r + 0.5, r + 0.5, 1.2, 6);
+        cap.translate(ox + dx, GY + hh + 0.3, oz + dz);
+        RR.City.tintGeom(cap, 0xb99383, 0.04, rng); flats.push(cap);
       }
-      NS.tags.push({ name: 'ONE MAGNIFICENT MILE', x: ox, z: oz, r2: 150 * 150 });
+      NS.tags.push({ name: 'ONE MAGNIFICENT MILE', sub: 'SOM · 1983 · 205 M · THREE HEXAGONAL SHAFTS', x: ox, z: oz, r2: 150 * 150 });
     }
     // The Drake Hotel: broad limestone H-block + red rooftop sign
     {
       const dx2 = 2090, dz2 = -1235;
       const g = RR.City.towerGeom(62, 34, 26, dx2, dz2, 0); g.translate(0, GY, 0);
-      RR.City.tintGeom(g, 0xcfc2a4, 0.06, rng); shafts.push(g);
+      shaftTint(g, 0xcfc2a4, 0.06, 2); pushShaft(g, 2);          // limestone
       for (const s of [-1, 1]) {                                // H-plan end wings
         const wing = RR.City.towerGeom(16, 40, 30, dx2 + s * 24, dz2, 0); wing.translate(0, GY, 0);
-        RR.City.tintGeom(wing, 0xcfc2a4, 0.06, rng); shafts.push(wing);
+        shaftTint(wing, 0xcfc2a4, 0.06, 2); pushShaft(wing, 2);
         boxAt(flats, 17, 3.2, 31, dx2 + s * 24, GY + 41.4, dz2, 0x4a4640);       // dark hipped roof masses
       }
       boxAt(flats, 63, 2.4, 27, dx2, GY + 35, dz2, 0x4a4640);
@@ -290,7 +368,7 @@
       sMesh.layers.set(1);
       scene.add(sMesh);
       if (RR.Theme) RR.Theme.addLamp(dx2, GY + 41, dz2 + 2, 0xff5040);
-      NS.tags.push({ name: 'THE DRAKE', x: dx2, z: dz2, r2: 150 * 150 });
+      NS.tags.push({ name: 'THE DRAKE', sub: 'MARSHALL & FOX · 1920 · THE HEAD OF THE MAG MILE', x: dx2, z: dz2, r2: 150 * 150 });
     }
     // Palmolive Building: buff deco setbacks + the rotating Lindbergh Beacon
     let beacon = null;
@@ -301,9 +379,10 @@
       for (const [w, d, f0, f1] of tiers) {
         const g = RR.City.towerGeom(w, H * (f1 - f0), d, px, pz, 0);
         g.translate(0, GY + H * f0, 0);
-        RR.City.tintGeom(g, 0xc9b78e, 0.06, rng);
-        shafts.push(g);
+        shaftTint(g, 0xc9b78e, 0.06, 2);
+        pushShaft(g, 2);                                                          // deco limestone
       }
+      crown(px, pz, GY + H, 13, 11, 2, 0xc9b78e, 0);
       cylAt(flats, 0.5, 0.9, 14, 6, px, GY + H + 7, pz, 0xd8dadd);               // beacon mast
       const cone = new THREE.ConeGeometry(3.2, 85, 8, 1, true);
       cone.rotateZ(Math.PI / 2);                                 // point outward, beam along +x
@@ -313,21 +392,21 @@
       beacon.layers.set(1);
       scene.add(beacon);
       if (RR.Theme) RR.Theme.addLamp(px, GY + H + 13, pz, 0xfff2c0);
-      NS.tags.push({ name: 'PALMOLIVE BEACON', x: px, z: pz, r2: 150 * 150 });
+      NS.tags.push({ name: 'PALMOLIVE BEACON', sub: 'HOLABIRD & ROOT · 1929 · THE LINDBERGH BEACON', x: px, z: pz, r2: 150 * 150 });
     }
     // 900/990 N Lake Shore: Mies black steel-and-glass twins, set perpendicular
     {
       for (const [bx, bz, w, d] of [[2280, -1245, 22, 40], [2330, -1268, 40, 22]]) {
         const g = RR.City.towerGeom(w, 82, d, bx, bz, 0); g.translate(0, GY, 0);
-        RR.City.tintGeom(g, 0x1e242a, 0.05, rng); shafts.push(g);
-        boxAt(flats, w + 0.5, 0.8, d + 0.5, bx, GY + 82, bz, 0x14181c);
+        shaftTint(g, 0x2a2e33, 0.05, 1); pushShaft(g, 1);       // Mies's own black steel and glass
+        crown(bx, bz, GY + 82, w, d, 1, 0x2a2e33, 0);
       }
     }
     // The Carlyle: white slab with protruding bay columns
-    resi(2410, -1255, 34, 20, 122, 0xe8e4da, 2);
+    resi(2410, -1255, 34, 20, 122, 0xc7c1b3, 2, 8);
     // 1212 N LSD (buff deco) + 1550 N LSD (white International slab)
-    resi(2480, -1270, 26, 22, 140, 0xc8b490, 1);
-    resi(2555, -1250, 38, 18, 108, 0xe4e0d6, 0);
+    resi(2480, -1270, 26, 22, 140, 0xe9e2d3, 1, 4);
+    resi(2555, -1250, 38, 18, 108, 0xb9b3a6, 0, 8);
 
     // Elks Memorial: white classical dome + colonnade, set back in the park
     {
@@ -339,7 +418,7 @@
       RR.City.tintGeom(dome, 0xb9c2b4, 0.04, rng);
       flats.push(dome);
       for (let i = -3; i <= 3; i++) cylAt(flats, 0.9, 0.9, 11, 6, ex + i * 5.6, GY + 5.5, ez + 18.5, 0xe6e2d6);
-      NS.tags.push({ name: 'ELKS MEMORIAL', x: ex, z: ez, r2: 140 * 140 });
+      NS.tags.push({ name: 'ELKS MEMORIAL', sub: 'EGERTON SWARTWOUT · 1926 · TO THE ELKS WAR DEAD', x: ex, z: ez, r2: 140 * 140 });
     }
 
     // ---- the residential wall: staggered rows, height bands west→east ----
@@ -369,14 +448,14 @@
           const w = 24 + rng() * 22, d = 18 + rng() * 16;
           let h = band[0] + rng() * rng() * (band[1] - band[0]);
           if (row.z < -1500) h *= 0.7;
-          resi(x, z, w, d, Math.max(20, h), PAL[(rng() * PAL.length) | 0], (rng() * 3) | 0);
+          resi(x, z, w, d, Math.max(20, h), null, (rng() * 3) | 0);
         }
         x += row.gap[0] + rng() * (row.gap[1] - row.gap[0]);
       }
     }
     // 2800 N Lakeview pair anchoring the east end
-    resi(3960, -1260, 40, 20, 96, 0xe8e4da, 1);
-    resi(4060, -1290, 22, 38, 88, 0x2e3b46, 0);
+    resi(3960, -1260, 40, 20, 96, null, 1);
+    resi(4060, -1290, 22, 38, 88, null, 0);
 
     // ================= BELMONT HARBOR =================
     // moored sailboat field in the water off the Lakeview end, clear of race lines
@@ -411,16 +490,24 @@
         scene.add(hm);
         harborBoats.push(hm);
       }
-      NS.tags.push({ name: 'BELMONT HARBOR', x: 3360, z: -1000, r2: 220 * 220 });
+      NS.tags.push({ name: 'BELMONT HARBOR', sub: '1,000 SLIPS · CHICAGO YACHT CLUB · MAC RACE START', x: 3360, z: -1000, r2: 220 * 220 });
     }
 
     // ================= MERGE + ANIMATE =================
-    const shaftMesh = new THREE.Mesh(RR.City.mergeGeoms(shafts), RR.City.material());
-    shaftMesh.castShadow = shaftMesh.receiveShadow = true;
-    scene.add(shaftMesh);
-    const flatMesh = new THREE.Mesh(RR.City.mergeGeoms(flats), RR.City.flatMaterial());
-    flatMesh.castShadow = flatMesh.receiveShadow = true;
-    scene.add(flatMesh);
+    // one mesh per facade family actually used — the lakefront wall was a single material,
+    // which is why it read as one continuous cliff instead of forty separate buildings
+    const mats = RR.City.materials ? RR.City.materials() : [RR.City.material()];
+    for (let f = 0; f < shafts.length; f++) {
+      if (!shafts[f].length) continue;
+      const m = new THREE.Mesh(RR.City.mergeGeoms(shafts[f]), mats[f] || mats[0]);
+      m.castShadow = m.receiveShadow = true;
+      scene.add(m);
+    }
+    for (let i = 0; i < flats.length; i += 4000) {
+      const flatMesh = new THREE.Mesh(RR.City.mergeGeoms(flats.slice(i, i + 4000)), RR.City.flatMaterial());
+      flatMesh.castShadow = flatMesh.receiveShadow = true;
+      scene.add(flatMesh);
+    }
 
     const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3();
     const _s = new THREE.Vector3(1, 1, 1), _up = new THREE.Vector3(0, 1, 0), _pt = {};

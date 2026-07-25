@@ -3,35 +3,51 @@
   const B = {};
 
   // stats: top (m/s), accel (m/s^2), turn (rad/s @ speed), grip (lateral damping), agility feel
+  //
+  // Hull-feel block (physics.js reads these):
+  //   plane     m/s at which the hull is fully up on plane. 20 kt = 10.29 m/s is the real planing
+  //             threshold for a mid-size V-hull; 0 means "always planing" (the hovering podracer).
+  //   hump      strength of the drag hump — resistance peaks as the boat climbs its own bow wave.
+  //   lift      metres the hull rises out of the water when fully planing.
+  //   slap      hull-slap amplitude multiplier.
+  //   torque    radians of static roll at full throttle from single-prop torque reaction.
+  //   dive      radians of bow dive on a hard throttle chop.
+  //   drift     stern step-out gain in hard turns.
+  //   boostKick m/s^2 of extra thrust for the first 0.45 s of a boost.
   B.CATALOG = [
     {
       id: 'jetski', name: 'RX BLACKHAWK', kind: 'jetski',
       desc: 'Sport jet ski. Whips around bridge piers like a startled duck. Fragile top end, absurd agility.',
       top: 33, accel: 15.5, turn: 2.5, grip: 3.6, lean: 0.55, boost: 1.22, mass: 0.7,
+      plane: 7.5, hump: 0.22, lift: 0.20, slap: 0.55, torque: 0.010, dive: 0.06, drift: 0.85, boostKick: 11.0,
       hull: 0x1b1e26, deck: 0xff3b30, accent: 0xffc857, seat: 0x22262e,
     },
     {
       id: 'speedboat', name: 'FORMULA 350 GT', kind: 'speedboat',
       desc: 'Offshore V-hull muscle. Monster straight-line pace — but it needs the whole channel to turn.',
       top: 41, accel: 11.5, turn: 1.3, grip: 1.9, lean: 0.34, boost: 1.16, mass: 1.45,
+      plane: 11.5, hump: 0.55, lift: 0.34, slap: 1.00, torque: 0.038, dive: 0.11, drift: 0.55, boostKick: 8.0,
       hull: 0x10315e, deck: 0xf2f4f6, accent: 0xff3b30, seat: 0x1a1d22,
     },
     {
       id: 'f1', name: 'F1H2O PROTOTYPE', kind: 'f1',
       desc: 'Tunnel-hull race cat. The fastest thing on the river — if you can keep it pointed straight.',
       top: 46, accel: 14.0, turn: 1.6, grip: 2.2, lean: 0.22, boost: 1.14, mass: 0.9,
+      plane: 9.0, hump: 0.30, lift: 0.30, slap: 0.80, torque: 0.022, dive: 0.08, drift: 0.70, boostKick: 9.5,
       hull: 0xffc857, deck: 0x14161c, accent: 0x0f8bd0, seat: 0x14161c,
     },
     {
       id: 'runabout', name: 'LAKESIDE QUEEN ’47', kind: 'runabout',
       desc: 'Varnished mahogany classic. Slowest in class — but glued to the water, with the strongest boost aboard.',
       top: 30, accel: 10.0, turn: 2.1, grip: 3.7, lean: 0.30, boost: 1.3, mass: 1.2,
+      plane: 10.5, hump: 0.62, lift: 0.26, slap: 0.85, torque: 0.042, dive: 0.13, drift: 0.35, boostKick: 12.0,
       hull: 0x6e3b1c, deck: 0x8a5224, accent: 0xe8e2d0, seat: 0x7a1f16,
     },
     {
       id: 'rescue', name: 'CFD MARINE 7-1', kind: 'speedboat',
       desc: 'Fire department rigid inflatable. Punchy, planted, and it bounces off seawalls with dignity.',
       top: 36, accel: 13.0, turn: 1.85, grip: 3.0, lean: 0.28, boost: 1.2, mass: 1.35,
+      plane: 9.5, hump: 0.45, lift: 0.24, slap: 0.90, torque: 0.030, dive: 0.10, drift: 0.45, boostKick: 9.0,
       hull: 0xd42a1e, deck: 0x1f242b, accent: 0xf5f6f7, seat: 0x14161c,
     },
     {
@@ -39,6 +55,7 @@
       desc: 'Twin radial turbines on a plasma tether, skimming the river on a cushion of thrust. Untouchable top end — if you can steer the thing.',
       top: 61, accel: 21.0, turn: 1.55, grip: 1.7, lean: 0.42, boost: 1.18, mass: 0.85,
       hover: 1.15,                                    // rides ~1.15m above the wave crests
+      plane: 0.0, hump: 0.00, lift: 0.00, slap: 0.00, torque: 0.000, dive: 0.04, drift: 1.00, boostKick: 10.0,
       hull: 0xd8a13a, deck: 0xc9ced2, accent: 0xff3ea6, seat: 0x161a1f,   // golden scoops · silver · magenta plasma
     },
   ];

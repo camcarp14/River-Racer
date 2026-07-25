@@ -121,6 +121,112 @@
     }
   }
 
+  // ---------- boost gates ----------
+  // Six per course, deliberately OFF the racing line: taking one costs you a metre and pays 0.30
+  // boost. The six named spots are real places on the river; any that this course does not pass
+  // are replaced by evenly-spaced route samples, so every course always has six.
+  // side +1 puts the gate to the NORTH of the centreline (+z is south in this world), because the
+  // offset vector is (tz, -tx) and the Main Stem tangent points east.
+  const NAMED_GATES = [
+    { name: 'DUSABLE NORTH ARCH', x: 464.1, z: -100, side: 1 },    // hard against the north pier
+    { name: 'MARINA CITY SLIPS', x: 140, z: -22, side: 1 },        // the actual marina under the cobs
+    { name: 'HARBOR LOCK', x: 1892, z: -68.9, side: 1 },           // hugging the north chamber wall
+    { name: 'WOLF POINT', x: -640, z: 110, side: -1 },             // inside the bend where three branches meet
+    { name: 'LAKE SHORE DR', x: 1359.1, z: -88.9, side: 1 },       // the lake-side span
+    { name: 'NAVY PIER HEADLAND', x: 2520, z: -300, side: -1 },    // the wide outside line, biggest chop
+  ];
+
+  function placeGate(route, x, z, side, out) {
+    const q = U().pathNearest(route, x, z);
+    if (q.dist > 70) return null;
+    // never on the grid or on the flag: a pylon in the middle of the start is just an obstacle
+    if (!route.loop && (q.d < 150 || q.d > route.len - 90)) return null;
+    const off = U().clamp(q.w * 0.62, 5, 16);
+    out.x = q.x + q.tz * off * side;
+    out.z = q.z - q.tx * off * side;
+    out.d = q.d;
+    // a gate you cannot physically reach is worse than no gate
+    const wq = RR.River.waterQuery(out.x, out.z, null);
+    return wq && wq.clear > 4 ? out : null;
+  }
+
+  function buildBoostGates(state) {
+    const route = state.route;
+    const gates = [], scratch = {};
+    for (const g of NAMED_GATES) {
+      const p = placeGate(route, g.x, g.z, g.side, scratch);
+      if (p) gates.push({ name: g.name, x: p.x, z: p.z, d: p.d, lastLap: -1 });
+    }
+    // fill to six with route samples, alternating sides so they read as a slalom
+    const pt = {};
+    let fillSide = 1, guard = 0;
+    while (gates.length < 6 && guard++ < 60) {
+      const d = (guard / 7) * route.len * 0.80 + route.len * 0.10;
+      if (!route.loop && (d < 150 || d > route.len - 90)) continue;
+      U().pathAt(route, Math.min(d, route.len - 1), pt);
+      const off = U().clamp(pt.w * 0.62, 5, 16);
+      const gx = pt.x + pt.tz * off * fillSide, gz = pt.z - pt.tx * off * fillSide;
+      fillSide = -fillSide;
+      const wq = RR.River.waterQuery(gx, gz, null);
+      if (!wq || wq.clear < 4) continue;
+      let tooClose = false;
+      for (const g of gates) if (U().dist2(g.x, g.z, gx, gz) < 120 * 120) tooClose = true;
+      if (tooClose) continue;
+      gates.push({ name: 'BOOST GATE', x: gx, z: gz, d: pt.d, lastLap: -1 });
+    }
+    state.boostGates = gates;
+    if (!gates.length) return;
+
+    // one merged mesh for the posts, one for the glows: +2 draw calls for all six gates
+    const GOLD = new THREE.Color(0xffc857).convertSRGBToLinear();
+    const postGeos = [], glowGeos = [];
+    for (const g of gates) {
+      const q = U().pathNearest(route, g.x, g.z);
+      for (const s of [-1, 1]) {
+        const px = g.x + q.tz * 3.4 * s, pz = g.z - q.tx * 3.4 * s;
+        const post = new THREE.CylinderGeometry(0.26, 0.42, 9, 6);
+        post.translate(px, 4.5, pz);
+        postGeos.push(post);
+        const glow = new THREE.SphereGeometry(0.7, 8, 6);
+        glow.translate(px, 9.4, pz);
+        glowGeos.push(glow);
+      }
+      // rotateY(t) sends +x to (cos t, -sin t), so atan2(tx, tz) lays the bar ACROSS the channel
+      const bar = new THREE.BoxGeometry(7.6, 0.4, 0.4);
+      bar.rotateY(Math.atan2(q.tx, q.tz));
+      bar.translate(g.x, 8.6, g.z);
+      postGeos.push(bar);
+    }
+    const merge = RR.City && RR.City.mergeGeoms;
+    if (!merge) return;
+    const posts = new THREE.Mesh(merge(postGeos), new THREE.MeshStandardMaterial({
+      color: 0x2a2419, emissive: GOLD, emissiveIntensity: 0.55, roughness: 0.45 }));
+    const glows = new THREE.Mesh(merge(glowGeos), new THREE.MeshBasicMaterial({
+      color: 0xffd24a, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
+    glows.renderOrder = 2;
+    glows.layers.set(1);
+    posts.frustumCulled = false; glows.frustumCulled = false;
+    gateGroup.add(posts, glows);
+    state.boostGateGlow = glows;
+    state.boostGatePosts = posts;
+  }
+
+  // Pre-placed trackside cameras for the cinematic rig (FEEL §2.8 shot 2): sample the route every
+  // 180 m and stand the camera on the OUTSIDE of the bend, on the quay. Zero per-frame cost.
+  function buildCamPoints(state) {
+    const route = state.route, a = {}, b = {};
+    const pts = [];
+    for (let d = 60; d < route.len - 40; d += 180) {
+      U().pathAt(route, d, a);
+      U().pathAt(route, Math.min(route.len - 1, d + 90), b);
+      const bend = U().wrapAngle(Math.atan2(b.tx, b.tz) - Math.atan2(a.tx, a.tz));
+      const side = Math.sign(bend) || (pts.length % 2 ? 1 : -1);   // outside of the bend
+      const off = a.w + 9;
+      pts.push({ x: a.x + a.tz * off * side, y: 7, z: a.z - a.tx * off * side, d });
+    }
+    state.camPoints = pts;
+  }
+
   function buildGates(state) {
     gateGroup = new THREE.Group();
     RR.Engine.scene.add(gateGroup);
@@ -182,6 +288,7 @@
     strip.rotation.y = ang; strip.position.set(pt.x, 0.35, pt.z); strip.renderOrder = 2;
     gateGroup.add(strip);
     buildLakeMarkers(state);
+    buildBoostGates(state);
     state.finishD = fd;
     state.finishGate = { x: pt.x, z: pt.z };
     state.finishFlags = finishFlags;
@@ -191,20 +298,90 @@
   let S = null;
   RACE.state = () => S;
 
-  RACE.start = function (courseIdx, boats, playerBoat) {
+  // ---------- time-trial ghost ----------
+  // The ghost is your own best lap, played back at 0.38 opacity on layer 1 so it never shows up
+  // in the water reflection. No collision, no physics, no wake — it is a memory, not a boat.
+  let ghostMesh = null, ghostPlay = null, ghostDeltaT = 0, ghostHull = null;
+  const gOut = {};
+
+  function clearGhost() {
+    if (ghostMesh) { RR.Engine.scene.remove(ghostMesh); ghostMesh = null; }
+    ghostPlay = null; ghostDeltaT = 0; ghostHull = null;
+    if (RR.Replay && RR.Replay.clear) RR.Replay.clear();
+  }
+
+  // Load the stored ghost + build its mesh at RACE.start; recording does NOT start here.
+  function startGhost(playerBoat) {
+    if (!RR.Replay || !playerBoat) return;
+    ghostHull = playerBoat.spec && playerBoat.spec.id;
+    ghostPlay = RR.Replay.load ? RR.Replay.load(S.course.id, ghostHull) : null;
+    if (!ghostPlay) return;
+    if (RR.Replay.buildMesh) ghostMesh = RR.Replay.buildMesh(playerBoat.spec);
+    if (ghostMesh) { ghostMesh.visible = false; RR.Engine.scene.add(ghostMesh); }
+    S.ghostTime = ghostPlay.time;
+  }
+
+  // Recording opens on the GREEN FLAG, not at RACE.start. Playback is driven by S.time, which only
+  // starts counting when the countdown ends — begin() during the countdown put 3.6 s of grid
+  // footage ahead of sample 0 and the ghost replayed that far late for the whole run.
+  function beginGhostRecording() {
+    if (!S || !S.timeTrial || !RR.Replay || !RR.Replay.begin) return;
+    RR.Replay.begin(S.course.id, ghostHull);
+  }
+
+  function updateGhost(dt) {
+    if (!ghostPlay) return;
+    const p = RR.Replay.playAt(ghostPlay, S.time, gOut);
+    if (ghostMesh && p) {
+      ghostMesh.visible = !p.done;
+      ghostMesh.position.set(p.x, p.y, p.z);
+      ghostMesh.rotation.set(0, 0, 0);
+      ghostMesh.rotateY(p.heading);
+      ghostMesh.rotateX(p.pitch);
+      ghostMesh.rotateZ(-p.roll);
+    }
+    // delta chip: how far ahead/behind the ghost is, in seconds, refreshed 4x a second
+    ghostDeltaT -= dt;
+    if (ghostDeltaT <= 0 && S.player) {
+      ghostDeltaT = 0.25;
+      const gd = RR.Replay.progressAt ? RR.Replay.progressAt(ghostPlay, S.route, S.time) : null;
+      const spd = Math.max(4, Math.hypot(S.player.vel.x, S.player.vel.z));
+      if (gd != null) S.ghostDelta = (gd - (S.player.routeD % S.route.len)) / spd;
+    }
+  }
+  RACE.ghostDelta = () => (S ? S.ghostDelta : null);
+
+  // opts: { timeTrial, tour }. Both default off; a one-boat field is treated as a time trial so
+  // main.js needs no change for ghosts to work.
+  RACE.start = function (courseIdx, boats, playerBoat, opts) {
+    opts = opts || {};
     if (gateGroup) { RR.Engine.scene.remove(gateGroup); gateGroup = null; }
+    clearGhost();
     const course = RACE.COURSES[courseIdx];
+    const tour = !!opts.tour;
+    const timeTrial = tour ? false : (opts.timeTrial != null ? !!opts.timeTrial : boats.length === 1);
     S = {
       course, courseIdx,
       route: buildRoute(course),
       boats, player: playerBoat,
-      phase: 'countdown', countdownT: 3.6,
+      phase: tour ? 'racing' : 'countdown', countdownT: 3.6,
       time: 0,
       wrongWayT: 0,
       results: [],
       finishTimeout: 12,
+      timeTrial, tour,
+      ghostDelta: null,
+      cup: RACE.cup(),
     };
-    buildGates(S);
+    if (tour) {
+      // Architecture Tour: no rivals, no gates, no timer, no wrong-way. Just the river.
+      gateGroup = new THREE.Group(); RR.Engine.scene.add(gateGroup);
+      S.checkpoints = []; S.finishD = S.route.len; S.finishGate = null; S.boostGates = [];
+    } else {
+      buildGates(S);
+    }
+    buildCamPoints(S);
+    if (timeTrial) startGhost(playerBoat);
 
     // grid placement: staggered rows just past the line (loop seams stay behind everyone)
     const pt = {};
@@ -260,7 +437,8 @@
       b.nextCp++;
       hit = true;
     }
-    if (route.loop && b.nextCp >= cps.length && inLapD < cps[0].d) b.nextCp = 0;
+    // cps is empty in the Architecture Tour, and the tour runs on loop courses too
+    if (route.loop && cps.length && b.nextCp >= cps.length && inLapD < cps[0].d) b.nextCp = 0;
     return hit;
   }
 
@@ -276,6 +454,9 @@
         S.phase = 'finished';
         S.finishTimeout = Math.min(S.finishTimeout, 3.0);   // the race is over when YOU cross the line (placement pop plays first)
         saveBest(S.course.id, S.time);
+        if (S.timeTrial && RR.Replay && RR.Replay.commit) {
+          S.ghostBeaten = RR.Replay.commit(S.time);         // only stored if it beat the old lap
+        }
         if (RACE.onPlayerFinish) RACE.onPlayerFinish(S.results.length, S.time);
       }
     }
@@ -293,8 +474,33 @@
     catch (e) { return null; }
   };
 
+  // circle test against the boost gates, once per lap. +0.30 boost for a line you had to choose.
+  function checkBoostGates(b) {
+    const gates = S.boostGates;
+    if (!gates || !gates.length || b !== S.player || b.finished) return;
+    for (const g of gates) {
+      if (g.lastLap === (b.lap || 0)) continue;
+      if (U().dist2(b.pos.x, b.pos.z, g.x, g.z) > 49) continue;   // radius 7 m
+      g.lastLap = b.lap || 0;
+      b.boostEnergy = Math.min(1, b.boostEnergy + 0.30);
+      if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.18);
+      if (RR.HUD && RR.HUD.chip) RR.HUD.chip('near', '+BOOST');
+      else if (RR.HUD && RR.HUD.flash) RR.HUD.flash('+BOOST');
+      if (RR.Audio && RR.Audio.boostGate) RR.Audio.boostGate();
+      else if (RR.Audio && RR.Audio.checkpoint) RR.Audio.checkpoint();
+      if (RACE.onBoostGate) RACE.onBoostGate(g);
+    }
+  }
+
   RACE.update = function (dt) {
     if (!S) return;
+    if (S.tour) {
+      // free-roam: keep progress tracking alive for the camera look-ahead, nothing else
+      S.time += dt;
+      for (const b of S.boats) updateProgress(b, dt);
+      S.wrongWay = false;
+      return;
+    }
     if (S.phase === 'countdown') {
       const prev = Math.ceil(S.countdownT);
       S.countdownT -= dt;
@@ -302,6 +508,7 @@
       if (now !== prev && now > 0 && RACE.onCount) RACE.onCount(now);
       if (S.countdownT <= 0) {
         S.phase = 'racing';
+        beginGhostRecording();
         if (RACE.onCount) RACE.onCount(0);
       }
       // hold boats on the line
@@ -314,8 +521,10 @@
       if (b.remote) continue;         // multiplayer rivals: progress + finish come over the network
       const hitCp = updateProgress(b, dt);
       if (hitCp && b === S.player && RACE.onCheckpoint) RACE.onCheckpoint(b.nextCp, S.checkpoints.length);
+      checkBoostGates(b);
       checkFinish(b);
     }
+    updateGhost(dt);
 
     // standings by absolute route progress
     const order = [...S.boats].sort((a, b) => {
@@ -357,9 +566,80 @@
       if (cps[i].pylonGlow) cps[i].pylonGlow.scale.setScalar(1 + Math.sin(t * 6) * (active ? 0.5 : 0.15));
     }
     if (S.lakeRibbon) S.lakeRibbon.tex.offset.y = -(t * 0.4) % 1;   // chevrons scroll toward the finish
+    if (S.boostGateGlow) {
+      // Emission only — NEVER scale. The twelve glow spheres are baked at world coordinates into
+      // one merged geometry, so mesh.scale works about the scene origin, not about each orb: the
+      // Harbor Lock glow at x 1892 would swing +/-375 m off its post. (The checkpoint pylonGlow
+      // this was copied from is a separate mesh with untranslated geometry, where scaling is fine.)
+      const k = 0.72 + Math.sin(t * 3.4) * 0.22;
+      S.boostGateGlow.material.opacity = k;
+      if (S.boostGatePosts) S.boostGatePosts.material.emissiveIntensity = 0.40 + (k - 0.50) * 0.55;
+    }
   };
 
   RACE.routeForAI = function () { return { path: S.route }; };
+
+  // ---------- THE CHICAGO CUP ----------
+  // Four rounds over the four courses, points 10/8/6/4/3/2, persisted so you can walk away and
+  // come back to a standings table that remembers.
+  RACE.CUP_ROUNDS = ['mainstem', 'southbranch', 'riverrun', 'lakecircuit'];
+  RACE.CUP_POINTS = [10, 8, 6, 4, 3, 2];
+
+  function cupLoad() {
+    try {
+      const raw = localStorage.getItem('rr_cup');
+      const c = raw ? JSON.parse(raw) : null;
+      if (c && typeof c.round === 'number' && Array.isArray(c.points)) return c;
+    } catch (e) { /* file:// storage may be unavailable — fine */ }
+    return null;
+  }
+  function cupSave(c) {
+    try { localStorage.setItem('rr_cup', JSON.stringify(c)); } catch (e) { /* fine */ }
+  }
+
+  let cupState = null;
+  RACE.cup = () => cupState || (cupState = cupLoad());
+
+  RACE.cupBegin = function (hull, diff, fieldSize) {
+    cupState = { round: 0, points: new Array(fieldSize || 6).fill(0), hull: hull | 0, diff: diff == null ? 1 : diff };
+    cupSave(cupState);
+    return cupState;
+  };
+  RACE.cupResume = function () { return RACE.cup(); };
+  RACE.cupAbandon = function () { cupState = null; try { localStorage.removeItem('rr_cup'); } catch (e) { /* fine */ } };
+  RACE.cupCourseIdx = function () {
+    const c = RACE.cup();
+    if (!c) return 0;
+    const id = RACE.CUP_ROUNDS[Math.min(c.round, RACE.CUP_ROUNDS.length - 1)];
+    const i = RACE.COURSES.findIndex((x) => x.id === id);
+    return i < 0 ? 0 : i;
+  };
+
+  // results = the array RACE.onRaceOver hands out, finishing order first. Player is index 0 of
+  // the boats array, so standings are keyed by that index and survive a page reload.
+  RACE.cupRecord = function (results) {
+    const c = RACE.cup();
+    if (!c || !S) return null;
+    for (let i = 0; i < results.length; i++) {
+      const idx = S.boats.indexOf(results[i].boat);
+      if (idx < 0) continue;
+      while (c.points.length <= idx) c.points.push(0);
+      c.points[idx] += RACE.CUP_POINTS[Math.min(i, RACE.CUP_POINTS.length - 1)];
+    }
+    c.round++;
+    c.done = c.round >= RACE.CUP_ROUNDS.length;
+    cupSave(c);
+    return c;
+  };
+  RACE.cupStandings = function () {
+    const c = RACE.cup();
+    if (!c) return [];
+    return c.points.map((p, i) => ({ idx: i, pts: p, isPlayer: i === 0 }))
+      .sort((a, b) => b.pts - a.pts);
+  };
+
+  RACE.isTour = () => !!(S && S.tour);
+  RACE.isTimeTrial = () => !!(S && S.timeTrial);
 
   RR.Race = RACE;
 })();

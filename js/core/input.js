@@ -6,6 +6,10 @@
   window.addEventListener('keydown', (e) => {
     keys[e.code] = true;
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
+    // [ / ] cycle the cinematic shot rig. Guarded: camera.js may not have the rig yet.
+    if ((e.code === 'BracketLeft' || e.code === 'BracketRight') && RR.Camera && RR.Camera.cycleShot) {
+      RR.Camera.cycleShot(e.code === 'BracketLeft' ? -1 : 1);
+    }
     if (I.onKey) I.onKey(e.code);
   });
   window.addEventListener('keyup', (e) => { keys[e.code] = false; });

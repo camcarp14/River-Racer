@@ -14,7 +14,7 @@
 
   const STEPS = [
     ['SURVEYING THE RIVER…', () => { RR.River.init(); }],
-    ['POURING LAKE MICHIGAN…', () => { RR.Sky.init(); RR.Water.init(); }],
+    ['REVERSING THE FLOW…', () => { RR.Sky.init(); RR.Water.init(); }],
     ['RAISING THE SKYLINE…', () => { RR.City.init(); }],
     ['DRESSING THE LANDMARKS…', () => { landmarkTags = RR.Landmarks.init(); }],
     ['LOWERING THE BRIDGES…', () => { RR.Bridges.init(); RR.Ramps.init(); }],
@@ -27,9 +27,19 @@
         if (D.tags) landmarkTags = landmarkTags.concat(D.tags);
       }
     }],
-    ['RIGGING THE SAILBOATS…', () => { RR.Scenery.init(); if (RR.Eggs) { RR.Eggs.init(); if (RR.Eggs.tags) landmarkTags = landmarkTags.concat(RR.Eggs.tags); } }],
+    ['RIGGING THE SAILBOATS…', () => {
+      RR.Scenery.init();
+      // eggs, sculpture and signs all expose init() + tags. Each also self-arms from onUpdate, but
+      // calling init() HERE matters: it must run before RR.Theme.buildLamps() in finishBoot or the
+      // municipal Y's night uplights are dropped.
+      for (const M of [RR.Eggs, RR.Sculpture, RR.Signs]) {
+        if (!M) continue;
+        M.init();
+        if (M.tags) landmarkTags = landmarkTags.concat(M.tags);
+      }
+    }],
     ['FILLING THE STREETS…', () => { RR.Life.init(); RR.Fireworks.init(); }],
-    ['FUELING THE BOATS…', () => { RR.FX.init(); RR.HUD.init(); RR.Minimap.init(); }],
+    ['DYEING THE WATER GREEN…', () => { RR.FX.init(); RR.HUD.init(); RR.Minimap.init(); }],
   ];
 
   function boot() {
@@ -55,10 +65,13 @@
     setLoad(1, 'READY');
     if (RR.Theme) { RR.Theme.buildLamps(); RR.Theme.apply('day'); }
     RR.Menus.init(startRace);
+    if (RR.Menus.applyVolumes) RR.Menus.applyVolumes();
     RR.Menus.onVehicleFocus = (i) => {
-      if (showIdx === i && showBoat) return;
+      const liv = RR.Menus.livery ? RR.Menus.livery() : null;
+      if (showIdx === i && showBoat && showBoat.userData.livery === liv) return;
       if (showBoat) RR.Engine.scene.remove(showBoat);
-      showBoat = RR.Boats.build(RR.Boats.CATALOG[i]);
+      showBoat = RR.Boats.build(liverySpec(RR.Boats.CATALOG[i]));
+      showBoat.userData.livery = liv;
       showBoat.position.set(SHOW.x, 0.3, SHOW.z);
       RR.Engine.scene.add(showBoat);
       showIdx = i;
@@ -100,9 +113,16 @@
     boats = []; pilots = []; remotes = []; player = null;
   }
 
+  // the chosen livery is cosmetic only — it never touches a physics field
+  function liverySpec(base) {
+    const liv = RR.Menus && RR.Menus.livery ? RR.Menus.livery() : null;
+    return liv == null ? base : Object.assign({}, base, { hull: liv });
+  }
+
   // roster (multiplayer) = [{id, name, boatIdx, isSelf}] sorted identically on every client
-  function startRace(courseIdx, vehicleIdx, timeTrial, roster) {
+  function startRace(courseIdx, vehicleIdx, timeTrial, roster, tourMode) {
     clearBoats();
+    if (RR.HUD.resetSession) RR.HUD.resetSession();
     RR.Engine.timeScale = 1;                          // clear any pause/photo slo-mo from a prior race
     const catalog = RR.Boats.CATALOG;
     const mp = !!(roster && roster.length);
@@ -122,13 +142,13 @@
       }
       player = boats.find((b) => b.isPlayer) || boats[0];
     } else {
-      const N = timeTrial ? 1 : 6;
+      const N = (timeTrial || tourMode) ? 1 : 6;
       // one-design racing: every rival runs the SAME hull as you (fair fight, pure skill),
       // each in its own livery so you can tell the field apart at speed
       const LIVERY = [0xd8dce0, 0x2f8f4f, 0x8a2fb0, 0xe07820, 0x16303f];
       for (let i = 0; i < N; i++) {
         const base = catalog[vehicleIdx];
-        const spec = i === 0 ? base : Object.assign({}, base, { hull: LIVERY[(i - 1) % LIVERY.length] });
+        const spec = i === 0 ? liverySpec(base) : Object.assign({}, base, { hull: LIVERY[(i - 1) % LIVERY.length] });
         const mesh = RR.Boats.build(spec);
         RR.Engine.scene.add(mesh);
         const b = RR.Physics.createBoat(spec, mesh);
@@ -139,11 +159,11 @@
       player = boats[0];
     }
 
-    raceState = RR.Race.start(courseIdx, boats, player);
+    raceState = RR.Race.start(courseIdx, boats, player, { timeTrial: !!timeTrial, tour: !!tourMode });
     raceState.mp = mp;
 
     pilots = [];
-    if (!mp) {
+    if (!mp && !tourMode) {
       const diff = RR.Menus && RR.Menus.difficulty ? RR.Menus.difficulty() : 1;
       for (let i = 1; i < boats.length; i++) {
         const p = RR.AI.createPilot(boats[i], { path: raceState.route }, i - 1, diff);
@@ -168,6 +188,14 @@
         if (b.isPlayer) { RR.Audio.thud(sev * 0.9); RR.Camera.kick(sev * 0.7); }
         else { b.bumpRecover = Math.max(b.bumpRecover || 0, 0.30 + sev * 0.55); }  // a solid hit rattles the AI
       };
+      // hull slap: the texture that stops the ride feeling like ice
+      b.onSlap = (k) => {
+        if (b.isPlayer) {
+          if (RR.Audio.hullSlap) RR.Audio.hullSlap(k);
+          RR.Camera.kick(k * 0.28);
+        }
+        RR.FX.spray(b.pos.x, b.pos.y + 0.1, b.pos.z, 0, 2.2 + k * 3, 0, 2, 2.0 + k * 2, 1.1);
+      };
     }
 
     RR.Race.onCount = (n) => { RR.HUD.countdown(n); if (n > 0) RR.Audio.countdownBeep(false); else { RR.Audio.countdownBeep(true); RR.Audio.airhorn(); } };
@@ -176,6 +204,11 @@
       if (player) { player.boostEnergy = Math.min(1, player.boostEnergy + 0.45); RR.Camera.kick(0.25); RR.HUD.flash('+BOOST'); }
     };
     RR.Race.onLap = () => { RR.Audio.checkpoint(); };
+    // race.js already pays the boost, kicks the camera and rings the chime; all this adds is the
+    // gate's name, so the player learns WHICH line paid.
+    RR.Race.onBoostGate = (gate) => {
+      if (gate && gate.name && RR.HUD.chip) RR.HUD.chip('near', String(gate.name).toUpperCase() + ' +BOOST', 1300);
+    };
     RR.Race.onPlayerFinish = (pos, time) => {
       if (raceState.mp && RR.Net.active) RR.Net.sendFinish(time);   // tell the room my elapsed time
       RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.showPlacement(pos);
@@ -223,6 +256,9 @@
     player.heading = Math.atan2(pt.tx, pt.tz);
     player.vel.x = 0; player.vel.z = 0; player.angVel = 0;
     player.airborne = false; player.vy = 0;
+    // a free tow back to the line has to cost something, or the wall is a shortcut
+    if (RR.Physics.resetPenalty) RR.Physics.resetPenalty(player);   // −0.30 boost, 1.2 s dead throttle
+    if (RR.HUD.chip) RR.HUD.chip('bad', 'RESET −1.2s', 1400);
     RR.Camera.snapTo(player);
   }
 
@@ -235,9 +271,19 @@
       const on = RR.Theme.toggleGreenRiver();
       if (RR.HUD && RR.HUD.flash) RR.HUD.flash(on ? 'RIVER DYED GREEN' : 'RIVER RESTORED');
     }
+    // Architecture Tour: SPACE alongside a landmark opens the docent panel. This is the mode that
+    // justifies every hour the world agents spent on the buildings.
+    if (e.code === 'Space' && mode === 'race' && raceState && raceState.tour && RR.HUD.docent) {
+      if (nearTag) RR.HUD.docent(nearTag.name, nearTag.sub || '');
+      else RR.HUD.docent(null);
+    }
     if (e.code === 'KeyP' && (mode === 'race' || mode === 'photo')) togglePhotoMode();
+    // both of these used to fall through into the pause branch in the SAME event: leaving photo
+    // mode, or menus.js resuming from pause, sets mode='race' and the next line re-paused you.
     if (e.code === 'Escape' && mode === 'photo') togglePhotoMode();
-    if (e.code === 'Escape' && mode === 'race') { mode = 'paused'; RR.Engine.timeScale = 0; RR.Menus.showPause(); }
+    else if (e.code === 'Escape' && mode === 'race' && !e.defaultPrevented) {
+      mode = 'paused'; RR.Engine.timeScale = 0; RR.Menus.showPause();
+    }
     RR.Audio.init(); RR.Audio.resume();
   }, { once: false });
   window.addEventListener('pointerdown', () => { RR.Audio.init(); RR.Audio.resume(); });
@@ -245,16 +291,19 @@
   // ---------- per-frame ----------
   const aiCtl = { throttle: 0, brake: 0, steer: 0, boost: false };
   let tagCooldown = 0;
-  let photoAngle = 0;
+  let nearTag = null;               // the landmark you are alongside right now (Architecture Tour)
+  let rivalT = 0;
+  const rivalBuf = [];              // hoisted: the doppler list must not allocate per frame
 
   // photo mode: drop the whole world into 0.25x slo-mo and swing a cinematic camera.
   // Everything — boats, crowds, traffic, water, easter eggs — slows together (engine timeScale).
   function togglePhotoMode() {
     if (mode === 'race') {
       mode = 'photo'; RR.HUD.show(false); RR.Engine.timeScale = 0.25;
-      if (RR.HUD.flash) RR.HUD.flash('PHOTO · SLO-MO');
+      if (RR.HUD.cine) RR.HUD.cine(true, RR.Camera.shotLabel ? RR.Camera.shotLabel() : '');
     } else if (mode === 'photo') {
       mode = 'race'; RR.HUD.show(true); RR.Engine.timeScale = 1;
+      if (RR.HUD.cine) RR.HUD.cine(false);
       if (player) RR.Camera.snapTo(player);
     }
   }
@@ -314,7 +363,7 @@
       if (netSendT <= 0) { RR.Net.sendState(player); netSendT = 1 / 14; }   // ~14 Hz
     }
 
-    if (!raceState.mp) RR.Physics.collidePairs(boats);   // MP contact handled visually; no authoritative push (avoids fighting the net)
+    if (!raceState.mp) RR.Physics.collidePairs(boats, dt);   // MP contact handled visually; no authoritative push (avoids fighting the net)
 
     // drawbridge warning: a bascule leaf rising just ahead sounds its horn + scatters gulls
     if (racing && RR.Bridges && RR.Bridges.openings) {
@@ -344,6 +393,7 @@
     }
 
     for (const b of boats) RR.Physics.applyVisual(b);
+    RR.Replay.sample(player, t);      // self-gating at 20 Hz; a no-op unless Race started a time trial
 
     // feed boat positions to the water shader for bow-wave foam
     if (RR.Water && RR.Water.material) {
@@ -359,12 +409,9 @@
     RR.Race.animateGates(t);
     RR.FX.update(boats, dt, t);
     if (mode === 'photo') {
-      // cinematic orbit that keeps swinging at a natural rate (rawDt) while the world is in slo-mo
-      photoAngle += (RR.Engine.rawDt || dt) * 0.5;
-      const r = 15 + Math.sin(t * 0.2) * 4, cam = RR.Engine.camera;
-      cam.up.set(0, 1, 0);
-      cam.position.set(player.pos.x + Math.sin(photoAngle) * r, player.pos.y + 5.5, player.pos.z + Math.cos(photoAngle) * r);
-      cam.lookAt(player.pos.x, player.pos.y + 1, player.pos.z);
+      // rawDt so the rig keeps swinging at a natural rate while the world runs at 0.25x
+      RR.Camera.cinematic(player, dt, RR.Engine.rawDt || dt);   // [ and ] cycle the five shots
+      if (RR.HUD.cine) RR.HUD.cine(true, RR.Camera.shotLabel ? RR.Camera.shotLabel() : '');
     } else if (!(window.RRTest && window.RRTest._freecam)) {
       RR.Camera.follow(player, dt);
     }
@@ -373,21 +420,57 @@
     RR.HUD.update(dt, player, raceState);
     RR.Minimap.draw(raceState, player, boats);
 
+    const duck = RR.Camera.duck ? RR.Camera.duck() : 0;
+    const lock = window.CHICAGO && CHICAGO.lake && CHICAGO.lake.lock;
+    const inLock = !!lock && RR.U.dist2(player.pos.x, player.pos.z, lock.x, lock.z) < 90 * 90;
     RR.Audio.update(dt, {
       rpm: player.rpm,
       speed: Math.hypot(player.vel.x, player.vel.z),
+      top: player.spec.top,
       throttle: pc.throttle || 0,
       turning: Math.abs(pc.steer || 0),
       airborne: player.airborne,
       inLake: RR.River.inLake(player.pos.x, player.pos.z),
+      x: player.pos.x,
+      duck, nearLock: inLock,
+      planeF: player.planeF || 0,
+      boostHeat: player.boostHeat || 0,
+      progress: raceState.route ? RR.U.clamp((player.routeD || 0) / Math.max(1, raceState.route.len * (raceState.course.laps || 1)), 0, 1) : 0,
+      racePos: player.racePos || 1,
+      nBoats: boats.length,
+      lead: (player.racePos || 1) <= 2,
     });
+    // the lock is a 2.4 s concrete box and the bridge underside is 1.15 s — same send, two rooms
+    if (RR.Audio.setSpace) RR.Audio.setSpace(Math.max(duck, inLock ? 0.85 : 0), inLock ? 0.9 : duck * 0.85);
+    if (RR.Audio.scrape) RR.Audio.scrape((player.scrapeT || 0) > 0, RR.U.clamp((player.scrapeT || 0) * 2, 0, 1));
+
+    // rival doppler list, 10 Hz, into a hoisted buffer
+    rivalT -= dt;
+    if (rivalT <= 0 && RR.Audio.setRivals) {
+      rivalT = 0.1;
+      rivalBuf.length = 0;
+      const rs = Math.sin(player.heading), rc = Math.cos(player.heading);
+      for (const b of boats) {
+        if (b === player) continue;
+        const dx = b.pos.x - player.pos.x, dz = b.pos.z - player.pos.z;
+        const d = Math.max(1, Math.hypot(dx, dz));
+        if (d > 60) continue;
+        rivalBuf.push({ d, lat: (dx * rc - dz * rs) / d,
+          closeRate: ((b.vel.x - player.vel.x) * dx + (b.vel.z - player.vel.z) * dz) / d,
+          rpm: b.rpm, kind: b.spec.kind });
+      }
+      rivalBuf.sort((a, b) => a.d - b.d);
+      RR.Audio.setRivals(rivalBuf.slice(0, 3));
+    }
 
     // landmark callouts
     tagCooldown -= dt;
     if (tagCooldown <= 0) {
+      nearTag = null;
       for (const tag of landmarkTags) {
         if (RR.U.dist2(player.pos.x, player.pos.z, tag.x, tag.z) < tag.r2) {
-          RR.HUD.tagLandmark(tag.name);
+          nearTag = tag;
+          RR.HUD.tagLandmark(tag.name, tag.sub);
           tagCooldown = 1.5;
           break;
         }

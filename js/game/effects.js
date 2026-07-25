@@ -81,7 +81,8 @@
     const attr = new Float32Array(MAXP * 3);       // vx spare: [size, born, life]
     pGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
     pool = [];
-    for (let i = 0; i < MAXP; i++) pool.push({ x: 0, y: -50, z: 0, vx: 0, vy: 0, vz: 0, life: 0, age: 99, size: 1 });
+    // g = gravity multiplier: 1 for water spray, 0 for the weightless speed streaks
+    for (let i = 0; i < MAXP; i++) pool.push({ x: 0, y: -50, z: 0, vx: 0, vy: 0, vz: 0, life: 0, age: 99, size: 1, g: 1 });
     const tex = U().canvasTexture(64, 64, (ctx) => {
       const g = ctx.createRadialGradient(32, 32, 2, 32, 32, 30);
       g.addColorStop(0, 'rgba(255,255,255,0.95)');
@@ -107,8 +108,32 @@
       p.life = 0.5 + Math.random() * 0.5;
       p.age = 0;
       p.size = size || 1;
+      p.g = 1;
     }
   };
+
+  // ---------- speed lines: weightless streaks tearing past the lens, same Points cloud ----------
+  // Zero new draw calls — the whole point. Only the player gets them, and only near the ceiling.
+  let streakAcc = 0;
+  function speedLines(boat, dt) {
+    const top = boat.spec.top || 40;
+    const n = U().clamp((Math.hypot(boat.vel.x, boat.vel.z) / top - 0.72) / 0.28, 0, 1)
+            + (boat.boostHeat || 0) * 0.5;
+    if (n <= 0) { streakAcc = 0; return; }
+    streakAcc += n * 26 * dt;
+    const s = Math.sin(boat.heading), c = Math.cos(boat.heading);
+    while (streakAcc >= 1) {
+      streakAcc -= 1;
+      const p = pool[poolIdx]; poolIdx = (poolIdx + 1) % MAXP;
+      const side = (Math.random() < 0.5 ? -1 : 1) * (5 + Math.random() * 9);
+      const ahead = 8 + Math.random() * 26;
+      p.x = boat.pos.x + s * ahead + c * side;
+      p.y = boat.pos.y + 0.6 + Math.random() * 4.2;
+      p.z = boat.pos.z + c * ahead - s * side;
+      p.vx = -boat.vel.x * 1.25; p.vy = 0; p.vz = -boat.vel.z * 1.25;
+      p.life = 0.30; p.age = 0; p.size = 0.6; p.g = 0;
+    }
+  }
 
   function updateParticles(dt) {
     const pos = pGeo.attributes.position.array;
@@ -116,7 +141,7 @@
       const p = pool[i];
       if (p.age < p.life) {
         p.age += dt;
-        p.vy -= 13 * dt;
+        p.vy -= 13 * p.g * dt;
         p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
         if (p.y < -0.2) p.age = p.life;
         pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
@@ -226,16 +251,29 @@
   }
 
   // ---------- per-boat continuous spray from hull at speed ----------
+  // Every emitter here is rate-limited PER SECOND, not per frame. Per-frame emission scaled with
+  // the frame rate, and at 60 fps six boats on boost filled the whole 900-particle pool with a
+  // white fog you could not see your own hull through — the single worst readability bug at speed.
+  function fire(boat, key, perSec, dt) {
+    const acc = boat._fxAcc || (boat._fxAcc = {});
+    acc[key] = (acc[key] || 0) + perSec * dt;
+    if (acc[key] < 1) return false;
+    acc[key] -= 1;
+    return true;
+  }
+
   function hullSpray(boat, dt, t) {
     const speed = Math.hypot(boat.vel.x, boat.vel.z);
     if (boat.airborne || speed < 6) return;
     const s = Math.sin(boat.heading), c = Math.cos(boat.heading);
     const intensity = U().clamp(speed / boat.spec.top, 0, 1);
+    const near = boat.isPlayer ? 1 : 0.55;        // rivals are far away; they don't need the density
     // hovercraft (podracer): the turbines blast the surface below, so the "water marks"
     // are two plumes kicked UP off the water rather than spray peeling off a hull
     if (boat.spec.hover) {
       const wy = U().waterHeight(boat.pos.x, boat.pos.z, t, RR.River.waveAmp(boat.pos.x, boat.pos.z));
       const wash = intensity + (boat.boostHeat > 0.4 ? 0.5 : 0);
+      if (!fire(boat, 'hover', 22 * near, dt)) return;
       for (const side of [-1, 1]) {
         const ex = boat.pos.x + c * side * boat.radius * 0.7 + s * boat.radius * 0.7;
         const ez = boat.pos.z - s * side * boat.radius * 0.7 + c * boat.radius * 0.7;
@@ -245,7 +283,7 @@
       }
       return;
     }
-    if (Math.random() < intensity * 0.9) {
+    if (fire(boat, 'hull', 24 * intensity * near, dt)) {
       const side = Math.random() < 0.5 ? -1 : 1;
       FX.spray(
         boat.pos.x + s * boat.radius * 0.5 + c * side * boat.radius * 0.55,
@@ -256,17 +294,19 @@
         boat.vel.z * 0.35 - s * side * (2 + intensity * 5),
         2, 1.6, 1);
     }
-    // boost: a tall rooster tail off the stern so the burn is unmistakable
-    if (boat.boostHeat > 0.4 && speed > 8) {
+    // boost: a rooster tail off the stern so the burn is unmistakable. It is thrown WIDE, not
+    // straight up, because straight up is exactly where the chase camera is looking.
+    if (boat.boostHeat > 0.4 && speed > 8 && fire(boat, 'boost', 18 * near, dt)) {
+      const side = Math.random() < 0.5 ? -1 : 1;
       FX.spray(
-        boat.pos.x - s * boat.radius * 1.15,
-        boat.pos.y + 0.3,
-        boat.pos.z - c * boat.radius * 1.15,
-        -boat.vel.x * 0.3, 4.5 + intensity * 4.5, -boat.vel.z * 0.3,
-        3, 3.2, 1.8);
+        boat.pos.x - s * boat.radius * 1.3 + c * side * boat.radius * 0.5,
+        boat.pos.y + 0.25,
+        boat.pos.z - c * boat.radius * 1.3 - s * side * boat.radius * 0.5,
+        -boat.vel.x * 0.34 + c * side * 3.5, 3.4 + intensity * 3.4, -boat.vel.z * 0.34 - s * side * 3.5,
+        2, 3.0, 1.8);
     }
     // hard turns throw a rooster fan
-    if (Math.abs(boat.visRoll) > 0.18 && speed > 12 && Math.random() < 0.75) {
+    if (Math.abs(boat.visRoll) > 0.18 && speed > 12 && fire(boat, 'turn', 26 * near, dt)) {
       const side = Math.sign(boat.visRoll);
       FX.spray(
         boat.pos.x - s * boat.radius * 0.6 + c * side * boat.radius * 0.7,
@@ -275,7 +315,7 @@
         boat.vel.x * 0.25 + c * side * (5 + intensity * 8),
         2.8 + intensity * 3.4,
         boat.vel.z * 0.25 - s * side * (5 + intensity * 8),
-        4, 2.6, 1.4);
+        3, 2.6, 1.4);
     }
   }
 
@@ -319,6 +359,50 @@
     FX.spray(x, y + 0.2, z, 0, 3.5 + intensity * 5, 0, Math.floor(12 + intensity * 26), 4.5 + intensity * 3, 1.6);
   };
 
+  // ---------- near miss: threading the needle at speed pays boost ----------
+  // Rearms only after the hulls separate again, so sitting alongside a rival earns nothing.
+  const nearArmed = new Map();
+  let nearTokens = 3, nearRefill = 0;
+  function nearMiss(boats, dt) {
+    nearRefill -= dt;
+    if (nearRefill <= 0) { nearTokens = 3; nearRefill = 1; }     // max 3 per second
+    let me = null;
+    for (const b of boats) if (b.isPlayer) { me = b; break; }
+    if (!me || me.finished) return;
+    const fast = Math.hypot(me.vel.x, me.vel.z) > (me.spec.top || 40) * 0.55;
+    for (const o of boats) {
+      if (o === me) continue;
+      const gap = Math.sqrt(U().dist2(me.pos.x, me.pos.z, o.pos.x, o.pos.z)) - me.radius - o.radius;
+      const armed = nearArmed.get(o) !== false;
+      if (gap > 6) { nearArmed.set(o, true); continue; }
+      if (gap < 3.0 && gap > 0 && armed && fast && nearTokens > 0) {
+        nearArmed.set(o, false);
+        nearTokens--;
+        me.boostEnergy = Math.min(1, me.boostEnergy + 0.06);
+        if (RR.HUD && RR.HUD.chip) RR.HUD.chip('near', 'NEAR MISS +BOOST', 1100);
+        else if (RR.HUD && RR.HUD.flash) RR.HUD.flash('NEAR MISS +BOOST');
+      }
+    }
+  }
+
+  // ---------- scrape: concrete on gelcoat, sparks of grit off the seawall ----------
+  function scrapeFX(boat, dt) {
+    const on = (boat.scrapeT || 0) > 0;
+    if (boat.isPlayer && RR.Audio && RR.Audio.scrape) {
+      const k = U().clamp(Math.hypot(boat.vel.x, boat.vel.z) / (boat.spec.top || 40), 0, 1);
+      if (on !== !!boat._scrapeWas) RR.Audio.scrape(on, k);
+      else if (on) RR.Audio.scrape(true, k);
+    }
+    boat._scrapeWas = on;
+    if (!on) return;
+    const w = boat.water;
+    if (!w) return;
+    if (!fire(boat, 'scrape', boat.isPlayer ? 16 : 8, dt)) return;
+    // spray peels off the quay on the side the hull is riding
+    const px = boat.pos.x - w.nx * (boat.radius * 0.8), pz = boat.pos.z - w.nz * (boat.radius * 0.8);
+    FX.spray(px, boat.pos.y + 0.25, pz, -w.nx * 4 + boat.vel.x * 0.25, 2.2, -w.nz * 4 + boat.vel.z * 0.25, 2, 2.2, 1.1);
+  }
+
   const wakes = new Map();
   FX.init = function () {
     const scene = RR.Engine.scene;
@@ -345,6 +429,8 @@
       }
     });
     wakes.clear();
+    nearArmed.clear();          // keyed by boat object — must not outlive the boats
+    if (RR.Audio && RR.Audio.scrape) RR.Audio.scrape(false, 0);
   };
 
   FX.update = function (boats, dt, t) {
@@ -352,7 +438,10 @@
       const w = wakes.get(b);
       if (w) { updateWake(w, b, dt, t); updateFlame(w, b, t); }
       hullSpray(b, dt, t);
+      scrapeFX(b, dt);
+      if (b.isPlayer) speedLines(b, dt);
     }
+    nearMiss(boats, dt);
     updateParticles(dt);
     updateConfetti(dt, t);
     updateGulls(t);

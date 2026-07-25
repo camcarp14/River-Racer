@@ -12,27 +12,27 @@
   const CSS = `
   #net-ui{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;font-family:inherit;background:rgba(6,12,20,.55);backdrop-filter:blur(3px)}
   #net-ui.on{display:flex}
-  #net-ui .np{background:linear-gradient(180deg,rgba(20,32,44,.96),rgba(12,20,30,.96));border:1px solid rgba(120,170,210,.28);border-radius:16px;padding:26px 30px;min-width:340px;max-width:440px;color:#e7eef4;box-shadow:0 18px 60px rgba(0,0,0,.5)}
-  #net-ui h2{margin:0 0 4px;font-size:22px;letter-spacing:.06em;color:#ffd479}
-  #net-ui .sub{opacity:.7;font-size:13px;margin-bottom:16px}
-  #net-ui label{display:block;font-size:12px;letter-spacing:.08em;opacity:.75;margin:12px 0 4px}
-  #net-ui input,#net-ui select{width:100%;box-sizing:border-box;background:rgba(8,14,22,.8);border:1px solid rgba(120,170,210,.3);color:#eef4f8;border-radius:9px;padding:10px 12px;font-size:15px;font-family:inherit}
+  #net-ui .np{background:var(--panel-hi);border:2px solid var(--rule);border-radius:3px;padding:26px 30px;min-width:340px;max-width:440px;color:var(--text);font-family:var(--f-ui);box-shadow:0 18px 60px rgba(0,0,0,.5)}
+  #net-ui h2{margin:0 0 4px;font:400 1.6em/1 var(--f-display);letter-spacing:.04em;color:var(--gold)}
+  #net-ui .sub{opacity:.7;font-size:13px;margin-bottom:16px;letter-spacing:.12em}
+  #net-ui label{display:block;font-size:12px;letter-spacing:.14em;opacity:.75;margin:12px 0 4px}
+  #net-ui input,#net-ui select{width:100%;box-sizing:border-box;background:var(--ink-900);border:2px solid var(--rule-soft);color:var(--text);border-radius:2px;padding:10px 12px;font-size:15px;font-family:inherit}
   #net-ui .row{display:flex;gap:10px}
   #net-ui .row>*{flex:1}
-  #net-ui button{margin-top:16px;width:100%;background:linear-gradient(180deg,#2b6fb0,#1d4f86);border:0;color:#fff;font-weight:700;letter-spacing:.05em;padding:12px;border-radius:10px;font-size:15px;cursor:pointer;font-family:inherit}
+  #net-ui button{margin-top:16px;width:100%;background:var(--sign-green);border:0;box-shadow:inset 0 0 0 2px #fff;color:#fff;font-weight:700;letter-spacing:.2em;padding:12px;border-radius:2px;font-size:15px;cursor:pointer;font-family:inherit}
   #net-ui button:hover{filter:brightness(1.12)} #net-ui button:disabled{opacity:.5;cursor:default;filter:none}
-  #net-ui button.ghost{background:transparent;border:1px solid rgba(150,180,210,.35);color:#cfe0ee;font-weight:600}
-  #net-ui .seat{display:flex;align-items:center;gap:10px;padding:9px 12px;margin:6px 0;background:rgba(8,14,22,.6);border-radius:9px;border:1px solid rgba(120,170,210,.14)}
-  #net-ui .seat .dot{width:9px;height:9px;border-radius:50%;background:#39c06a;flex:0 0 auto}
-  #net-ui .seat b{flex:1;font-weight:600} #net-ui .seat .tag{font-size:11px;opacity:.6;letter-spacing:.05em}
-  #net-ui .host-badge{color:#ffd479;font-size:11px;letter-spacing:.08em}
-  #net-ui .code{font-size:26px;letter-spacing:.28em;color:#8fd0ff;font-weight:700;text-align:center;margin:2px 0 2px}
+  #net-ui button.ghost{background:transparent;box-shadow:inset 0 0 0 2px var(--rule-soft);color:var(--text-dim);font-weight:600}
+  #net-ui .seat{display:flex;align-items:center;gap:10px;padding:9px 12px;margin:6px 0;background:var(--panel);border-radius:2px;border:0;box-shadow:inset 0 0 0 2px var(--rule-soft)}
+  #net-ui .seat .dot{width:9px;height:9px;border-radius:50%;background:#3ED17E;flex:0 0 auto}
+  #net-ui .seat b{flex:1;font-weight:600} #net-ui .seat .tag{font-size:11px;opacity:.6;letter-spacing:.14em}
+  #net-ui .host-badge{color:var(--gold);font-size:11px;letter-spacing:.14em}
+  #net-ui .code{font-size:26px;letter-spacing:.28em;color:var(--chi-blue);font-family:var(--f-num);font-weight:700;text-align:center;margin:2px 0 2px}
   #net-ui ol{margin:8px 0 0;padding:0;list-style:none}
-  #net-ui ol li{display:flex;gap:12px;align-items:baseline;padding:8px 12px;margin:5px 0;background:rgba(8,14,22,.6);border-radius:8px}
-  #net-ui ol li .pl{font-size:18px;font-weight:800;color:#ffd479;width:26px}
-  #net-ui ol li.me{outline:1px solid rgba(255,212,121,.5)}
-  #net-ui ol li .tm{margin-left:auto;opacity:.85;font-variant-numeric:tabular-nums}
-  #net-play-btn{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:40;background:linear-gradient(180deg,#2b6fb0,#1d4f86);border:0;color:#fff;font-weight:700;letter-spacing:.08em;padding:11px 22px;border-radius:22px;font-size:14px;cursor:pointer;font-family:inherit;box-shadow:0 8px 24px rgba(0,0,0,.4);display:none}
+  #net-ui ol li{display:flex;gap:12px;align-items:baseline;padding:8px 12px;margin:5px 0;background:var(--panel);border-radius:2px}
+  #net-ui ol li .pl{font:400 1.35em/1 var(--f-display);color:var(--gold);width:26px}
+  #net-ui ol li.me{box-shadow:inset .28em 0 0 var(--gold)}
+  #net-ui ol li .tm{margin-left:auto;opacity:.85;font-family:var(--f-num);font-variant-numeric:tabular-nums}
+  #net-play-btn{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:40;background:var(--sign-green);border:0;box-shadow:inset 0 0 0 2px #fff;color:#fff;font-weight:700;letter-spacing:.22em;padding:11px 22px;border-radius:2px;font-size:14px;cursor:pointer;font-family:var(--f-ui);display:none}
   `;
 
   function boatOptions(sel) {

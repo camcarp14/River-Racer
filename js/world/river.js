@@ -3,6 +3,11 @@
   const R = { paths: {} };
   const U = () => RR.U;
 
+  // Surface current, m/s along the channel tangent (physics.js advects every hull by it).
+  // NEGATIVE because the Chicago River was reversed on 2 January 1900 — it now drains AWAY from
+  // Lake Michigan, so racing west→east toward the lock is running upstream the whole way.
+  R.flow = -0.28;
+
   // obstacles boats collide with (bridge piers, buoys, pier walls): {x, z, r}
   R.obstacles = [];
   // axis-aligned or rotated wall segments: {ax, az, bx, bz, pad}

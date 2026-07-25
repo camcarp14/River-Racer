@@ -73,12 +73,38 @@
     RR.Engine.scene.add(pts);
   };
 
+  // Navy Pier does not fire continuously all summer: it is Wednesdays at 9:30 pm and Saturdays
+  // at 10:15 pm, Memorial Day through Labor Day. One game "week" is compressed to 210 s so a
+  // player still sees a show, but the pattern — a short midweek display and a long Saturday one
+  // — is the real one, and the sky is quiet in between.
+  const WEEK = 210;
+  const SHOWS = [[0.30, 22, 0.75], [0.78, 34, 1.0]];   // [phase, seconds, intensity]
+  let weekT = 0.30 * WEEK - 6;                          // start just before the Wednesday show
+  F.showing = 0;
+
   F.update = function (dt) {
     if (!geo) return;
     if (F.active) {
-      launchT -= dt;
-      if (launchT <= 0) { rocket(); if (Math.random() < 0.6) rocket(); if (Math.random() < 0.3) rocket(); launchT = 0.5 + Math.random() * 1.4; }
-    }
+      weekT = (weekT + dt) % WEEK;
+      let intensity = 0;
+      for (const sh of SHOWS) {
+        const t0 = sh[0] * WEEK;
+        if (weekT >= t0 && weekT < t0 + sh[1]) {
+          const into = weekT - t0;
+          intensity = sh[2] * Math.min(1, into / 2.5) * Math.min(1, (sh[1] - into) / 3.5);
+        }
+      }
+      F.showing = intensity;
+      if (intensity > 0.02) {
+        launchT -= dt * (0.6 + intensity);
+        if (launchT <= 0) {
+          rocket();
+          if (Math.random() < 0.6 * intensity) rocket();
+          if (Math.random() < 0.3 * intensity) rocket();
+          launchT = 0.35 + Math.random() * 1.2 / Math.max(0.25, intensity);
+        }
+      }
+    } else F.showing = 0;
     const pos = geo.attributes.position.array, col = geo.attributes.color.array;
     for (let i = 0; i < MAX; i++) {
       const p = pool[i];

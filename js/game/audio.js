@@ -40,6 +40,21 @@
   var TAU_FAST = 0.03, TAU_MED = 0.07, TAU_SLOW = 0.35;
   var EPS = 0.0001;
 
+  // --- space (bridge / lock reverb send) -------------------------------------
+  var sendGain = null, sendLP = null, convolver = null, wetGain = null;
+  var IR_BRIDGE = null, IR_LOCK = null, irIsLock = false;
+  var fbDelay = null, fbGain = null, fbLP = null, usingConvolver = true, lowFpsT = 0;
+  // --- rivals (doppler) ------------------------------------------------------
+  var rivalVoices = null;
+  // --- sustained voices ------------------------------------------------------
+  var scrapeVoice = null, gratingVoice = null;
+  // --- ambience layers -------------------------------------------------------
+  var amb = null, ambClock = { train: 14, gull: 6, thump: 1 };
+  // --- mix levels ------------------------------------------------------------
+  var musicLevel = 1, sfxLevel = 1;
+  var musicLP = null, intensity = 0.3;
+  var lastThrottle = 0;
+
   // --------------------------------------------------------------------------
   // Small helpers
   // --------------------------------------------------------------------------
@@ -239,9 +254,10 @@
 
       engineBus = gain(0.24); // engines (incl. spray) sit well under music + SFX
       engineBus.connect(master);
-      fxBus = gain(0.9);
+      fxBus = gain(0.9 * sfxLevel);
       fxBus.connect(master);
 
+      buildSpace();
       ensureAmbience();
     }
     doResume();
@@ -261,19 +277,177 @@
   }
 
   // --------------------------------------------------------------------------
-  // Ambience: filtered brown noise (wind / lake wash), swells with speed+inLake
+  // Space — the bridge / lock reverb send.
+  // Going under the DuSable should be a MOMENT: the whole mix gets a room, the engine thickens,
+  // the world outside goes dull, and it opens back out. That transition is worth more than any
+  // other audio work here, so it gets its own bus and its own procedural impulse responses.
+  // --------------------------------------------------------------------------
+  function buildIR(seconds, decay, preDelayMs, tapsMs) {
+    var sr = ctx.sampleRate, n = Math.floor(sr * seconds), b = ctx.createBuffer(2, n, sr);
+    for (var ch = 0; ch < 2; ch++) {
+      var d = b.getChannelData(ch), i;
+      for (i = 0; i < n; i++) { var t = i / sr; d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t / seconds, decay); }
+      for (var k = 0; k < tapsMs.length; k++) {
+        var idx = Math.floor(sr * (tapsMs[k] + ch * 0.7) / 1000);
+        if (idx < n) d[idx] += (ch ? -0.55 : 0.62);
+      }
+      var pre = Math.floor(sr * preDelayMs / 1000);
+      for (i = n - 1; i >= pre; i--) d[i] = d[i - pre];
+      for (i = 0; i < pre; i++) d[i] = 0;
+    }
+    return b;
+  }
+
+  function buildSpace() {
+    if (sendGain || !ctx) return;
+    sendGain = gain(EPS);
+    sendLP = ctx.createBiquadFilter();
+    sendLP.type = 'lowpass'; sendLP.frequency.value = 3200; sendLP.Q.value = 0.4;
+    wetGain = gain(0.55);
+    sendGain.connect(sendLP);
+
+    IR_BRIDGE = buildIR(1.15, 3.4, 6, [11, 23, 37]);   // 3.8 m and 7.9 m first reflections
+    IR_LOCK = buildIR(2.40, 2.2, 14, [19, 41, 63, 88]);
+    if (typeof ctx.createConvolver === 'function') {
+      convolver = ctx.createConvolver();
+      convolver.buffer = IR_BRIDGE;
+      sendLP.connect(convolver);
+      convolver.connect(wetGain);
+    } else {
+      buildFallbackTail();
+      sendLP.connect(fbDelay);
+      usingConvolver = false;
+    }
+    wetGain.connect(master);
+    engineBus.connect(sendGain);
+    fxBus.connect(sendGain);
+  }
+
+  // R13's insurance, shipped with the convolver rather than after it: 3-tap feedback delay,
+  // ~80% of the effect for ~0% of the cost.
+  function buildFallbackTail() {
+    if (fbDelay) return;
+    fbDelay = ctx.createDelay(0.4);
+    fbDelay.delayTime.value = 0.047;
+    fbGain = gain(0.42);
+    fbLP = ctx.createBiquadFilter();
+    fbLP.type = 'lowpass'; fbLP.frequency.value = 2600;
+    fbDelay.connect(fbLP); fbLP.connect(fbGain); fbGain.connect(fbDelay);
+    fbLP.connect(wetGain);
+  }
+
+  function setConvolver(on) {
+    if (!ctx || !sendLP || on === usingConvolver) return;
+    usingConvolver = on;
+    try { sendLP.disconnect(); } catch (e) { /* ignore */ }
+    if (on && convolver) sendLP.connect(convolver);
+    else { buildFallbackTail(); sendLP.connect(fbDelay); }
+  }
+
+  function doSetSpace(rev, damp) {
+    if (!ctx) return;
+    if (!sendGain) buildSpace();
+    rev = clamp01(rev); damp = clamp01(damp);
+    setT(sendGain.gain, Math.max(EPS, rev * 0.65), 0.08);   // fast in: the bridge arrives WITH you
+    setT(sendLP.frequency, 4200 - 2600 * damp, 0.15);
+    setT(wetGain.gain, 0.55 + 0.35 * rev, 0.12);
+    // the lock is a 2.4 s concrete box; the bridge underside is 1.15 s. Swap on the boundary.
+    var wantLock = damp > 0.75 && rev > 0.6;
+    if (convolver && wantLock !== irIsLock) {
+      irIsLock = wantLock;
+      try { convolver.buffer = wantLock ? IR_LOCK : IR_BRIDGE; } catch (e) { /* ignore */ }
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Ambience — five layers, not one brown-noise bed.
   // --------------------------------------------------------------------------
   function ensureAmbience() {
     if (ambience || !ctx) return;
+    // A. water wash
     var src = noiseSource('brown');
     var lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 360;
-    lp.Q.value = 0.5;
+    lp.type = 'lowpass'; lp.frequency.value = 360; lp.Q.value = 0.5;
     var g = gain(EPS);
     src.connect(lp); lp.connect(g); g.connect(master);
     src.start();
     ambience = { src: src, lp: lp, gain: g };
+
+    amb = {};
+    // C. bridge-deck grating: a comb at 3.1 ms rings at ~322 Hz — exactly the singing hum a
+    // Chicago open-grid steel deck makes under tyres. Nobody expects it; everybody recognises it.
+    var cs = noiseSource('white');
+    var cd = ctx.createDelay(0.02); cd.delayTime.value = 0.0031;
+    var cfb = gain(0.72);
+    var clp = ctx.createBiquadFilter(); clp.type = 'lowpass'; clp.frequency.value = 1400;
+    var cg = gain(EPS);
+    cs.connect(cd); cd.connect(clp); clp.connect(cfb); cfb.connect(cd);
+    clp.connect(cg); cg.connect(master);
+    cs.start();
+    amb.comb = { gain: cg };
+
+    // D. traffic overhead: pink-ish bed, tyre thumps scheduled from the clock
+    var ts = noiseSource('brown');
+    var tlp = ctx.createBiquadFilter(); tlp.type = 'lowpass'; tlp.frequency.value = 900;
+    var tg = gain(EPS);
+    ts.connect(tlp); tlp.connect(tg); tg.connect(master);
+    ts.start();
+    amb.traffic = { gain: tg };
+
+    // E. city hum: the 60 Hz mains note of a dense grid, plus its octave and a 210 Hz resonance
+    var hg = gain(EPS);
+    var hpk = ctx.createBiquadFilter();
+    hpk.type = 'peaking'; hpk.frequency.value = 210; hpk.Q.value = 1.4; hpk.gain.value = 7;
+    hg.connect(hpk); hpk.connect(master);
+    [60, 120].forEach(function (f, i) {
+      var o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
+      var og = gain(i ? 0.4 : 1);
+      o.connect(og); og.connect(hg); o.start();
+    });
+    amb.hum = { gain: hg };
+  }
+
+  // B. the L train: a bandpassed swell, a wheel squeal at the peak, and the crossing bell.
+  function doTrainPass(pan) {
+    if (!ready()) return;
+    var t = now(), dur = 6.0;
+    var p = panNode(pan == null ? (Math.random() * 1.6 - 0.8) : pan);
+    p.connect(master);
+    var s = noiseSource('brown');
+    var bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
+    bp.frequency.value = 90; bp.Q.value = 0.7;
+    bp.frequency.linearRampToValueAtTime(500, t + dur * 0.55);
+    bp.frequency.linearRampToValueAtTime(120, t + dur);
+    var g = gain(EPS);
+    s.connect(bp); bp.connect(g); g.connect(p);
+    g.gain.setValueAtTime(EPS, t);
+    g.gain.linearRampToValueAtTime(0.055, t + dur * 0.5);
+    g.gain.linearRampToValueAtTime(EPS, t + dur);
+    s.start(t); s.stop(t + dur + 0.1);
+    cleanupOnEnd(s, [s, bp, g]);
+    doLScreech(0, t + dur * 0.5, p);
+    // two-tone crossing bell
+    for (var i = 0; i < 4; i++) chimeNote(t + dur * 0.28 + i * 0.28, i % 2 ? 554.37 : 659.26, 0.08, 0.26);
+    setTimeout(function () { try { p.disconnect(); } catch (e) { /* ignore */ } }, (dur + 1.5) * 1000);
+  }
+
+  // Egg #23: the flange squeal of an L consist taking a curve on the elevated structure.
+  function doLScreech(pan, atTime, dest) {
+    if (!ready()) return;
+    var t = atTime || now(), dur = 1.2;
+    var o = ctx.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(1400, t);
+    o.frequency.exponentialRampToValueAtTime(2600, t + dur);
+    var v = ctx.createOscillator(); v.type = 'sine'; v.frequency.value = 11;
+    var vg = gain(40); v.connect(vg); vg.connect(o.frequency);
+    var bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1900; bp.Q.value = 12;
+    var g = gain(0);
+    var out = dest || panNode(clamp(pan || 0, -1, 1));
+    if (!dest) out.connect(fxBus);
+    o.connect(bp); bp.connect(g); g.connect(out);
+    env(g, t, 0.05, 0.06, dur);
+    o.start(t); v.start(t); o.stop(t + dur + 0.05); v.stop(t + dur + 0.05);
+    cleanupOnEnd(o, dest ? [o, v, vg, bp, g] : [o, v, vg, bp, g, out]);
   }
 
   // --------------------------------------------------------------------------
@@ -369,6 +543,18 @@
     var out = gain(EPS); nodes.push(out);
     out.gain.setTargetAtTime(def.idle, t, 0.15);
 
+    // Rev limiter — race hulls only. A 28 Hz square chopping the output gain is instantly
+    // legible as "on the limiter", and it costs two nodes.
+    var limGain = null;
+    if (kind === 'f1' || kind === 'podracer') {
+      var lim = ctx.createOscillator();
+      lim.type = 'square'; lim.frequency.value = 28;
+      limGain = gain(0);
+      lim.connect(limGain); limGain.connect(out.gain);
+      lim.start(t);
+      sources.push(lim); nodes.push(limGain);
+    }
+
     mix.connect(shaper);
     if (formant) { shaper.connect(formant); formant.connect(bp); }
     else { shaper.connect(bp); }
@@ -391,7 +577,7 @@
       exGain: exGain,
       bp: bp, lp: lp, formant: formant,
       amp: amp, lfo: lfo, lfoGain: lfoGain,
-      out: out,
+      out: out, limGain: limGain,
       sprayBp: spBp, sprayGain: spGain,
       sources: sources, nodes: nodes
     };
@@ -430,12 +616,50 @@
     var airborne = !!s.airborne;
     var inLake = !!s.inLake;
 
-    // Ambience swells with speed and out on the open lake
+    // A. water wash swells with speed and out on the open lake
     if (ambience) {
-      var ambTarget = 0.010 + 0.030 * speedNorm + (inLake ? 0.035 : 0);
+      var ambTarget = 0.010 + 0.035 * speedNorm + (inLake ? 0.035 : 0);
       setT(ambience.gain.gain, ambTarget, TAU_SLOW);
-      setT(ambience.lp.frequency, 320 + 380 * speedNorm + (inLake ? 160 : 0), TAU_SLOW);
+      setT(ambience.lp.frequency, 320 + 540 * speedNorm + (inLake ? 160 : 0), TAU_SLOW);
     }
+    if (amb) {
+      var duck = clamp01(s.duck);
+      // C. the bridge deck sings only while you are under it
+      setT(amb.comb.gain.gain, duck > 0.15 ? 0.06 * duck : EPS, 0.10);
+      // D. traffic overhead, same trigger, one octave of the story lower
+      setT(amb.traffic.gain.gain, duck > 0.10 ? 0.03 : EPS, 0.25);
+      // E. the Loop's own mains hum — only in the canyon, never on the lake
+      var inLoop = !inLake && s.x != null && s.x > -900 && s.x < 300;
+      setT(amb.hum.gain.gain, inLoop ? 0.008 : EPS, 0.6);
+      if (duck > 0.10) {
+        ambClock.thump -= dt;
+        if (ambClock.thump <= 0) { ambClock.thump = 0.6 + Math.random() * 1.2; tyreThump(); }
+      }
+      ambClock.train -= dt;
+      if (ambClock.train <= 0) { ambClock.train = 38 + Math.random() * 37; doTrainPass(); }
+      ambClock.gull -= dt;
+      if (ambClock.gull <= 0) {
+        ambClock.gull = 7 + Math.random() * 13;
+        if (inLake || s.nearLock) doSeagull();
+      }
+    }
+
+    // throttle derivative → the overrun blow-off and the intake gulp
+    if (dt > 0) {
+      var dth = (throttle - lastThrottle) / Math.max(dt, 1e-3);
+      lastThrottle = throttle;
+      if (dth < -4 || dth > 6) doChuff(dth);
+    }
+
+    // convolver watchdog (R13): three consecutive seconds under 45 fps and the room goes cheap
+    if (RR.Engine && RR.Engine.fps) {
+      var f = RR.Engine.fps();
+      if (f > 0 && f < 45) { lowFpsT += dt; if (lowFpsT > 3 && usingConvolver) setConvolver(false); }
+      else { lowFpsT = 0; if (!usingConvolver && convolver && f > 55) setConvolver(true); }
+    }
+
+    updateMusicState(s);
+    updateRivals(dt);
 
     var e = engine;
     if (!e) return;
@@ -467,6 +691,209 @@
     var spray = airborne ? EPS : 0.16 * speedNorm * (0.5 + 0.5 * turning);
     setT(e.sprayGain.gain, Math.max(spray, EPS), airborne ? 0.03 : 0.12);
     setT(e.sprayBp.frequency, 2000 + 2600 * speedNorm, 0.2);
+
+    if (e.limGain) setT(e.limGain.gain, 0.55 * clamp01((rpm - 1.02) / 0.10), 0.02);
+  }
+
+  function tyreThump() {
+    if (!ctx) return;
+    var t = now();
+    var n = ctx.createBufferSource(); n.buffer = noiseBuffer('brown');
+    var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 320;
+    var g = gain(0);
+    n.connect(lp); lp.connect(g); g.connect(master);
+    env(g, t, 0.004, 0.035, 0.06);
+    n.start(t); n.stop(t + 0.09);
+    cleanupOnEnd(n, [n, lp, g]);
+  }
+
+  // --------------------------------------------------------------------------
+  // Hull slap / chuff / scrape / grating — the texture that stops the ride feeling like ice
+  // --------------------------------------------------------------------------
+  function doHullSlap(k, pan) {
+    if (!ready()) return;
+    k = clamp01(k);
+    var t = now();
+    var out = panNode(clamp(pan || 0, -0.6, 0.6));
+    out.connect(fxBus);
+    var n = ctx.createBufferSource(); n.buffer = noiseBuffer('white');
+    var bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 220; bp.Q.value = 1.4;
+    var ng = gain(0);
+    n.connect(bp); bp.connect(ng); ng.connect(out);
+    env(ng, t, 0.004, 0.06 + 0.22 * k, 0.09);
+    n.start(t); n.stop(t + 0.14);
+    var o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(78, t);
+    o.frequency.exponentialRampToValueAtTime(41, t + 0.07);
+    var og = gain(0);
+    o.connect(og); og.connect(out);
+    env(og, t, 0.004, 0.10 + 0.20 * k, 0.10);
+    o.start(t); o.stop(t + 0.16);
+    cleanupOnEnd(n, [n, bp, ng, o, og, out]);
+  }
+
+  function doChuff(d) {
+    if (!ready()) return;
+    var t = now();
+    var blowOff = d < 0;
+    var n = ctx.createBufferSource(); n.buffer = noiseBuffer('white');
+    var bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
+    bp.frequency.value = blowOff ? 1400 : 620;
+    bp.Q.value = blowOff ? 1.6 : 0.9;
+    var g = gain(0);
+    n.connect(bp); bp.connect(g); g.connect(fxBus);
+    var peak = blowOff ? (0.05 + 0.05 * Math.min(1, Math.abs(d) / 12)) : 0.05;
+    env(g, t, 0.004, peak, blowOff ? 0.09 : 0.14);
+    n.start(t); n.stop(t + 0.2);
+    cleanupOnEnd(n, [n, bp, g]);
+  }
+
+  // concrete on gelcoat: one persistent voice, gain-targeted, with a slow LFO so it grinds
+  function ensureScrape() {
+    if (scrapeVoice || !ctx) return;
+    var s = noiseSource('brown');
+    var bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1100; bp.Q.value = 3.2;
+    var pk = ctx.createBiquadFilter(); pk.type = 'peaking'; pk.frequency.value = 3800; pk.Q.value = 1.1; pk.gain.value = 8;
+    var g = gain(EPS);
+    var lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 7;
+    var lg = gain(180);
+    lfo.connect(lg); lg.connect(bp.frequency);
+    s.connect(bp); bp.connect(pk); pk.connect(g); g.connect(fxBus);
+    s.start(); lfo.start();
+    scrapeVoice = { gain: g };
+  }
+  function doScrape(on, k) {
+    if (!ready()) return;
+    ensureScrape();
+    setT(scrapeVoice.gain.gain, on ? (0.045 + 0.09 * clamp01(k)) : EPS, 0.04);
+  }
+
+  // ambience layer C is already exactly this comb — drive it rather than build a second one
+  function doGrating(k) {
+    if (!ready() || !amb || !amb.comb) return;
+    gratingVoice = amb.comb;
+    setT(amb.comb.gain.gain, Math.max(EPS, 0.06 * clamp01(k)), 0.09);
+  }
+
+  // --------------------------------------------------------------------------
+  // Rivals + doppler. f' = f * C / (C + vr); a head-on pass is a 36% pitch swing, and that swing
+  // is what makes six boats feel like a race instead of a solo run against ghosts.
+  // --------------------------------------------------------------------------
+  var SPEED_OF_SOUND = 343;
+  var rivalList = null;
+
+  function ensureRivals() {
+    if (rivalVoices || !ctx) return;
+    rivalVoices = [];
+    for (var i = 0; i < 3; i++) {
+      var o1 = ctx.createOscillator(); o1.type = 'sawtooth'; o1.frequency.value = 90;
+      var o2 = ctx.createOscillator(); o2.type = 'square'; o2.frequency.value = 180;
+      var g2 = gain(0.35);
+      var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400; lp.Q.value = 0.6;
+      var pan = panNode(0);
+      var g = gain(EPS);
+      o1.connect(lp); o2.connect(g2); g2.connect(lp);
+      lp.connect(pan); pan.connect(g); g.connect(engineBus);
+      o1.start(); o2.start();
+      rivalVoices.push({ o1: o1, o2: o2, lp: lp, pan: pan, g: g });
+    }
+  }
+
+  function doSetRivals(list) {
+    if (!ctx) return;
+    rivalList = list || null;
+  }
+
+  function updateRivals() {
+    if (!rivalList) {
+      if (rivalVoices) for (var j = 0; j < 3; j++) setT(rivalVoices[j].g.gain, EPS, 0.20);
+      return;
+    }
+    ensureRivals();
+    for (var i = 0; i < 3; i++) {
+      var v = rivalVoices[i], r = rivalList[i];
+      if (!r) { setT(v.g.gain, EPS, 0.15); continue; }
+      var def = ENGINES[r.kind] || ENGINES.speedboat;
+      var f = def.base * (1 + clamp01(r.rpm)) * (SPEED_OF_SOUND / (SPEED_OF_SOUND + clamp(r.closeRate, -120, 120)));
+      setT(v.o1.frequency, f, TAU_FAST);
+      setT(v.o2.frequency, f * 2, TAU_FAST);
+      var near = 1 - Math.min(1, r.d / 90);
+      setT(v.g.gain, Math.max(EPS, 0.22 * near * near), 0.10);
+      setT(v.lp.frequency, 1200 + 5000 * near, 0.12);
+      if (v.pan.pan) setT(v.pan.pan, clamp(r.lat, -1, 1), 0.06);
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Chicago hooks (C8)
+  // --------------------------------------------------------------------------
+  function hornBlast(t, f, dur, peak) {
+    var mix = gain(0);
+    var ws = makeShaper(2.2);
+    var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400; lp.Q.value = 0.6;
+    mix.connect(ws); ws.connect(lp); lp.connect(fxBus);
+    var nodes = [mix, ws, lp], anchor = null;
+    for (var h = 1; h <= 4; h++) {
+      var o = ctx.createOscillator();
+      o.type = h === 1 ? 'sawtooth' : 'sine';
+      o.frequency.value = f * h;
+      o.detune.value = (h % 2 ? -7 : 7);
+      var og = gain(h === 1 ? 0.5 : 0.28 / h);
+      o.connect(og); og.connect(mix);
+      o.start(t); o.stop(t + dur + 0.06);
+      nodes.push(o, og); anchor = o;
+    }
+    mix.gain.setValueAtTime(EPS, t);
+    mix.gain.linearRampToValueAtTime(peak, t + 0.09);
+    mix.gain.setValueAtTime(peak, t + dur - 0.25);
+    mix.gain.exponentialRampToValueAtTime(EPS, t + dur);
+    if (anchor) cleanupOnEnd(anchor, nodes);
+  }
+
+  // The actual Inland Rules signal for a bridge opening: one prolonged blast plus one short.
+  // The bridge answers 1.5 s later an octave down from the tender house. Not a generic klaxon.
+  function doBridgeHorn() {
+    if (!ready()) return;
+    var t = now();
+    hornBlast(t, 180, 5.0, 0.22);
+    hornBlast(t + 5.4, 180, 1.0, 0.20);
+    hornBlast(t + 6.9, 90, 5.0, 0.17);
+    hornBlast(t + 12.3, 90, 1.0, 0.15);
+  }
+
+  // Egg #37: six seconds of the title groove bleeding out of a warehouse door.
+  function doHouseBleed() {
+    if (!ready()) return;
+    var t = now(), dur = 6.0;
+    var out = gain(0);
+    var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 420; lp.Q.value = 1.1;
+    out.connect(lp); lp.connect(fxBus);
+    out.gain.setValueAtTime(EPS, t);
+    out.gain.linearRampToValueAtTime(0.5, t + 1.2);
+    out.gain.setValueAtTime(0.5, t + dur - 1.6);
+    out.gain.linearRampToValueAtTime(EPS, t + dur);
+    var beat = 60 / 124 / 2;
+    var nodes = [out, lp], anchor = null;
+    for (var i = 0; i * beat < dur; i++) {
+      var tt = t + i * beat;
+      var o = ctx.createOscillator(); o.type = 'sine';
+      o.frequency.setValueAtTime(150, tt);
+      o.frequency.exponentialRampToValueAtTime(48, tt + 0.09);
+      var g = gain(0);
+      o.connect(g); g.connect(out);
+      env(g, tt, 0.004, i % 2 ? 0.20 : 0.42, 0.20);
+      o.start(tt); o.stop(tt + 0.26);
+      nodes.push(o, g); anchor = o;
+    }
+    if (anchor) cleanupOnEnd(anchor, nodes);
+  }
+
+  // boost gate: a rising E6 → B6, brighter than the checkpoint chime so they never confuse
+  function doBoostGate() {
+    if (!ready()) return;
+    var t = now();
+    chimeNote(t, 1318.51, 0.20, 0.16);
+    chimeNote(t + 0.08, 1975.53, 0.22, 0.34);
   }
 
   // --------------------------------------------------------------------------
@@ -480,6 +907,19 @@
   function doCountdownBeep(final_) {
     if (!ready()) return;
     var t = now();
+    // countdown handshake: duck the bed and pull the kick, then put the drop on the NEXT BAR so
+    // the airhorn lands on a downbeat instead of wherever the countdown happened to finish.
+    if (music.playing && music.bus) {
+      if (!final_) {
+        setT(music.bus.gain, music.level * 0.35, 0.06);
+        mstate.kickMute = Infinity;
+      } else {
+        music.bus.gain.cancelScheduledValues(t);
+        music.bus.gain.setValueAtTime(Math.max(music.bus.gain.value, EPS), t);
+        music.bus.gain.linearRampToValueAtTime(music.level, t + 0.12);
+        mstate.kickMute = music.nextTime + (16 - (music.step % 16)) * music.stepDur;
+      }
+    }
     var f = final_ ? 1318.5 : 880;
     var dur = final_ ? 0.5 : 0.14;
     var o1 = ctx.createOscillator(); o1.type = 'sine'; o1.frequency.value = f;
@@ -682,7 +1122,9 @@
   //            bassline, sparse dark brass stabs, energetic hats.
   // All material composed for this game; no existing song is quoted.
   // --------------------------------------------------------------------------
-  var TITLE_BPM = 112, RACE_BPM = 126;
+  // 124, not 126: classic Chicago house sits 120–128 and the Warehouse tempo was ~122–126.
+  // 126 is a shade hot for a groove you hear for four minutes; 124 breathes.
+  var TITLE_BPM = 112, RACE_BPM = 124;
 
   // Title: chord voicings (Hz) and per-bar walking bass (quarter notes)
   var T_CH = {
@@ -704,24 +1146,27 @@
   var T_STAB_A = [2, 6, 10, 14]; // straight offbeat 8ths
   var T_STAB_B = [2, 6, 10, 13]; // syncopated; 13 anticipates the next chord
 
-  // Race: minor stab voicings, 808 roots, sparse stab placements
+  // Race: the deep-house i – iv – VI – v, two bars each, all m9/maj9 stacks — the Marshall
+  // Jefferson / Larry Heard piano voicing. A progression, not a loop of one chord.
   var R_CH = {
-    Am: [220.00, 261.63, 329.63], // A3 C4 E4
-    F:  [174.61, 220.00, 261.63], // F3 A3 C4
-    G:  [196.00, 246.94, 293.66], // G3 B3 D4
-    E:  [164.81, 207.65, 246.94]  // E3 G#3 B3 — V turnaround tension
+    Am9:   [220.00, 261.63, 329.63, 493.88], // A3 C4 E4 B4
+    Dm9:   [174.61, 220.00, 261.63, 329.63], // F3 A3 C4 E4
+    Fmaj9: [220.00, 261.63, 329.63, 392.00], // A3 C4 E4 G4
+    Em7:   [196.00, 246.94, 293.66, 329.63]  // G3 B3 D4 E4
   };
   var RACE_BARS = [
-    { root: 55.00, chord: R_CH.Am, stabs: [4] },
-    { root: 55.00, chord: R_CH.Am, stabs: [] },
-    { root: 55.00, chord: R_CH.Am, stabs: [4, 11] },
-    { root: 55.00, chord: R_CH.Am, stabs: [] },
-    { root: 43.65, chord: R_CH.F,  stabs: [4] },
-    { root: 43.65, chord: R_CH.F,  stabs: [11] },
-    { root: 49.00, chord: R_CH.G,  stabs: [4] },
-    { root: 41.20, chord: R_CH.E,  stabs: [8, 10, 12] } // turnaround fill
+    { root: 55.00, chord: R_CH.Am9 },   { root: 55.00, chord: R_CH.Am9 },
+    { root: 73.42, chord: R_CH.Dm9 },   { root: 73.42, chord: R_CH.Dm9 },
+    { root: 43.65, chord: R_CH.Fmaj9 }, { root: 43.65, chord: R_CH.Fmaj9 },
+    { root: 41.20, chord: R_CH.Em7 },   { root: 41.20, chord: R_CH.Em7 }
   ];
   var R_808 = [0, 3, 6, 8, 11, 14]; // syncopated sub pattern (6/14 jump octave)
+  var R_PIANO = [2, 6, 10, 14];
+  var R_ACID = [0, 3, 6, 7, 10, 13];
+
+  // Arrangement gates. L2's is the best idea in the whole soundtrack: the moment the hull breaks
+  // free and the bow drops, the piano enters — physics and music resolve on the same frame.
+  var mstate = { planeF: 0, boostHeat: 0, progress: 0, lead: false, kickMute: 0 };
 
   function trackSource(src) {
     music.sources.push(src);
@@ -742,7 +1187,13 @@
   function ensureMusicBuses() {
     if (music.bus) return;
     music.bus = gain(EPS);
-    music.bus.connect(master);
+    // one lowpass on the whole music bus, swept 620 Hz → 12.4 kHz by race intensity. Running 6th
+    // and forty seconds back the mix is dark and defeated; leading into the last gate it opens all
+    // the way up. Nobody notices the mechanism; everybody feels the race.
+    musicLP = ctx.createBiquadFilter();
+    musicLP.type = 'lowpass'; musicLP.Q.value = 0.7; musicLP.frequency.value = 12400;
+    music.out = gain(musicLevel);
+    music.bus.connect(musicLP); musicLP.connect(music.out); music.out.connect(master);
 
     music.padFilter = ctx.createBiquadFilter();
     music.padFilter.type = 'lowpass';
@@ -926,21 +1377,68 @@
     if (s % 2 === 0) hatTick(t, s % 4 === 2, s % 4 === 2 ? 0.09 : 0.05);
   }
 
+  // House without a backbeat clap sounds unfinished. Three bursts 11 ms apart is the trick.
+  function clap(t) {
+    var bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
+    bp.frequency.value = 1600; bp.Q.value = 1.1;
+    var out = gain(1);
+    bp.connect(out); out.connect(music.bus || master);
+    if (sendGain) out.connect(sendGain);        // the tail is what sells it
+    var offs = [0, 0.011, 0.021], decs = [0.09, 0.09, 0.16];
+    var nodes = [bp, out], anchor = null;
+    for (var i = 0; i < 3; i++) {
+      var src = ctx.createBufferSource(); src.buffer = noiseBuffer('white');
+      var g = gain(0);
+      src.connect(g); g.connect(bp);
+      env(g, t + offs[i], 0.002, 0.11, decs[i]);
+      src.start(t + offs[i]); src.stop(t + offs[i] + decs[i] + 0.03);
+      nodes.push(src, g); anchor = src;
+    }
+    if (anchor) { trackSource(anchor); cleanupOnEnd(anchor, nodes); }
+  }
+
+  // TB-303 in twelve lines: one saw, a resonant lowpass, a per-note sweep. Boost only.
+  function acidNote(f, t, dur, cutoff) {
+    var o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f;
+    var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 9.5;
+    lp.frequency.setValueAtTime(cutoff * 1.9, t);
+    lp.frequency.exponentialRampToValueAtTime(Math.max(80, cutoff), t + 0.09);
+    var g = gain(0);
+    o.connect(lp); lp.connect(g); g.connect(music.bus);
+    g.gain.setValueAtTime(EPS, t);
+    g.gain.linearRampToValueAtTime(0.09, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(EPS, t + dur);
+    o.start(t); o.stop(t + dur + 0.04);
+    trackSource(o);
+    cleanupOnEnd(o, [o, lp, g]);
+  }
+
   function scheduleRaceStep(step, t) {
     var bar = (step / 16) | 0, s = step % 16;
     var B = RACE_BARS[bar];
-    // Hard four-on-the-floor
-    if (s % 4 === 0) kick(t, true);
-    // Syncopated 808 subs; steps 6/14 jump the octave
+    // L0 — hard four-on-the-floor + the syncopated 808 sub (6/14 jump the octave)
+    if (s % 4 === 0 && !(mstate.kickMute && t < mstate.kickMute)) kick(t, true);
     if (R_808.indexOf(s) >= 0) {
       var f = (s === 6 || s === 14) ? B.root * 2 : B.root;
       bass808(f, t, 0.32, s % 8 === 0 ? 0.55 : 0.42);
     }
-    // Sparse dark brass stabs
-    if (B.stabs.indexOf(s) >= 0) stabChord(B.chord, t, 0.16, 0.14, true);
-    // Energetic hats: offbeat 8ths accented, 16th fills on bars 3 and 7
+    // L1 — offbeat hats, accented, plus the backbeat clap on 2 and 4
     if (s % 2 === 0) hatTick(t, s % 4 === 2, s % 4 === 2 ? 0.11 : 0.05);
     else if ((bar === 3 || bar === 7) && s >= 11) hatTick(t, false, 0.04);
+    if (s === 4 || s === 12) clap(t);
+    // L2 — piano stabs, gated on the hull getting up on plane
+    if (mstate.planeF > 0.6) {
+      if (R_PIANO.indexOf(s) >= 0) stabChord(B.chord, t, 0.22, 0.10, false);
+      else if (s === 15 && bar % 2 === 0) stabChord(RACE_BARS[(bar + 1) % 8].chord, t, 0.14, 0.07, false);
+    }
+    // L3 — the acid line only exists while you are boosting
+    if (mstate.boostHeat > 0.35 && R_ACID.indexOf(s) >= 0) {
+      acidNote(B.root * 2, t, 0.16, 260 + 3400 * clamp01(mstate.boostHeat));
+    }
+    // L4 — the organ swell, for the last quarter of the race or while you are on the podium
+    if (s === 0 && (bar === 0 || bar === 4) && (mstate.progress > 0.78 || mstate.lead)) {
+      swellPad(B.chord, t, 24 * music.stepDur, 0.030);
+    }
   }
 
   function scheduleStep(step, t) {
@@ -1015,6 +1513,34 @@
   function doSetMusic(on) { doSetMode('title', !!on); }
   function doSetRaceMusic(on) { doSetMode('race', !!on); }
 
+  // race state → arrangement gates + the master filter sweep
+  function updateMusicState(s) {
+    if (!s) return;
+    mstate.planeF = clamp01(s.planeF);
+    mstate.boostHeat = clamp01(s.boostHeat);
+    mstate.progress = clamp01(s.progress);
+    mstate.lead = !!s.lead;
+    var n = Math.max(2, s.nBoats || 6);
+    var posF = 1 - (clamp(s.racePos || 1, 1, n) - 1) / (n - 1);
+    intensity = clamp(0.30 + 0.30 * clamp01((+s.speed || 0) / Math.max(1, s.top || 40))
+                      + 0.20 * posF + 0.20 * mstate.progress, 0, 1);
+    if (musicLP && music.mode === 'race') setT(musicLP.frequency, 620 * Math.pow(20, intensity), 0.70);
+  }
+  function doSetMusicIntensity(x) {
+    intensity = clamp01(x);
+    if (musicLP) setT(musicLP.frequency, 620 * Math.pow(20, intensity), 0.70);
+  }
+
+  function doSetMusicLevel(v) {
+    musicLevel = clamp01(v);
+    if (music.out) setT(music.out.gain, musicLevel, TAU_FAST);
+  }
+  function doSetSfxLevel(v) {
+    sfxLevel = clamp01(v);
+    if (fxBus) setT(fxBus.gain, 0.9 * sfxLevel, TAU_FAST);
+    if (engineBus) setT(engineBus.gain, 0.24 * sfxLevel, TAU_FAST);
+  }
+
   // --------------------------------------------------------------------------
   // Public API — every method wrapped so it can never throw
   // --------------------------------------------------------------------------
@@ -1044,6 +1570,22 @@
     finishFanfare: safe(doFinishFanfare),
     seagull: safe(doSeagull),
     setMusic: safe(doSetMusic),
-    setRaceMusic: safe(doSetRaceMusic)
+    setRaceMusic: safe(doSetRaceMusic),
+    // FEEL §5.1
+    setSpace: safe(doSetSpace),
+    setRivals: safe(doSetRivals),
+    hullSlap: safe(doHullSlap),
+    chuff: safe(doChuff),
+    scrape: safe(doScrape),
+    grating: safe(doGrating),
+    trainPass: safe(doTrainPass),
+    setMusicIntensity: safe(doSetMusicIntensity),
+    setMusicLevel: safe(doSetMusicLevel),
+    setSfxLevel: safe(doSetSfxLevel),
+    // CHICAGO §5.4 + eggs #23 / #37 (C8) and the boost-gate chime
+    bridgeHorn: safe(doBridgeHorn),
+    lScreech: safe(function (pan) { doLScreech(pan); }),
+    houseBleed: safe(doHouseBleed),
+    boostGate: safe(doBoostGate)
   };
 })();

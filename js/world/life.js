@@ -3,22 +3,51 @@
 (function () {
   const LIFE = {};
   const U = () => RR.U;
-  const PY = 1.5;                 // promenade height (matches riverwalk.js)
+  // deck height comes from riverwalk.js — W3 dropped it 1.5 → 1.1 (CHICAGO §3.2) and a
+  // hard-coded copy here left every pedestrian standing 0.4 m in the air.
+  const PY = () => (RR.Riverwalk && RR.Riverwalk.PY != null ? RR.Riverwalk.PY : 1.1);
 
-  let people, peopleData = [], nWalk = 0;
+  let people, body, bags, peopleData = [], nWalk = 0;
+  let bagOf = null;               // instance index → bag instance index, or -1
   let bikes, bikeData = [];
   let cars, carData = [];
   let riverCraft = [];
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1);
   const _up = new THREE.Vector3(0, 1, 0);
 
-  function mergedFigure() {
-    const parts = [];
-    const legs = new THREE.BoxGeometry(0.5, 0.9, 0.34); legs.translate(0, 0.45, 0);
-    const torso = new THREE.BoxGeometry(0.56, 0.8, 0.36); torso.translate(0, 1.28, 0);
-    const head = new THREE.SphereGeometry(0.2, 6, 5); head.translate(0, 1.85, 0);
-    parts.push(legs, torso, head);
-    return RR.City.mergeGeoms(parts);
+  // ---------- ART rule 6: a person has limbs and a colour break at the waist ----------
+  // Three instanced meshes carry three independent per-person colours through instanceColor:
+  // SHIRT (torso + sleeves), BODY (head = skin tone, with the trousers baked dark into the
+  // vertex colours so they land neutral whatever the face is), and BAG (a bright accent, only
+  // for the half that carry one). 90 tris a figure, and the geometry is built exactly once.
+  const FIG = { legs: 0x39404e, sleeve: 0xe6e6e6 };
+  function figParts(rng) {
+    const T = (g, hex) => { RR.City.tintGeom(g, hex, 0, rng); return g; };
+    const shirt = [], skin = [], bag = [];
+    for (const s of [-1, 1]) {
+      const leg = new THREE.BoxGeometry(0.16, 0.75, 0.16);
+      leg.translate(s * 0.105, 0.375, 0);
+      skin.push(T(leg, FIG.legs));
+      const arm = new THREE.BoxGeometry(0.13, 0.55, 0.13);
+      arm.translate(0, -0.275, 0);                 // hang from the shoulder joint
+      arm.rotateZ(-s * 0.14);                      // 8° out from the body
+      arm.translate(s * 0.235, 1.32, 0);
+      shirt.push(T(arm, FIG.sleeve));
+    }
+    const torso = new THREE.BoxGeometry(0.42, 0.62, 0.24);
+    torso.translate(0, 1.06, 0);
+    shirt.push(T(torso, 0xffffff));
+    const head = new THREE.SphereGeometry(0.13, 5, 4);
+    head.translate(0, 1.50, 0);
+    skin.push(T(head, 0xffffff));
+    const sack = new THREE.BoxGeometry(0.26, 0.30, 0.13);
+    sack.translate(0.33, 0.66, 0.02);              // swinging off the right hand
+    bag.push(T(sack, 0xffffff));
+    return { shirt, skin, bag };
+  }
+  function mergedFigure() {                        // solid one-colour figure (kayakers, etc.)
+    const f = figParts(U().mulberry(1871));
+    return RR.City.mergeGeoms(f.shirt.concat(f.skin));
   }
   function mergedBike() {
     const parts = [];
@@ -36,6 +65,8 @@
   }
 
   const SHIRTS = [0xcf4436, 0x3f6fb0, 0x4a8a52, 0xdedad0, 0x8a5a9c, 0xe0a53a, 0x37474f, 0xd06a9a, 0x2f8f8f, 0xb0483a];
+  const SKINS = [0xe8bd94, 0xd9a271, 0xb37a4e, 0x8a5a35, 0x6b4128, 0xf0cba6];
+  const ACCENT = [0xe4392e, 0xf2c230, 0x2e8fd4, 0x2f6b4a, 0xf1efe8];
   const CARS = [0xd8d8dc, 0x2b2f36, 0xb0342a, 0x2f5aa0, 0xe0c030, 0x5a6068, 0x9aa0a6, 0x8a2f2f];
 
   LIFE.init = function () {
@@ -70,7 +101,9 @@
           if (x > openX - 8 || overWater(x, z)) continue;
           const isBike = rng() < 0.14;
           const w = { p, key, s, d, off, dir: rng() < 0.5 ? 1 : -1, spd: isBike ? 5 + rng() * 3 : 1.1 + rng() * 0.8,
-                      col: SHIRTS[(rng() * SHIRTS.length) | 0], ph: rng() * 9, bike: isBike };
+                      col: SHIRTS[(rng() * SHIRTS.length) | 0], skin: SKINS[(rng() * SKINS.length) | 0],
+                      acc: rng() < 0.5 ? ACCENT[(rng() * ACCENT.length) | 0] : 0,
+                      sc: 0.93 + rng() * 0.14, ph: rng() * 9, bike: isBike };
           (isBike ? cyclists : walkers).push(w);
         }
       }
@@ -85,28 +118,49 @@
           const b = U().pathAt(main, dd, {});
           const x = b.x + (-b.tz) * (b.w + off) * s, z = b.z + b.tx * (b.w + off) * s;
           if (x > openX - 8 || overWater(x, z)) continue;
-          statics.push({ x, z, yaw: rng() * 6.28, col: SHIRTS[(rng() * SHIRTS.length) | 0] });
+          statics.push({ x, z, yaw: rng() * 6.28, col: SHIRTS[(rng() * SHIRTS.length) | 0],
+                         skin: SKINS[(rng() * SKINS.length) | 0],
+                         acc: rng() < 0.5 ? ACCENT[(rng() * ACCENT.length) | 0] : 0,
+                         sc: 0.93 + rng() * 0.14 });
         }
       }
     }
 
     nWalk = walkers.length + cyclists.length;
     const total = nWalk + statics.length;
-    people = new THREE.InstancedMesh(mergedFigure(), new THREE.MeshLambertMaterial({}), total);
-    people.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    people.castShadow = true;
+    const fig = figParts(rng);
+    const shirtMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    people = new THREE.InstancedMesh(RR.City.mergeGeoms(fig.shirt), shirtMat, total);
+    body = new THREE.InstancedMesh(RR.City.mergeGeoms(fig.skin),
+      new THREE.MeshLambertMaterial({ vertexColors: true }), total);
+    const bagGeo = RR.City.mergeGeoms(fig.bag);
     peopleData = walkers.concat(cyclists);
-    // seed walker matrices + colors
-    for (let i = 0; i < peopleData.length; i++) people.setColorAt(i, new THREE.Color(peopleData[i].col));
+    const all = peopleData.concat(statics);
+    bagOf = new Int32Array(total).fill(-1);
+    let nBags = 0;
+    for (let i = 0; i < all.length; i++) if (all[i].acc) bagOf[i] = nBags++;
+    bags = new THREE.InstancedMesh(bagGeo, new THREE.MeshLambertMaterial({ vertexColors: true }), Math.max(1, nBags));
+    for (const m of [people, body, bags]) {
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      m.layers.set(1);
+      scene.add(m);
+    }
+    people.castShadow = true; body.castShadow = true;
+    for (let i = 0; i < all.length; i++) {
+      people.setColorAt(i, new THREE.Color(all[i].col));
+      body.setColorAt(i, new THREE.Color(all[i].skin));
+      if (bagOf[i] >= 0) bags.setColorAt(bagOf[i], new THREE.Color(all[i].acc));
+    }
+    // the idlers never move: place them once and let the per-frame loop skip them entirely
     for (let i = 0; i < statics.length; i++) {
       const st = statics[i], idx = nWalk + i;
-      _q.setFromAxisAngle(_up, st.yaw); _p.set(st.x, PY, st.z);
-      _m.compose(_p, _q, _s); people.setMatrixAt(idx, _m);
-      people.setColorAt(idx, new THREE.Color(st.col));
+      _q.setFromAxisAngle(_up, st.yaw); _p.set(st.x, PY(), st.z); _s.setScalar(st.sc);
+      _m.compose(_p, _q, _s);
+      people.setMatrixAt(idx, _m); body.setMatrixAt(idx, _m);
+      if (bagOf[idx] >= 0) bags.setMatrixAt(bagOf[idx], _m);
     }
-    if (people.instanceColor) people.instanceColor.needsUpdate = true;   // colours are fixed — upload once
-    people.layers.set(1);
-    scene.add(people);
+    _s.setScalar(1);
+    for (const m of [people, body, bags]) if (m.instanceColor) m.instanceColor.needsUpdate = true;
 
     // cyclists get bikes (same transforms, updated together)
     bikes = new THREE.InstancedMesh(mergedBike(), new THREE.MeshLambertMaterial({ color: 0x2a2f36 }), Math.max(1, cyclists.length));
@@ -295,10 +349,15 @@
       }
       const yaw = Math.atan2(a.tx * w.dir, a.tz * w.dir);
       const bob = w.bike ? 0 : Math.abs(Math.sin(t * 6 + w.ph)) * 0.06;
-      _q.setFromAxisAngle(_up, yaw); _p.set(x, PY + bob, z);
-      _m.compose(_p, _q, _s); people.setMatrixAt(i, _m);
+      _q.setFromAxisAngle(_up, yaw); _p.set(x, PY() + bob, z); _s.setScalar(w.sc);
+      _m.compose(_p, _q, _s);
+      people.setMatrixAt(i, _m); body.setMatrixAt(i, _m);
+      if (bagOf[i] >= 0) bags.setMatrixAt(bagOf[i], _m);
     }
+    _s.setScalar(1);
     people.instanceMatrix.needsUpdate = true;
+    body.instanceMatrix.needsUpdate = true;
+    bags.instanceMatrix.needsUpdate = true;
 
     // bikes ride under their cyclist
     for (let i = 0; i < bikeData.length; i++) {
@@ -307,7 +366,7 @@
       const nx = -a.tz, nz = a.tx;
       const x = a.x + nx * (a.w + w.off) * w.s, z = a.z + nz * (a.w + w.off) * w.s;
       const yaw = Math.atan2(a.tx * w.dir, a.tz * w.dir);
-      _q.setFromAxisAngle(_up, yaw); _p.set(x, PY, z);
+      _q.setFromAxisAngle(_up, yaw); _p.set(x, PY(), z);
       _m.compose(_p, _q, _s); bikes.setMatrixAt(i, _m);
     }
     bikes.instanceMatrix.needsUpdate = true;
