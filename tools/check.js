@@ -73,7 +73,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     if (opt.time) await page.evaluate((m) => window.RRTest.night(m), String(opt.time));
 
-    if (opt.race !== undefined && opt.race !== true) {
+    // main.js overrides the camera with the attract flythrough while mode === 'menu', so a
+    // free-cam shot from the title screen silently returns the menu view. Any --cam request
+    // therefore starts a race first unless you explicitly asked to stay on the menu.
+    const wantsFreeCam = !!(opt.cam && opt.look) && !opt.menu;
+    if ((opt.race !== undefined && opt.race !== true) || wantsFreeCam) {
       const rv = nums(opt.race, 2) || [0, 0];
       await page.evaluate(([c, v]) => window.RRTest.startRace(c, v), rv);
       await sleep(500);
