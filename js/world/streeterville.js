@@ -80,7 +80,9 @@
         const rad = 1.4 + rng() * 1.2, th = 2.6 + rng() * 1.4;
         cylAt(flats, rad, rad, th, 8, cx + (rng() - 0.5) * w * 0.4, topY + th / 2, cz + (rng() - 0.5) * d * 0.4, 0x51565c);
       }
-      if (tier === 2 && h < 80 && (fam === 2 || fam === 3 || fam === 4) && rng() < 0.4) {
+      // rng draw before the family test: short-circuiting past it tied the rng stream to the
+      // facade mix, so re-balancing the city palette relaid out every block here too
+      if (tier === 2 && h < 80 && rng() < 0.4 && (fam === 2 || fam === 3 || fam === 4)) {
         const tx = cx + (rng() - 0.5) * w * 0.3, tz = cz + (rng() - 0.5) * d * 0.3;
         for (let k = 0; k < 4; k++) {
           const a = k * Math.PI / 2 + 0.79;

@@ -128,30 +128,49 @@
     { key: 'LIMESTONE', seed: 1303, frame: '#d9d2c1', spandrel: '#cdc5b3', glassHi: '#8fa3b0', glassLo: '#5c7183',
       lites: 1, margin: 62, mullion: 6, glassTop: 26, glassBot: 196, sill: '#efe9db', revealA: 0.30, grain: 0.06,
       courseH: 32, courseCol: 'rgba(120,110,92,0.22)',
-      tints: [0xd8d0be, 0xcfc6b2, 0xe2dbcb, 0xc6bda9],
+      // Indiana limestone weathers from cream to a cold soiled grey depending on when the
+      // building was last cleaned; without that spread a limestone Loop is one beige mass.
+      // famNorm multiplies these by ~1.4, so anything above ~0xdd clips to white and the whole
+      // family collapses onto one colour. Ceiling the tints is what keeps the variation.
+      tints: [0xd6cfbe, 0xcfc6b2, 0xdcd6c4, 0xc6bda9, 0xc6c4bc, 0xb2aea2],
       nightDensity: 0.34, warm: '#ffca7a', cool: '#cfe0ff', warmFrac: 0.86, nightMul: 0.75 },
 
-    { key: 'REDBRICK', seed: 1404, frame: '#8d4a35', spandrel: null, glassHi: '#6d7f8c', glassLo: '#3f4e5a',
-      lites: 1, margin: 66, mullion: 8, glassTop: 30, glassBot: 190, sill: '#7a3a26', revealA: 0.26, grain: 0,
-      brick: { mortar: '#b3a494', a: '#7a3d2b', b: '#a45a3e' }, lintel: '#2e3236',
-      tints: [0x9a5138, 0x8a4530, 0x7d3f2d, 0xa85e42],
+    // Chicago common brick is a mortar-greyed masonry, not a fire engine. The tile stays
+    // near-NEUTRAL on purpose: map pixels are sampled straight into linear light with no sRGB
+    // decode, so any saturation authored here is roughly squared on the way to the screen, and
+    // a #a45a3e brick pixel under a #9a5138 tint lands at 7:1 red-to-green — hotter than any
+    // wall in the city. Hue lives in the tints instead, which DO get decoded, so what you read
+    // in the array is very nearly what lands on the wall. They run the real Chicago range:
+    // buff-yellow through orange-red to smoke-darkened brown. A single red reads as wallpaper.
+    { key: 'REDBRICK', seed: 1404, frame: '#8a8078', spandrel: null, glassHi: '#6d7f8c', glassLo: '#3f4e5a',
+      lites: 1, margin: 66, mullion: 8, glassTop: 30, glassBot: 190, sill: '#9b948a', revealA: 0.26, grain: 0,
+      brick: { mortar: '#a49c92', a: '#7b736a', b: '#9c9286' }, lintel: '#2e3236',
+      tints: [0x9a6a52, 0x8a6353, 0x7a5c50, 0xa8845f, 0xb3a582, 0x8d8168, 0x9c7a63, 0xa79574, 0x8e5442],
       nightDensity: 0.22, warm: '#ffb964', cool: '#cfe0ff', warmFrac: 0.88, nightMul: 0.55 },
 
     { key: 'TERRACOTTA', seed: 1505, frame: '#efe9dc', spandrel: '#e6dfd0', glassHi: '#8ea3b2', glassLo: '#5f7484',
       lites: 2, margin: 8, mullion: 7, glassTop: 22, glassBot: 176, sill: '#faf5ea', revealA: 0.22, grain: 0.03,
       ornament: { y: 232, h: 14, a: '#e8e0cf', b: '#d3c9b4' },
-      tints: [0xf2ece0, 0xe9e2d3, 0xfaf5ea], shininess: 14, specular: 0x151412,   // glazed terracotta is glossy
+      // kept under the famNorm clip ceiling so the three read as three creams, not one white —
+      // the Wrigley Building passes its own brighter hex in and still burns out, as it should
+      tints: [0xdcd5c6, 0xd0c9b8, 0xe0dbcf, 0xcbc6bc], shininess: 14, specular: 0x151412,
       nightDensity: 0.30, warm: '#ffd39a', cool: '#cfe0ff', warmFrac: 0.84, nightMul: 0.70 },
 
-    { key: 'PINKGRANITE', seed: 1606, frame: '#b58a80', spandrel: '#9c7268', glassHi: '#7d8f92', glassLo: '#4b5c62',
-      lites: 2, margin: 6, mullion: 9, glassTop: 16, glassBot: 160, sill: '#c9a096', revealA: 0.16, grain: 0.04,
-      courseH: 64, courseCol: 'rgba(90,60,54,0.28)',          // large panel joints — the postmodern tell
-      tints: [0xbf8f84, 0xa9776c, 0xd0a196, 0x8f6258],
+    // Polished pink granite (190 S LaSalle, 311 S Wacker, AT&T Corporate Center) is a warm
+    // grey-mauve stone. Saturated at the tile AND the tint it came out salmon, which is what
+    // made the Loop read pink from the air; the hue now lives in the tints alone.
+    { key: 'PINKGRANITE', seed: 1606, frame: '#a49a95', spandrel: '#918782', glassHi: '#7d8f92', glassLo: '#4b5c62',
+      lites: 2, margin: 6, mullion: 9, glassTop: 16, glassBot: 160, sill: '#b4aaa4', revealA: 0.16, grain: 0.04,
+      courseH: 64, courseCol: 'rgba(84,76,72,0.28)',          // large panel joints — the postmodern tell
+      tints: [0xb49a90, 0xa4887e, 0xb8a89c, 0x94807a],
       nightDensity: 0.26, warm: '#ffc98a', cool: '#cfe0ff', warmFrac: 0.82, nightMul: 0.80 },
 
-    { key: 'GREENGLASS', seed: 1707, frame: '#3f5a54', spandrel: '#2c443f', glassHi: '#7fb8a6', glassLo: '#3d6f62',
-      lites: 2, margin: 3, mullion: 6, glassTop: 6, glassBot: 176, sill: '#47645d', revealA: 0.05, grain: 0,
-      tints: [0x6d9a8b, 0x5b8a7c, 0x7fae9d], shininess: 66, specular: 0x2b3b37,
+    // 333 W Wacker's glass is a soft sea-green that goes almost grey against a bright sky.
+    // Authored emerald at both the tile and the tint it came out kelly, which no window in
+    // Chicago is — same double-saturation trap as the brick.
+    { key: 'GREENGLASS', seed: 1707, frame: '#4b5854', spandrel: '#38443f', glassHi: '#9ab5ab', glassLo: '#55716a',
+      lites: 2, margin: 3, mullion: 6, glassTop: 6, glassBot: 176, sill: '#53625d', revealA: 0.05, grain: 0,
+      tints: [0x74928a, 0x64837b, 0x88a49b, 0x577671], shininess: 66, specular: 0x2b3b37,
       nightDensity: 0.34, warm: '#ffcf85', cool: '#cfe6df', warmFrac: 0.40, nightMul: 1.05 },
 
     { key: 'BLUEGLASS', seed: 1808, frame: '#4a6070', spandrel: '#35505f', glassHi: '#a7cfe2', glassLo: '#4a7f9e',
@@ -162,14 +181,17 @@
     { key: 'CONCRETE', seed: 1909, frame: '#b7b1a4', spandrel: '#a8a294', glassHi: '#7d8b93', glassLo: '#4e5c66',
       lites: 1, margin: 40, mullion: 7, glassTop: 22, glassBot: 184, sill: '#c6c0b2', revealA: 0.24, grain: 0.07,
       courseH: 11, courseCol: 'rgba(90,86,78,0.25)', snapTie: 'rgba(70,66,60,0.30)',   // board-form marks + ties
-      tints: [0xb9b3a6, 0xaba498, 0xc7c1b3],
+      tints: [0xb9b3a6, 0xaba498, 0xc4bfb2, 0xa8a9a6, 0x9b9a94],
       nightDensity: 0.28, warm: '#ffc98a', cool: '#cfe0ff', warmFrac: 0.84, nightMul: 0.70 },
 
     { key: 'RETAIL', seed: 2010, frame: '#2c3036', spandrel: null, glassHi: '#cfd8d4', glassLo: '#8fa39c',
       lites: 2, margin: 4, mullion: 4, glassTop: 4, glassBot: 214, sill: null, revealA: 0.04, grain: 0,
-      awning: { y: 4, h: 22, palette: ['#d8412f', '#f0a92b', '#2f7dd8', '#36a852', '#1f6f5c'] },
+      // Awnings sit on the podium band of EVERY building, so they are the one accent colour you
+      // read from the water. Canvas in the weather, not vinyl in a catalogue — the fire-engine
+      // red used here was the last thing making low blocks flare orange from the air.
+      awning: { y: 4, h: 22, palette: ['#a8503f', '#c0883e', '#3d6a99', '#3f7a54', '#2b5c50'] },
       fascia: { y: 226, h: 10, col: '#1a1d21' },
-      tints: [0xdedad2, 0xc8c4bc],
+      tints: [0xc0bdb6, 0xadaaa3, 0xb6b3ac],   // RETAIL's famNorm is ~1.9: above ~0xc0 they all clip to one grey
       nightDensity: 0.85, warm: '#ffdca8', cool: '#cfe0ff', warmFrac: 0.90, nightMul: 1.60 },
   ];
   for (const f of FAM) Object.freeze(f);
@@ -343,16 +365,94 @@
     return famMats;
   };
 
-  // Chicago builds in legible eras: masonry low-rise, limestone/terracotta mid-rise,
-  // steel-and-glass towers, and a postmodern granite bulge in the 80s.
+  // ===================== DISTRICT MIX =====================
+  // Chicago builds in legible eras AND in legible neighbourhoods, and the second is the one
+  // that decides whether the city reads as Chicago from the water. Downtown is grey-white
+  // Indiana limestone, black anodised Mies steel, buff brick, board-formed concrete, bronze
+  // and green glass. Common brick is everywhere REAL, but it belongs to the shorter, older
+  // loft and warehouse stock — Fulton Market, River North behind the Mart, Printer's Row —
+  // not to the towers standing on the Loop bank.
+
+  // x of the river's west bank at this z: the North Branch running up toward Goose Island,
+  // the South Branch straight down the Loop's west edge, then its swing east past Chinatown.
+  function branchX(z) {
+    if (z < 122) return -655 - (122 - z) * 0.55;
+    if (z < 1000) return -655;
+    return -655 + Math.min(280, (z - 1000) * 0.30);
+  }
+  // z of the Main Stem: the dogleg into Wolf Point, dead straight past the Mart and Marina
+  // City, then the bend south under Michigan Avenue out to the lock.
+  function stemZ(x) {
+    if (x < -466) return 122 - (x + 655) * 0.46;
+    if (x < 200) return 32;
+    if (x < 400) return 32 - (x - 200) * 0.76;
+    return -100;
+  }
+
+  const D_STEM = 0, D_LOOP = 1, D_NORTH = 2, D_EAST = 3, D_WEST = 4, D_SOUTH = 5;
+  function district(x, z) {
+    // the two banks you actually race between get their own mix — this is the postcard wall
+    if (x > -780 && x < 1980 && Math.abs(z - stemZ(x)) < 210) return D_STEM;
+    if (x < branchX(z) - 30) return D_WEST;                 // Fulton Market / West Loop
+    if (z > 1750) return D_SOUTH;                           // South Loop / Printer's Row
+    // Streeterville stops around Chicago Avenue; past it Old Town, the Gold Coast and Lincoln
+    // Park are greystone and brick low-rise with glass towers only on the Drive.
+    if (z < stemZ(x)) return (x > 430 && z > -1500) ? D_EAST : D_NORTH;
+    return D_LOOP;
+  }
+
+  // Weights per family index, four height bands: <28 m, <75 m, <170 m, tower.
+  // 0 CURTAIN · 1 MIES · 2 LIMESTONE · 3 BRICK · 4 TERRACOTTA
+  // 5 PINKGRANITE · 6 GREENGLASS · 7 BLUEGLASS · 8 CONCRETE · 9 RETAIL
+  const MIX = [
+    [ // D_STEM — Wacker Drive and the north bank: Mart, Marina City, IBM, 333 W Wacker
+      [2, 26, 9, 16, 3, 16, 4, 14, 8, 14, 0, 8, 1, 6],
+      [2, 28, 8, 16, 4, 14, 0, 14, 3, 12, 1, 10, 6, 6],
+      [0, 24, 2, 22, 1, 16, 8, 14, 7, 12, 4, 6, 6, 6],
+      [0, 26, 2, 18, 1, 16, 7, 16, 8, 14, 6, 10],
+    ],
+    [ // D_LOOP — limestone canyons, State Street, the Board of Trade
+      [2, 26, 4, 16, 9, 14, 3, 14, 8, 12, 0, 8, 1, 6, 5, 4],
+      [2, 30, 4, 18, 8, 14, 0, 10, 3, 10, 1, 8, 5, 6, 6, 4],
+      [2, 26, 0, 20, 1, 14, 8, 12, 4, 10, 7, 8, 5, 6, 6, 4],
+      [0, 24, 1, 18, 2, 18, 7, 14, 8, 10, 6, 8, 5, 8],
+    ],
+    [ // D_NORTH — River North / Near North: the loft blocks, then the new glass over them
+      [3, 40, 2, 16, 9, 12, 8, 12, 4, 12, 0, 4, 1, 4],
+      [3, 32, 2, 18, 8, 16, 4, 12, 0, 12, 1, 6, 6, 4],
+      [0, 22, 2, 18, 8, 16, 7, 12, 3, 12, 1, 12, 6, 8],
+      [0, 26, 7, 22, 1, 16, 2, 14, 8, 12, 6, 10],
+    ],
+    [ // D_EAST — Streeterville and the Mag Mile: newest and glassiest, white stone at the base
+      [2, 26, 9, 20, 4, 16, 0, 14, 3, 12, 8, 12],
+      [2, 28, 0, 20, 4, 14, 8, 14, 3, 10, 1, 8, 7, 6],
+      [0, 26, 7, 18, 2, 18, 8, 14, 1, 10, 6, 8, 5, 6],
+      [0, 28, 7, 24, 1, 14, 2, 14, 6, 10, 8, 10],
+    ],
+    [ // D_WEST — Fulton Market and the West Loop: this is where the brick actually lives
+      [3, 50, 8, 18, 9, 12, 2, 10, 4, 6, 1, 4],
+      [3, 40, 8, 22, 2, 14, 0, 10, 4, 8, 1, 6],
+      [8, 24, 3, 22, 0, 20, 2, 14, 1, 10, 7, 10],
+      [0, 28, 7, 20, 8, 18, 1, 14, 2, 12, 6, 8],
+    ],
+    [ // D_SOUTH — Printer's Row and the South Loop: heavy masonry, then concrete residential
+      [3, 42, 2, 16, 8, 16, 9, 12, 4, 10, 1, 4],
+      [3, 34, 2, 20, 8, 18, 0, 12, 4, 10, 1, 6],
+      [8, 26, 0, 20, 3, 18, 2, 16, 7, 12, 1, 8],
+      [0, 28, 8, 22, 7, 18, 1, 12, 2, 12, 6, 8],
+    ],
+  ];
+  // expanded once into flat pick-bags so the choice below costs exactly ONE rng draw —
+  // change that count and every building in the city shifts.
+  const BAGS = MIX.map((d) => d.map((spec) => {
+    const bag = [];
+    for (let i = 0; i < spec.length; i += 2) for (let k = 0; k < spec[i + 1]; k++) bag.push(spec[i]);
+    return bag;
+  }));
+
   CITY.pickFamily = function (rng, h, x, z) {
-    const west = x < -600;                    // West Loop / Fulton Market: brick + concrete
-    const north = z < -200;                   // River North / Streeterville: newer glass
-    let bag;
-    if (h < 30) bag = west ? [3, 3, 3, 2, 8] : [3, 2, 9, 2, 4];
-    else if (h < 90) bag = west ? [3, 2, 8, 5, 2] : [2, 4, 2, 5, 3];
-    else if (h < 180) bag = north ? [7, 6, 1, 8, 5] : [1, 5, 6, 2, 8];
-    else bag = north ? [7, 7, 1, 8, 6] : [1, 8, 7, 6, 5];
+    const band = h < 28 ? 0 : h < 75 ? 1 : h < 170 ? 2 : 3;
+    const bag = BAGS[district(x, z)][band];
     return bag[(rng() * bag.length) | 0];
   };
 
@@ -662,8 +762,10 @@
         flatBox(pw - 0.3, 0.9, pd - 0.3, px, topY + ph * 0.72, pz, 0x2b2f34);     // louvre band
       }
       if (tier < 2) return;
-      // the wooden tank on a low brick loft — the roofscape detail everyone recognises
-      if (h < 80 && (fam === 2 || fam === 3 || fam === 4) && rng() < 0.45) {
+      // the wooden tank on a low brick loft — the roofscape detail everyone recognises.
+      // The draw happens BEFORE the family test on purpose: short-circuiting past it made the
+      // rng stream depend on the facade mix, so re-balancing the palette relaid out the city.
+      if (h < 80 && rng() < 0.45 && (fam === 2 || fam === 3 || fam === 4)) {
         const tx = cx + (rng() - 0.5) * w * 0.3, tz = cz + (rng() - 0.5) * d * 0.3;
         for (let k = 0; k < 4; k++) {
           const a = k * Math.PI / 2 + 0.79;
