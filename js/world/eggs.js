@@ -1187,7 +1187,10 @@
         whirl.m.material.opacity = 0.38 + 0.12 * Math.sin(t * 1.3);
       }
       if (playpen) {                                                 // #20 the raft bobs as one
-        playpen.position.y = U().waterHeight(playpen.position.x, playpen.position.z, t, 3.2) - 0.05;
+        // read the live sea state rather than a hardcoded amplitude — the lake's swell ramp is
+        // the single source of truth, and a raft 6 cm out of its own water reads as broken
+        playpen.position.y = U().waterHeight(playpen.position.x, playpen.position.z, t,
+          RR.River.waveAmp(playpen.position.x, playpen.position.z)) - 0.05;
         playpen.rotation.z = Math.sin(t * 0.55 + playpen.userData.ph) * 0.035;
         playpen.rotation.x = Math.sin(t * 0.43 + playpen.userData.ph * 2) * 0.03;
       }

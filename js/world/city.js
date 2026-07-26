@@ -564,11 +564,39 @@
     groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping;
     const groundMat = new THREE.MeshLambertMaterial({ map: groundTex, color: 0x9aa0a6 });
 
-    // apron ribbons: from just behind the seawall out to ~130m, following each channel exactly.
-    // Every rib is keep-out gated (inner + outer corner must be dry land) so the strip never
-    // sweeps over the neighbouring branches' water at the Wolf Point confluence, and it is
-    // sampled at every resample point so it hugs concave bends instead of chording across them.
+    // apron ribbons: from the quay line out to ~130 m, following each channel exactly, sampled at
+    // every resample point so the strip hugs concave bends instead of chording across them.
+    //
+    // A rib is a ray straight across the bank, and the apron owns only the unbroken DRY run of it
+    // that starts at the quay line. Testing the two ends and keeping or dropping the rib whole is
+    // not enough at Wolf Point: three channels meet there, so a 130 m ray leaves land, crosses the
+    // North Branch and comes down dry again on its far bank. So the ray is walked out and clipped
+    // at the water's edge. A rib whose quay-line end is already wet contributes nothing at all —
+    // not even unindexed vertices, which still put 27 m of street-level slab over the channel in
+    // the position buffer (and so in the mesh's bounds) even with no triangle referencing them.
     const openX = C.lake.openWaterX;
+    const APRON_IN = 9;                  // upper street sits behind the lower promenade (Riverwalk owns w..w+9)
+    const APRON_OUT = 130;
+    // No downtown channel is narrower than ~48 m across, so a crossing can never hide between
+    // samples this close together; four bisections then land the cut within ~1.5 m of the bank.
+    const APRON_SAMPLES = 6;
+    function apronReach(px, pz, nx, nz, d0, d1) {
+      const dry = (d) => {
+        const x = px + nx * d, z = pz + nz * d;
+        return x < openX - 6 && landClearance(x, z) > 0;
+      };
+      if (d1 <= d0 || !dry(d0)) return d0;
+      let lo = d0;
+      for (let k = 1; k <= APRON_SAMPLES; k++) {
+        const d = d0 + (d1 - d0) * (k / APRON_SAMPLES);
+        if (dry(d)) { lo = d; continue; }
+        let hi = d;
+        for (let b = 0; b < 4; b++) { const m = (lo + hi) / 2; if (dry(m)) lo = m; else hi = m; }
+        return lo;
+      }
+      return d1;
+    }
+
     const apronGeoms = [];
     for (const key in RR.River.paths) {
       if (key.startsWith('lake')) continue;
@@ -580,19 +608,24 @@
           const i0 = Math.max(0, i - 1), i1 = Math.min(p.n - 1, i + 1);
           let tx = p.x[i1] - p.x[i0], tz = p.z[i1] - p.z[i0];
           const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
-          const inner = p.w[i] + 9, outer = p.w[i] + 130;   // upper street sits behind the lower promenade
-          const ix = p.x[i] - tz * inner * s, iz = p.z[i] + tx * inner * s;
-          const ox = p.x[i] - tz * outer * s, oz = p.z[i] + tx * outer * s;
-          const ok = landClearance(ix, iz) > 0 && landClearance(ox, oz) > 0 && ix < openX - 6 && ox < openX - 6;
-          verts.push(ix, GROUND_Y, iz, ox, GROUND_Y, oz);
-          uvs.push(ix / GROUND_UV, iz / GROUND_UV, ox / GROUND_UV, oz / GROUND_UV);
-          if (vi >= 2 && ok && prevOK) {
-            if (s === 1) idx.push(vi - 2, vi - 1, vi, vi - 1, vi + 1, vi);
-            else idx.push(vi - 2, vi, vi - 1, vi - 1, vi, vi + 1);
+          const nx = -tz * s, nz = tx * s;
+          const inner = p.w[i] + APRON_IN;
+          const outer = apronReach(p.x[i], p.z[i], nx, nz, inner, p.w[i] + APRON_OUT);
+          const ok = outer > inner + 6;    // a sliver of bank is not worth a quad
+          if (ok) {
+            const ix = p.x[i] + nx * inner, iz = p.z[i] + nz * inner;
+            const ox = p.x[i] + nx * outer, oz = p.z[i] + nz * outer;
+            verts.push(ix, GROUND_Y, iz, ox, GROUND_Y, oz);
+            uvs.push(ix / GROUND_UV, iz / GROUND_UV, ox / GROUND_UV, oz / GROUND_UV);
+            if (vi >= 2 && prevOK) {
+              if (s === 1) idx.push(vi - 2, vi - 1, vi, vi - 1, vi + 1, vi);
+              else idx.push(vi - 2, vi, vi - 1, vi - 1, vi, vi + 1);
+            }
+            vi += 2;
           }
           prevOK = ok;
-          vi += 2;
         }
+        if (!idx.length) continue;
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
         g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvs), 2));

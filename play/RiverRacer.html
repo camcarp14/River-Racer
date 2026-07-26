@@ -152,21 +152,51 @@ window.RR = window.RR || {};
   };
 
   // ---- Water surface height (CPU mirror of the vertex shader — keep in sync with water.js) ----
-  // amp: wave amplitude scale (river ~1, lake ~3.2)
-  U.waterHeight = function (x, z, t, amp) {
-    return amp * (
-      0.055 * Math.sin(x * 0.11 + t * 1.35) +
-      0.045 * Math.sin(z * 0.13 - t * 1.02 + x * 0.04) +
-      0.032 * Math.sin((x + z) * 0.061 + t * 0.71) +
-      0.022 * Math.sin(x * 0.23 - z * 0.17 + t * 2.1)
-    );
+  // amp: wave amplitude scale (river ~1, lake ~3.3).
+  //
+  // Two seas live in this field. The CHOP (22-73 m crests) is boat-wake slop: it owns the river,
+  // and it is deliberately damped offshore, where on a 20 m lake grid it mostly aliases anyway.
+  // Under it, and ONLY offshore, runs a real Lake Michigan SWELL — two trains off the lake's two
+  // long fetches, north-northeast and east-northeast. Their periods are not chosen, they are the
+  // deep-water dispersion relation w = sqrt(g*k): 185 m gives 10.9 s, 118 m gives 8.7 s. That is
+  // the whole trick. Three and a half metres of sea feels heavy rather than buzzy because all the
+  // energy sits near 0.1 Hz and none of it in the 1 Hz band the body reads as a rattle.
+  U.swellFactor = (amp) => U.clamp((amp - 1) / 2.3, 0, 1);   // 0 in the river canyon, 1 on open lake
+
+  // The long field only — everything a hull is long enough to climb. waterHeight adds a ~27 m
+  // ripple on top; that is surface texture a hull straddles, and sampling IT for attitude is what
+  // fed a ~1.4 Hz tremor into the boat on the lake. Keep the two separate.
+  U.swellHeight = function (x, z, t, amp) {
+    const s = U.swellFactor(amp), c = amp * (1 - 0.45 * s);
+    return c * (
+        0.055 * Math.sin(x * 0.11 + t * 1.35) +
+        0.045 * Math.sin(z * 0.13 - t * 1.02 + x * 0.04) +
+        0.032 * Math.sin((x + z) * 0.061 + t * 0.71)
+      ) + s * (
+        0.95 * Math.sin(z * 0.031822 - x * 0.011852 - t * 0.57717) +
+        0.55 * Math.sin(z * 0.023320 - x * 0.047865 - t * 0.72272)
+      );
   };
-  U.waterNormalPitchRoll = function (x, z, t, amp, out) {
-    const e = 1.2;
-    const h = U.waterHeight(x, z, t, amp);
-    out.pitch = (U.waterHeight(x, z + e, t, amp) - h) / e;   // slope along +z
-    out.roll = (U.waterHeight(x + e, z, t, amp) - h) / e;    // slope along +x
-    out.h = h;
+  U.waterHeight = function (x, z, t, amp) {
+    const s = U.swellFactor(amp);
+    return U.swellHeight(x, z, t, amp) +
+      amp * (1 - 0.45 * s) * 0.022 * Math.sin(x * 0.23 - z * 0.17 + t * 2.1);
+  };
+  // peak |height| the field can reach at this amp — water.js normalises crest shading by it
+  U.waveCrestScale = function (amp) {
+    const s = U.swellFactor(amp);
+    return amp * (1 - 0.45 * s) * 0.154 + s * 1.50;
+  };
+  // Attitude of a hull `len` metres long floating here. HEIGHT still comes from the full field —
+  // that is what the vertex shader draws and the boat has to sit on it — but PITCH and ROLL come
+  // from centred differences across the hull's own footprint, over the swell alone. Sampling the
+  // full field 1.2 m apart measured the slope of the ripples instead, which on the lake (amp 3.3)
+  // fed a ~1.4 Hz tremor straight into the boat's attitude.
+  U.waterNormalPitchRoll = function (x, z, t, amp, out, len) {
+    const e = (len > 0 ? len : 9) * 0.5;
+    out.pitch = (U.swellHeight(x, z + e, t, amp) - U.swellHeight(x, z - e, t, amp)) / (2 * e); // slope along +z
+    out.roll = (U.swellHeight(x + e, z, t, amp) - U.swellHeight(x - e, z, t, amp)) / (2 * e);  // slope along +x
+    out.h = U.waterHeight(x, z, t, amp);
     return out;
   };
 
@@ -2389,12 +2419,33 @@ window.CHICAGO = {
   const I = { throttle: 0, brake: 0, steer: 0, boost: false, raw: {} };
   const keys = {};
 
+  // ---- the F chord ----------------------------------------------------------------------------
+  // Five taps of F in a row is the Architecture Tour's "hand me the wheel". A key REPEAT is not a
+  // tap (hold F down and nothing happens), and the window between taps is short enough that you
+  // have to mean it — but every tap reports its count, so the game can tell you how far along you
+  // are and the thing is findable instead of secret.
+  I.F_TAPS = 5;
+  I.F_WINDOW = 1.2;                  // seconds allowed between taps
+  I.fTaps = 0;
+  let fLastT = -99;
+
   window.addEventListener('keydown', (e) => {
+    const held = keys[e.code];
     keys[e.code] = true;
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
     // [ / ] cycle the cinematic shot rig. Guarded: camera.js may not have the rig yet.
     if ((e.code === 'BracketLeft' || e.code === 'BracketRight') && RR.Camera && RR.Camera.cycleShot) {
       RR.Camera.cycleShot(e.code === 'BracketLeft' ? -1 : 1);
+    }
+    if (e.code === 'KeyF' && !e.repeat && !held) {
+      const now = performance.now() / 1000;
+      I.fTaps = now - fLastT > I.F_WINDOW ? 1 : I.fTaps + 1;
+      fLastT = now;
+      if (I.onFTap) I.onFTap(I.fTaps, I.F_TAPS);
+      if (I.fTaps >= I.F_TAPS) {
+        I.fTaps = 0; fLastT = -99;
+        if (I.onFiveF) I.onFiveF();
+      }
     }
     if (I.onKey) I.onKey(e.code);
   });
@@ -2466,26 +2517,74 @@ window.CHICAGO = {
   let mode = 0;                 // 0 chase, 1 close, 2 hood/hull
   // kLong: stay glued to the transom. kLat: trail wide and show the outside of the turn.
   // A single stiffness is why the old camera sloshed sideways out from behind the boat.
+  // edge: how far inside the channel edge the lens has to stay. The hull cam is welded to a hull
+  // that is itself allowed to graze the quay, so it gets slack instead of a keep-out.
+  // lag: metres of spring lag the leash tolerates at full chat before it starts clamping.
   const MODES = [
-    { back: 16.5, up: 6.2, lookUp: 1.6, fov: 60, kLong: 9.0, kLat: 3.6, kUp: 7.5, roll: 0.16, lead: 1.00 },
-    { back: 9.5, up: 3.4, lookUp: 1.3, fov: 64, kLong: 12.0, kLat: 6.0, kUp: 10.0, roll: 0.22, lead: 0.80 },
-    { back: -0.6, up: 1.55, lookUp: 1.1, fov: 72, kLong: 24.0, kLat: 20.0, kUp: 22.0, roll: 0.55, lead: 0.45 },
+    { back: 16.5, up: 6.2, lookUp: 1.6, fov: 60, kLong: 9.0, kLat: 3.6, kUp: 7.5, roll: 0.16, lead: 1.00, edge: 2.4, lag: 9 },
+    { back: 9.5, up: 3.4, lookUp: 1.3, fov: 64, kLong: 12.0, kLat: 6.0, kUp: 10.0, roll: 0.22, lead: 0.80, edge: 2.0, lag: 6 },
+    { back: -0.6, up: 1.55, lookUp: 1.1, fov: 72, kLong: 24.0, kLat: 20.0, kUp: 22.0, roll: 0.55, lead: 0.45, edge: -2.5, lag: 0 },
   ];
   const pos = new THREE.Vector3(0, 30, 60);
   const look = new THREE.Vector3();
   const lpt = {};                            // scratch pathAt result — no per-frame alloc
   let trauma = 0;
+  let boom = 1, leash = 24, lostT = 0, recov = 0;
 
   C.cycle = function () { mode = (mode + 1) % MODES.length; };
   C.kick = function (amount) { trauma = Math.min(1, trauma + amount); };
   C.setMode = function (m) { mode = m; };
   C.duck = function () { return C._duck || 0; };          // audio reverb send reads this
 
+  // ---- channel containment ---------------------------------------------------------------
+  // The river runs in a trough: quay coping at +1.1, Riverwalk deck out to w+9, then a retaining
+  // wall up to street level at +6. Astern of a boat pinned on the outside of a bend is the middle
+  // of that Riverwalk, so an unconstrained boom parks the lens inside a wall and you drive blind.
+  const PROM = 9.0, STREET_Y = 6.1, COPING_Y = 1.45;
+  let camHint = {};                          // per-path pathNearest hints — O(1) tracking
+  const cq = { x: 0, z: 0, clear: 0, path: null, d: 0, tx: 0, tz: 0, qx: 0, qz: 0 };
+  const cpt = {};                            // scratch pathAt result for the channel fallback pose
+  function toWater(px, pz, edge) {
+    cq.x = px; cq.z = pz; cq.clear = 1e9; cq.path = null;
+    const R = RR.River;
+    if (!R || !R.waterQuery) return cq;
+    const q = R.waterQuery(px, pz, camHint);  // aliases river.js's shared scratch — read it now
+    if (!q) return cq;
+    cq.clear = q.clear;
+    if (q.q && q.path !== 'lake' && R.paths[q.path]) {
+      cq.path = R.paths[q.path]; cq.d = q.q.d; cq.tx = q.q.tx; cq.tz = q.q.tz; cq.qx = q.q.x; cq.qz = q.q.z;
+    }
+    const need = edge - q.clear;
+    if (need > 0) { cq.x = px + q.nx * need; cq.z = pz + q.nz * need; }
+    return cq;
+  }
+
+  // Does the sightline from lens to hull pass through the quay wall or the retaining wall behind
+  // the promenade? Two samples is enough — the failure is always a wall, never a hairline.
+  function sightBlocked(bx, by, bz) {
+    if (!RR.River || !RR.River.waterQuery) return false;
+    for (let i = 0; i < 2; i++) {
+      const t = 0.40 + i * 0.32;
+      const q = RR.River.waterQuery(pos.x + (bx - pos.x) * t, pos.z + (bz - pos.z) * t, camHint);
+      if (!q) continue;
+      const sy = pos.y + (by - pos.y) * t;
+      if (q.clear < -0.4 && sy < COPING_Y) return true;
+      if (q.clear < -PROM + 0.2 && sy < STREET_Y) return true;
+    }
+    return false;
+  }
+
   C.snapTo = function (boat) {
     const m = MODES[mode];
     const s = Math.sin(boat.heading), c = Math.cos(boat.heading);
-    pos.set(boat.pos.x - s * m.back, boat.pos.y + m.up, boat.pos.z - c * m.back);
+    camHint = {};                              // stale hints would search the wrong reach entirely
+    const w = toWater(boat.pos.x - s * m.back, boat.pos.z - c * m.back, m.edge);
+    pos.set(w.x, boat.pos.y + m.up, w.z);
+    const wh = U().waterHeight(pos.x, pos.z, RR.Engine.time(), 1) + 0.9;
+    if (pos.y < wh) pos.y = wh;
     C._duck = 0; C._roll = 0; C._fovB = 0;
+    boom = 1; lostT = 0; recov = 0;
+    leash = Math.hypot(pos.x - boat.pos.x, pos.z - boat.pos.z) + 3;
   };
 
   // three octaves of value noise reads as an impact; a single sine reads as a wobble
@@ -2494,16 +2593,62 @@ window.CHICAGO = {
     return nz1(t * 13 + seed) * 0.6 + nz1(t * 31 + seed * 3) * 0.28 + nz1(t * 71 + seed * 7) * 0.12;
   }
 
+  const BOOM = [1, 0.86, 0.72, 0.58, 0.46, 0.34, 0.24];
+
   C.follow = function (boat, dt) {
     const cam = RR.Engine.camera;
     const m = MODES[mode];
     const s = Math.sin(boat.heading), c = Math.cos(boat.heading);
     const spd = Math.hypot(boat.vel.x, boat.vel.z);
-    const back = m.back + spd * 0.10;                    // pull back with speed
-    const up = m.up + spd * 0.02;
+    const topS = (boat.spec && boat.spec.top) || 40;
+    const spdN = U().clamp(spd / topS, 0, 1);
+    const back = (m.back + spd * 0.10) * (1 - 0.55 * recov);   // pull back with speed, in on recovery
 
-    const tx = boat.pos.x - s * back;
-    const tz = boat.pos.z - c * back;
+    // Never demand the lens sit further inside the channel than the boat itself does — a boat
+    // grinding along the quay would otherwise reject every boom length and suck the camera in.
+    toWater(boat.pos.x, boat.pos.z, 0);
+    const boatClear = cq.clear;
+    const edge = U().clamp(Math.min(m.edge, boatClear - 0.4), -3, m.edge);
+    const chPath = cq.path, chD = cq.d;
+    const chSign = (cq.tx * s + cq.tz * c) >= 0 ? 1 : -1;      // which way along the reach is astern
+    // the hull's own lateral offset in the channel, so the fallback pose trails on the same side
+    const chLat = chPath ? (boat.pos.x - cq.qx) * -cq.tz + (boat.pos.z - cq.qz) * cq.tx : 0;
+
+    // ---- where the lens wants to be. Start astern of the transom; when THAT lands in the bank —
+    // a hull pinned on the outside of a bend, or spun to face the wall — slide the pose onto the
+    // channel itself, the same distance back along the reach. The river is the one place in this
+    // world that is guaranteed navigable, so a pose built from it cannot end up inside a wall.
+    let ox = -s * back, oz = -c * back;
+    let bf = 1, clean = back <= 2.5;
+    if (!clean) {
+      toWater(boat.pos.x + ox, boat.pos.z + oz, 0);
+      const astern = cq.clear;
+      const wch = U().clamp((edge - astern) / 6, 0, 1);
+      if (wch > 0 && chPath) {
+        U().pathAt(chPath, chD - chSign * back, cpt);
+        const lim = Math.max(0, cpt.w - Math.max(edge, 0.5));
+        const lat = U().clamp(chLat, -lim, lim);
+        ox = U().lerp(ox, cpt.x - cpt.tz * lat - boat.pos.x, wch);
+        oz = U().lerp(oz, cpt.z + cpt.tx * lat - boat.pos.z, wch);
+      } else if (astern >= edge) clean = true;               // the plain shot is fine, no search
+    }
+
+    // ---- boom collision: with the pose chosen, retract the arm until it clears. Close and low
+    // always beats buried in a quay wall.
+    if (!clean) {
+      let bestC = -1e9;
+      for (let i = 0; i < BOOM.length; i++) {
+        toWater(boat.pos.x + ox * BOOM[i], boat.pos.z + oz * BOOM[i], 0);
+        if (cq.clear >= edge) { bf = BOOM[i]; break; }
+        if (cq.clear > bestC) { bestC = cq.clear; bf = BOOM[i]; }   // else the least bad one
+      }
+    }
+    boom = U().damp(boom, bf, bf < boom ? 12 : 2.5, dt);       // retract fast, extend back slowly
+    // a short boom has to come down with it or the shot turns into a plan view of your own deck
+    const up = (m.up + spd * 0.02) * (0.42 + 0.58 * boom) * (1 - 0.42 * recov);
+
+    let tx = boat.pos.x + ox * boom;
+    let tz = boat.pos.z + oz * boom;
     let ty = boat.pos.y + up;
 
     // ---- duck under bridge decks, smoothly, and lower the look point so you see through the span
@@ -2520,23 +2665,44 @@ window.CHICAGO = {
       lookUpEff = m.lookUp - 0.5 * C._duck;
     }
 
+    // keep the pose the spring is chasing inside the channel too, or it drags the lens at the wall
+    const wt = toWater(tx, tz, edge);
+    tx = wt.x; tz = wt.z;
+
     // ---- split-axis spring: project the error into boat-local axes, damp each on its own rate
+    const kBoost = 1 + 2.4 * recov;                      // recovery stiffens both axes
     const ex = tx - pos.x, ez = tz - pos.z;
     const eLong = ex * s + ez * c;
     const eLat = ex * c - ez * s;
-    const kL = 1 - Math.exp(-m.kLong * dt);
-    const kT = 1 - Math.exp(-m.kLat * dt);
+    const kL = 1 - Math.exp(-m.kLong * kBoost * dt);
+    const kT = 1 - Math.exp(-m.kLat * kBoost * dt);
     pos.x += (eLong * kL) * s + (eLat * kT) * c;
     pos.z += (eLong * kL) * c - (eLat * kT) * s;
-    pos.y += (ty - pos.y) * (1 - Math.exp(-m.kUp * dt));
+    pos.y += (ty - pos.y) * (1 - Math.exp(-m.kUp * kBoost * dt));
 
-    // never sink the camera under the waves
+    // ---- hard constraints. The spring may lag; it may not detach, and it may not end up in a wall.
+    const cw = toWater(pos.x, pos.z, edge);
+    const pushed = Math.hypot(cw.x - pos.x, cw.z - pos.z);
+    const camClear = cw.clear;
+    pos.x = cw.x; pos.z = cw.z;
+
+    let leashT = Math.max(2.5, Math.abs(back) * boom) + 3 + m.lag * (0.45 + 0.55 * spdN);
+    if (pushed > 6) leashT = Math.min(leashT, 8);        // boat itself out of the channel: hug it
+    leash = U().damp(leash, leashT, leashT < leash ? 4.5 : 9, dt);
+    const dx = pos.x - boat.pos.x, dz = pos.z - boat.pos.z;
+    const dh = Math.hypot(dx, dz);
+    if (dh > leash) { const k = leash / dh; pos.x = boat.pos.x + dx * k; pos.z = boat.pos.z + dz * k; }
+    // squeezed onto the hull by a clamp: lift rather than shove, since lifting cannot find a wall
+    if (mode !== 2 && dh < 4) pos.y = Math.max(pos.y, boat.pos.y + 3.2);
+
+    // never sink the camera under the waves, never let it float off above the boat either
     const wh = U().waterHeight(pos.x, pos.z, RR.Engine.time(), 1) + 0.9;
     if (pos.y < wh) pos.y = wh;
+    const yMax = boat.pos.y + Math.max(up, 2) + 9;
+    if (pos.y > yMax) pos.y = yMax;
 
     // ---- look AHEAD, at the route. Aiming at boat + forward*10 means staring at a wall on
     // every bend of a river canyon; this is one pathAt per frame and it is free.
-    const spdN = U().clamp(spd / 40, 0, 1);
     let lx = boat.pos.x + s * 10, lz = boat.pos.z + c * 10;
     const S = RR.Race && RR.Race.state && RR.Race.state();
     if (S && S.route && boat.routeD != null) {
@@ -2544,15 +2710,46 @@ window.CHICAGO = {
       const ahead = boat.routeD + 46 + spd * 1.6;
       const d = rt.loop ? ((ahead % rt.len) + rt.len) % rt.len : Math.min(rt.len - 1, ahead);
       U().pathAt(rt, d, lpt);
-      const w = m.lead * (0.28 + 0.34 * spdN);
+      const w = m.lead * (1 - recov) * (0.28 + 0.34 * spdN);
       lx = U().lerp(lx, lpt.x, w);
       lz = U().lerp(lz, lpt.z, w);
     }
     look.set(lx, boat.pos.y + lookUpEff, lz);
 
+    // ---- the hull may never leave the frame: cap the angle off the lens axis at a fraction of
+    // the HALF-FOV, so under 1.0 is on screen whatever the aspect. Measured over both courses the
+    // hull rides at 0.3-0.5 and peaks at 0.94 out on the lake chop, so 0.95 is a pure backstop for
+    // a look-ahead gone wrong — the positional constraints above do the real work.
+    const gx = boat.pos.x - pos.x, gy = (boat.pos.y + 0.6) - pos.y, gz = boat.pos.z - pos.z;
+    const gl = Math.hypot(gx, gy, gz);
+    if (gl > 4.5) {                                      // meaningless for the hull cam
+      const ax = look.x - pos.x, ay = look.y - pos.y, az = look.z - pos.z;
+      const al = Math.max(1e-4, Math.hypot(ax, ay, az));
+      const ang = Math.acos(U().clamp((gx * ax + gy * ay + gz * az) / (gl * al), -1, 1));
+      const maxA = cam.fov * (Math.PI / 360) * 0.95;
+      if (ang > maxA) {
+        const k = 1 - maxA / ang;
+        const nx = (ax / al) * (1 - k) + (gx / gl) * k;
+        const ny = (ay / al) * (1 - k) + (gy / gl) * k;
+        const nz = (az / al) * (1 - k) + (gz / gl) * k;
+        const nl = Math.max(1e-4, Math.hypot(nx, ny, nz));
+        look.set(pos.x + nx / nl * al, pos.y + ny / nl * al, pos.z + nz / nl * al);
+      }
+    }
+
     cam.position.copy(pos);
     cam.up.set(0, 1, 0);
     cam.lookAt(look);
+
+    // ---- recovery: a lens that is inside the world, or that cannot see the hull through it,
+    // eases back to a close, low chase pose. Ease — a hard cut here is worse than the fault.
+    // Asymmetric: 0.3 s of hysteresis to arm, ~1.5 s to release, so it cannot strobe.
+    // mid-channel with water to spare on both ends there is nothing in between to test against
+    const tight = Math.min(boatClear, camClear) < 12;
+    const bad = pushed > 6 || (tight && gl > 4.5 && sightBlocked(boat.pos.x, boat.pos.y + 0.7, boat.pos.z));
+    lostT = bad ? Math.min(1.4, lostT + dt) : Math.max(0, lostT - dt * 2.2);
+    const recT = lostT > 0.3 ? 1 : 0;
+    recov = U().damp(recov, recT, recT > recov ? 4.0 : 1.5, dt);
 
     // ---- bank INTO the corner like a chase helicopter. Cap 0.115 rad = 6.6 deg; past ~8 it
     // reads as nausea, not speed.
@@ -2562,8 +2759,7 @@ window.CHICAGO = {
 
     // ---- FOV: 60 idle -> 67 flat out -> 76 flat out on boost. The fast attack / slow release
     // asymmetry IS the punch.
-    const topS = (boat.spec && boat.spec.top) || 40;
-    const fovSpd = U().clamp(spd / topS, 0, 1) * 7;
+    const fovSpd = spdN * 7;
     const bTgt = (boat.boostHeat || 0) * 9;
     C._fovB = U().damp(C._fovB || 0, bTgt, bTgt > (C._fovB || 0) ? 12 : 2.5, dt);
     const fovT = m.fov + fovSpd + C._fovB + (boat.airborne ? 3 : 0);
@@ -2622,8 +2818,8 @@ window.CHICAGO = {
     cam.up.set(0, 1, 0);
 
     if (shot === 1) {                                    // CHASE LOW — the water skims the lens
-      const tp = { x: boat.pos.x - s * 7.5, y: boat.pos.y + 0.85, z: boat.pos.z - c * 7.5 };
-      pos.x = U().damp(pos.x, tp.x, 8, w); pos.y = U().damp(pos.y, tp.y, 8, w); pos.z = U().damp(pos.z, tp.z, 8, w);
+      const tp = toWater(boat.pos.x - s * 7.5, boat.pos.z - c * 7.5, 1.2);
+      pos.x = U().damp(pos.x, tp.x, 8, w); pos.y = U().damp(pos.y, boat.pos.y + 0.85, 8, w); pos.z = U().damp(pos.z, tp.z, 8, w);
       const wh = U().waterHeight(pos.x, pos.z, t, 1) + 0.35;
       if (pos.y < wh) pos.y = wh;
       cam.position.copy(pos);
@@ -2658,7 +2854,11 @@ window.CHICAGO = {
     } else {                                             // ORBIT
       orbitA += w * 0.5;
       const r = 15 + Math.sin(t * 0.2) * 4;
-      cam.position.set(boat.pos.x + Math.sin(orbitA) * r, boat.pos.y + 5.5, boat.pos.z + Math.cos(orbitA) * r);
+      // the orbit is wider than the Main Stem is: squash it against the banks rather than
+      // swinging the lens through a quay wall and shooting a frame of solid concrete
+      const o = toWater(boat.pos.x + Math.sin(orbitA) * r, boat.pos.z + Math.cos(orbitA) * r, 1.5);
+      const oy = Math.max(boat.pos.y + 5.5, U().waterHeight(o.x, o.z, t, 1) + 1.2);
+      cam.position.set(o.x, oy, o.z);
       cam.lookAt(boat.pos.x, boat.pos.y + 1, boat.pos.z);
       setFov(cam, 46);
     }
@@ -2785,7 +2985,10 @@ window.CHICAGO = {
     return null;
   };
 
-  // wave amplitude by locale: calm in the river canyon, rolling out on the lake
+  // Wave amplitude by locale: calm in the river canyon, rolling out on the lake. This is also the
+  // SWELL ramp — RR.U.swellFactor reads (amp-1)/2.3 off this number to decide how much of the long
+  // Lake Michigan swell exists here, so the 420 m past the lock is the boat clearing the harbour
+  // breakwater and meeting open-lake fetch. Move these numbers and you move the sea state.
   R.waveAmp = function (x, z) {
     if (!R.inLake(x, z)) return 1;
     const t = U().smoothstep(R.lakeWestX, R.lakeWestX + 420, x);
@@ -3067,18 +3270,33 @@ window.CHICAGO = {
         varying float vAmp;
         varying float vH;
         varying vec4 vReflectCoord;
+        // THE FOUR FUNCTIONS BELOW ARE A LITERAL MIRROR OF RR.U.swellFactor / swellHeight /
+        // waterHeight / waveCrestScale. Change one, change both, or hulls float or sink.
+        float swellF(float amp) { return clamp((amp - 1.0) / 2.3, 0.0, 1.0); }
+        float sh(vec2 p, float t, float amp) {
+          float s = swellF(amp), c = amp * (1.0 - 0.45 * s);
+          return c * (
+              0.055 * sin(p.x * 0.11 + t * 1.35) +
+              0.045 * sin(p.y * 0.13 - t * 1.02 + p.x * 0.04) +
+              0.032 * sin((p.x + p.y) * 0.061 + t * 0.71)
+            ) + s * (
+              0.95 * sin(p.y * 0.031822 - p.x * 0.011852 - t * 0.57717) +
+              0.55 * sin(p.y * 0.023320 - p.x * 0.047865 - t * 0.72272)
+            );
+        }
         float wh(vec2 p, float t, float amp) {
-          return amp * (
-            0.055 * sin(p.x * 0.11 + t * 1.35) +
-            0.045 * sin(p.y * 0.13 - t * 1.02 + p.x * 0.04) +
-            0.032 * sin((p.x + p.y) * 0.061 + t * 0.71) +
-            0.022 * sin(p.x * 0.23 - p.y * 0.17 + t * 2.1));
+          float s = swellF(amp);
+          return sh(p, t, amp) + amp * (1.0 - 0.45 * s) * 0.022 * sin(p.x * 0.23 - p.y * 0.17 + t * 2.1);
+        }
+        float crestScale(float amp) {
+          float s = swellF(amp);
+          return amp * (1.0 - 0.45 * s) * 0.154 + s * 1.50;
         }
         void main() {
           vec4 wp = modelMatrix * vec4(position, 1.0);
           float hh = wh(wp.xz, uTime, aAmp);
           wp.y += hh;
-          vH = hh;
+          vH = hh / max(0.05, crestScale(aAmp));   // -1..1 crest factor, same meaning river or lake
           vWorld = wp.xyz;
           vShore = aShore;
           vLake = aLake;
@@ -3120,8 +3338,18 @@ window.CHICAGO = {
           float n4 = 0.5;
           if (uFineDetail > 0.5) n4 = texture2D(uNoise, vWorld.xz * 0.62 + vec2(uTime * 0.13, -uTime * 0.11)).r;
           float bump = (n1 + n2 - 1.0) + ((n3 - 0.5) * 0.40 + (n4 - 0.5) * 0.26) * nearF;
-          float sx = cos(vWorld.x * 0.11 + uTime * 1.35) * 0.0061 * vAmp + bump * 0.10;
-          float sz = cos(vWorld.z * 0.13 - uTime * 1.02) * 0.0059 * vAmp + (n2 - 0.5) * 0.12 + (n3 - 0.5) * 0.05;
+          float sAmp = clamp((vAmp - 1.0) / 2.3, 0.0, 1.0);
+          float cAmp = vAmp * (1.0 - 0.45 * sAmp);
+          // Analytic slope of the swell trains, with a 2.6x SHADING gain (geometry is untouched —
+          // the hulls still sit on wh()). A real 3.5 m sea on a 185 m wavelength is a four-degree
+          // face; four degrees of a mirror lake is invisible, and the ripple noise below would
+          // otherwise out-shout it. This is what actually draws the crest.
+          float g1 = cos(vWorld.z * 0.031822 - vWorld.x * 0.011852 - uTime * 0.57717) * sAmp * 2.6;
+          float g2 = cos(vWorld.z * 0.023320 - vWorld.x * 0.047865 - uTime * 0.72272) * sAmp * 2.6;
+          float sx = cos(vWorld.x * 0.11 + uTime * 1.35) * 0.0061 * cAmp
+                     - 0.011259 * g1 - 0.026326 * g2 + bump * 0.10;
+          float sz = cos(vWorld.z * 0.13 - uTime * 1.02) * 0.0059 * cAmp
+                     + 0.030231 * g1 + 0.012826 * g2 + (n2 - 0.5) * 0.12 + (n3 - 0.5) * 0.05;
           vec3 N = normalize(vec3(-sx * 2.4, 1.0, -sz * 2.4));
 
           vec3 V = normalize(uCamPos - vWorld);
@@ -3133,8 +3361,9 @@ window.CHICAGO = {
           vec3 base = mix(deep, shallow, clamp(0.35 + bump * 0.5, 0.0, 1.0));
           // shallower, lighter, greener water near the banks
           base = mix(base, base * 1.12 + vec3(0.03, 0.06, 0.04), smoothstep(0.55, 1.0, vShore) * 0.5 * (1.0 - vLake));
-          // brighten swell crests a touch, darken body at glancing angles (glossier read)
-          base *= (1.0 + max(vH, 0.0) * 0.45) * (1.0 - grazing * 0.22);
+          // light the crests and sink the troughs — signed, because on open water the dark trough
+          // is half of what tells you a swell is passing. Twice the swing out on the lake.
+          base *= (1.0 + vH * (0.10 + 0.14 * vLake)) * (1.0 - grazing * 0.22);
           // The river meets vertical sheet pile and limestone, not a beach. The contact shadow
           // in the last half-metre is what makes the water look like it is IN a channel.
           float wallShade = smoothstep(0.84, 1.0, vShore);
@@ -3172,6 +3401,12 @@ window.CHICAGO = {
 
           // foam grain: break flat white up with the mid noise octave
           float foamGrain = 0.6 + 0.8 * n2;
+
+          // Whitecaps. Past about force 4 the crests of a Lake Michigan swell curl and break, and
+          // a scatter of white is the single strongest cue that a sea is RUNNING rather than
+          // sitting. Gated on the swell ramp, so the sheltered harbour never grows any.
+          float cap = smoothstep(0.58, 0.96, vH) * sAmp * smoothstep(0.54, 0.82, n2);
+          col = mix(col, uFoamTint, clamp(cap * foamGrain, 0.0, 1.0) * 0.50);
 
           // bank foam: a thin scum line against the wall, not a surf break
           float foamBand = smoothstep(0.905, 1.0, vShore + bump * 0.10 + 0.035 * sin(uTime * 1.9 + vWorld.x * 0.55 + vWorld.z * 0.42));
@@ -3419,11 +3654,18 @@ window.CHICAGO = {
   // and is LIGHTER than its frame; on masonry the punched opening is a hole and is DARKER than the
   // wall. Getting that backwards is what makes a city read as perforated black cardboard.
   // One tile = one bay (3.0 m) × one floor (3.6 m) — the constants baked into towerGeom.
+  //
+  // nightMul has a HARD CEILING of ~0.86. A lit pane in nightTile tops out at k = 0.86 of a
+  // near-white hex, the night preset multiplies by 1.35, and the product is what lands in linear
+  // light: anything over 1.0 clips to white BEFORE tone mapping, then trips the 0.50 bloom
+  // threshold, and the building stops being a building and becomes a lantern. MIES (black frame,
+  // cool glass) and RETAIL (an unbroken shopfront band at eye level the whole length of the
+  // Riverwalk) were the two that blew out, so they sit furthest below the ceiling.
   const FAM = [
     { key: 'CURTAIN', seed: 1101, frame: '#7d868c', spandrel: '#98a1a7', glassHi: '#dce9f0', glassLo: '#a9bfd0',
       lites: 2, margin: 4, mullion: 5, glassTop: 10, glassBot: 150, sill: '#b6bec4', revealA: 0.10, grain: 0,
       tints: [0xb9c0c6, 0xa6b0b8, 0xc8cdd0, 0x94a0a8],
-      nightDensity: 0.42, warm: '#ffcf85', cool: '#cfe0ff', warmFrac: 0.70, nightMul: 1.00 },
+      nightDensity: 0.42, warm: '#ffcf85', cool: '#cfe0ff', warmFrac: 0.70, nightMul: 0.85 },
 
     // ART's spec hexes were tuned before the night preset landed at exposure 1.45 + bloom 1.45;
     // at full strength a moonlit east face becomes one white slab. Halved, the highlight still
@@ -3432,7 +3674,7 @@ window.CHICAGO = {
       lites: 2, margin: 3, mullion: 8, glassTop: 8, glassBot: 168, sill: '#24282c', revealA: 0.06, grain: 0,
       centreRib: '#2a2e33',                                  // the applied I-beam mullion — the whole building
       tints: [0x2a2e33, 0x232629, 0x33383d], shininess: 70, specular: 0x252a30,
-      nightDensity: 0.30, warm: '#ffcf85', cool: '#dfe8ff', warmFrac: 0.45, nightMul: 1.15 },
+      nightDensity: 0.30, warm: '#ffcf85', cool: '#dfe8ff', warmFrac: 0.45, nightMul: 0.68 },
 
     { key: 'LIMESTONE', seed: 1303, frame: '#d9d2c1', spandrel: '#cdc5b3', glassHi: '#8fa3b0', glassLo: '#5c7183',
       lites: 1, margin: 62, mullion: 6, glassTop: 26, glassBot: 196, sill: '#efe9db', revealA: 0.30, grain: 0.06,
@@ -3480,12 +3722,12 @@ window.CHICAGO = {
     { key: 'GREENGLASS', seed: 1707, frame: '#4b5854', spandrel: '#38443f', glassHi: '#9ab5ab', glassLo: '#55716a',
       lites: 2, margin: 3, mullion: 6, glassTop: 6, glassBot: 176, sill: '#53625d', revealA: 0.05, grain: 0,
       tints: [0x74928a, 0x64837b, 0x88a49b, 0x577671], shininess: 66, specular: 0x2b3b37,
-      nightDensity: 0.34, warm: '#ffcf85', cool: '#cfe6df', warmFrac: 0.40, nightMul: 1.05 },
+      nightDensity: 0.34, warm: '#ffcf85', cool: '#cfe6df', warmFrac: 0.40, nightMul: 0.80 },
 
     { key: 'BLUEGLASS', seed: 1808, frame: '#4a6070', spandrel: '#35505f', glassHi: '#a7cfe2', glassLo: '#4a7f9e',
       lites: 2, margin: 3, mullion: 5, glassTop: 6, glassBot: 182, sill: '#56728a', revealA: 0.05, grain: 0,
       tints: [0x7fa8c0, 0x6d99b4, 0x93bcd2, 0x5d88a4], shininess: 72, specular: 0x2e4049,
-      nightDensity: 0.40, warm: '#ffcf85', cool: '#d6e9ff', warmFrac: 0.35, nightMul: 1.20 },
+      nightDensity: 0.40, warm: '#ffcf85', cool: '#d6e9ff', warmFrac: 0.35, nightMul: 0.72 },
 
     { key: 'CONCRETE', seed: 1909, frame: '#b7b1a4', spandrel: '#a8a294', glassHi: '#7d8b93', glassLo: '#4e5c66',
       lites: 1, margin: 40, mullion: 7, glassTop: 22, glassBot: 184, sill: '#c6c0b2', revealA: 0.24, grain: 0.07,
@@ -3501,7 +3743,7 @@ window.CHICAGO = {
       awning: { y: 4, h: 22, palette: ['#a8503f', '#c0883e', '#3d6a99', '#3f7a54', '#2b5c50'] },
       fascia: { y: 226, h: 10, col: '#1a1d21' },
       tints: [0xc0bdb6, 0xadaaa3, 0xb6b3ac],   // RETAIL's famNorm is ~1.9: above ~0xc0 they all clip to one grey
-      nightDensity: 0.85, warm: '#ffdca8', cool: '#cfe0ff', warmFrac: 0.90, nightMul: 1.60 },
+      nightDensity: 0.85, warm: '#ffdca8', cool: '#cfe0ff', warmFrac: 0.90, nightMul: 0.62 },
   ];
   for (const f of FAM) Object.freeze(f);
   Object.freeze(FAM);
@@ -3866,11 +4108,39 @@ window.CHICAGO = {
     groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping;
     const groundMat = new THREE.MeshLambertMaterial({ map: groundTex, color: 0x9aa0a6 });
 
-    // apron ribbons: from just behind the seawall out to ~130m, following each channel exactly.
-    // Every rib is keep-out gated (inner + outer corner must be dry land) so the strip never
-    // sweeps over the neighbouring branches' water at the Wolf Point confluence, and it is
-    // sampled at every resample point so it hugs concave bends instead of chording across them.
+    // apron ribbons: from the quay line out to ~130 m, following each channel exactly, sampled at
+    // every resample point so the strip hugs concave bends instead of chording across them.
+    //
+    // A rib is a ray straight across the bank, and the apron owns only the unbroken DRY run of it
+    // that starts at the quay line. Testing the two ends and keeping or dropping the rib whole is
+    // not enough at Wolf Point: three channels meet there, so a 130 m ray leaves land, crosses the
+    // North Branch and comes down dry again on its far bank. So the ray is walked out and clipped
+    // at the water's edge. A rib whose quay-line end is already wet contributes nothing at all —
+    // not even unindexed vertices, which still put 27 m of street-level slab over the channel in
+    // the position buffer (and so in the mesh's bounds) even with no triangle referencing them.
     const openX = C.lake.openWaterX;
+    const APRON_IN = 9;                  // upper street sits behind the lower promenade (Riverwalk owns w..w+9)
+    const APRON_OUT = 130;
+    // No downtown channel is narrower than ~48 m across, so a crossing can never hide between
+    // samples this close together; four bisections then land the cut within ~1.5 m of the bank.
+    const APRON_SAMPLES = 6;
+    function apronReach(px, pz, nx, nz, d0, d1) {
+      const dry = (d) => {
+        const x = px + nx * d, z = pz + nz * d;
+        return x < openX - 6 && landClearance(x, z) > 0;
+      };
+      if (d1 <= d0 || !dry(d0)) return d0;
+      let lo = d0;
+      for (let k = 1; k <= APRON_SAMPLES; k++) {
+        const d = d0 + (d1 - d0) * (k / APRON_SAMPLES);
+        if (dry(d)) { lo = d; continue; }
+        let hi = d;
+        for (let b = 0; b < 4; b++) { const m = (lo + hi) / 2; if (dry(m)) lo = m; else hi = m; }
+        return lo;
+      }
+      return d1;
+    }
+
     const apronGeoms = [];
     for (const key in RR.River.paths) {
       if (key.startsWith('lake')) continue;
@@ -3882,19 +4152,24 @@ window.CHICAGO = {
           const i0 = Math.max(0, i - 1), i1 = Math.min(p.n - 1, i + 1);
           let tx = p.x[i1] - p.x[i0], tz = p.z[i1] - p.z[i0];
           const tl = Math.max(1e-6, Math.hypot(tx, tz)); tx /= tl; tz /= tl;
-          const inner = p.w[i] + 9, outer = p.w[i] + 130;   // upper street sits behind the lower promenade
-          const ix = p.x[i] - tz * inner * s, iz = p.z[i] + tx * inner * s;
-          const ox = p.x[i] - tz * outer * s, oz = p.z[i] + tx * outer * s;
-          const ok = landClearance(ix, iz) > 0 && landClearance(ox, oz) > 0 && ix < openX - 6 && ox < openX - 6;
-          verts.push(ix, GROUND_Y, iz, ox, GROUND_Y, oz);
-          uvs.push(ix / GROUND_UV, iz / GROUND_UV, ox / GROUND_UV, oz / GROUND_UV);
-          if (vi >= 2 && ok && prevOK) {
-            if (s === 1) idx.push(vi - 2, vi - 1, vi, vi - 1, vi + 1, vi);
-            else idx.push(vi - 2, vi, vi - 1, vi - 1, vi, vi + 1);
+          const nx = -tz * s, nz = tx * s;
+          const inner = p.w[i] + APRON_IN;
+          const outer = apronReach(p.x[i], p.z[i], nx, nz, inner, p.w[i] + APRON_OUT);
+          const ok = outer > inner + 6;    // a sliver of bank is not worth a quad
+          if (ok) {
+            const ix = p.x[i] + nx * inner, iz = p.z[i] + nz * inner;
+            const ox = p.x[i] + nx * outer, oz = p.z[i] + nz * outer;
+            verts.push(ix, GROUND_Y, iz, ox, GROUND_Y, oz);
+            uvs.push(ix / GROUND_UV, iz / GROUND_UV, ox / GROUND_UV, oz / GROUND_UV);
+            if (vi >= 2 && prevOK) {
+              if (s === 1) idx.push(vi - 2, vi - 1, vi, vi - 1, vi + 1, vi);
+              else idx.push(vi - 2, vi, vi - 1, vi - 1, vi, vi + 1);
+            }
+            vi += 2;
           }
           prevOK = ok;
-          vi += 2;
         }
+        if (!idx.length) continue;
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
         g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvs), 2));
@@ -4418,6 +4693,32 @@ window.CHICAGO = {
     return false;
   }
 
+  // A fixed offset from a centreline curls back INTO its own channel wherever the river bends
+  // hard — Wolf Point and the Michigan Ave reach both do — and overOther cannot see it because
+  // it skips the bank's own path. waterQuery is the authority: clear > 0 means the point is
+  // literally inside navigable water. `lim` is the clearance this spot must beat.
+  function overWater(x, z, lim) {
+    const q = RR.River.waterQuery(x, z);
+    return !!q && q.clear > (lim === undefined ? 0 : lim);
+  }
+
+  // A room's anchor is one offset off one path sample, so on a bend it lands in the river.
+  // Slide along the reach — invisible at this scale — until the footprint is really on the bank.
+  function roomAnchor(p, dMid, s, off, need, openX) {
+    for (let k = 0; k <= 10; k++) {
+      for (const sg of (k ? [-1, 1] : [1])) {
+        const d = dMid + sg * k * 6;
+        if (d < 8 || d > p.len - 8) continue;
+        const a = U().pathAt(p, d, {});
+        const x = a.x + (-a.tz) * (a.w + off) * s, z = a.z + a.tx * (a.w + off) * s;
+        if (openX != null && x > openX - 12) continue;
+        if (overWater(x, z, -need) || overOther(x, z, p.name, need)) continue;
+        return { d, x, z, ang: Math.atan2(a.tx, a.tz), a };
+      }
+    }
+    return null;
+  }
+
   // one quad (a,b,c,d in order) into an array, winding for an upward/outward face
   function quad(arr, ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, hex, jit) {
     const g = new THREE.BufferGeometry();
@@ -4465,6 +4766,19 @@ window.CHICAGO = {
         const midEx = (eAx + eBx) / 2, midEz = (eAz + eBz) / 2;
         if (midOx > openX - 6 || midEx > openX - 6) continue;
         if (overOther(midOx, midOz, key, 2) || overOther(midEx, midEz, key, 2)) continue;
+        // …and against THIS channel too, at both ends, not just the midpoint. A segment tested
+        // only in the middle is how thirteen metres of deck, wall and railing came to stand out
+        // in the South Branch below Wolf Point. The quay lip legitimately sits 0.3 m past the
+        // water line, so the edge is allowed that much and no more.
+        let over = false;
+        for (const q of [[oAx, oAz], [oBx, oBz], [midOx, midOz],
+                         [(eAx + oAx) / 2, (eAz + oAz) / 2], [(eBx + oBx) / 2, (eBz + oBz) / 2]]) {
+          if (overWater(q[0], q[1], -1)) { over = true; break; }
+        }
+        if (!over) for (const q of [[eAx, eAz], [eBx, eBz], [midEx, midEz]]) {
+          if (overWater(q[0], q[1], 0.6)) { over = true; break; }
+        }
+        if (over) continue;
         const run = Math.hypot(eBx - eAx, eBz - eAz);
 
         // lower promenade deck (alternating wood / concrete bands)
@@ -4516,6 +4830,7 @@ window.CHICAGO = {
   // fine, airy and yellow-green, not the dark municipal maple.
   const HONEY = [0x7d9a48, 0x6a8a3e], SERVICE = [0x557a3c, 0x486b33];
   function treeAt(x, y, z, r, pal) {
+    if (overWater(x, z, -1.5)) return;
     const trunk = new THREE.CylinderGeometry(0.22, 0.34, 3.6, 5);
     trunk.translate(x, y + 1.8, z); tint(trunk, 0x5a4632, 0.10); flat.push(trunk);
     const lower = new THREE.SphereGeometry(r, 7, 6);
@@ -4530,7 +4845,10 @@ window.CHICAGO = {
     }
   }
 
+  // the chairs reach 1.2 m out from the pole, so the whole set needs that much dry bank —
+  // a table checked only at its centre is what put four chairs out on the open river
   function umbrellaTable(x, z, col) {
+    if (overWater(x, z, -1.7)) return;
     cylAt(flat, 0.09, 2.4, x, PY + 1.2, z, 0x6a6f74, 6);          // pole
     const top = new THREE.ConeGeometry(1.6, 0.7, 8);
     top.translate(x, PY + 2.5, z); tint(top, col, 0); bright.push(top);
@@ -4542,6 +4860,7 @@ window.CHICAGO = {
     }
   }
   function pavilion(cx, cz, ang) {
+    if (overWater(cx, cz, -4.6)) return;                           // 7.4 × 5.2 m canopy
     const c = Math.cos(ang), s = Math.sin(ang);
     for (const [ox, oz] of [[-3, -2.2], [3, -2.2], [-3, 2.2], [3, 2.2]]) {
       const px = cx + c * ox - s * oz, pz = cz + s * ox + c * oz;
@@ -4796,24 +5115,29 @@ window.CHICAGO = {
       const kind = roomKind(a.x);
       if (!kind) continue;
       const s = 1;                                   // south bank only — the north bank is private
-      const off = a.w + 4.6;
-      const cx = a.x + (-a.tz) * off * s, cz = a.z + a.tx * off * s;
-      if (cx > openX - 12 || overOther(cx, cz, 'main', 3)) continue;
-      const ang = Math.atan2(a.tx, a.tz);
+      const A = roomAnchor(main, dMid, s, 4.6, 3, openX);
+      if (!A) continue;
+      const cx = A.x, cz = A.z, ang = A.ang;
       if (kind === 'riverbank') riverbank(main, dMid, s);
       else if (kind === 'jetty') jetty(main, dMid, s);
       else if (kind === 'waterplaza') waterPlaza(main, dMid, s);
       else if (kind === 'theater') riverTheater(main, a.w, dMid, s);
-      else if (kind === 'cove') { kayakDock(cx, cz, ang); hullRack(cx + (-a.tz) * 4.2 * s, cz + a.tx * 4.2 * s, ang); }
+      else if (kind === 'cove') { kayakDock(cx, cz, ang); hullRack(cx + (-A.a.tz) * 4.2 * s, cz + A.a.tx * 4.2 * s, ang); }
       else if (kind === 'marina') marinaPlaza(main, dMid, s);
       else if (kind === 'veterans') veterans(main, dMid, s);
-      else if (kind === 'terrace') { pavilion(cx, cz, ang); umbrellaPlaza(cx - a.tx * 16, cz - a.tz * 16, ang); }
+      else if (kind === 'terrace') {
+        pavilion(cx, cz, ang);
+        // stepping 16 m along the tangent leaves the bank on a bend; take the next anchor off
+        // the path instead, or the café sits on the water rather than beside it
+        const B = roomAnchor(main, A.d - 16, s, 4.6, 3, openX);
+        if (B) umbrellaPlaza(B.x, B.z, B.ang);
+      }
       else if (kind === 'lawn') lawnRoom(main, dMid, s);
       const t = ROOM_TAGS[kind];
       if (t) RW.tags.push({ name: t[0], sub: t[1], x: cx, z: cz, r2: 70 * 70 });
       // the Chicago Architecture Center cruise dock sits at the SE Michigan Ave bridgehead
       if ((kind === 'terrace' || kind === 'cove') && boatCount < 5) {
-        const bx = a.x + (-a.tz) * (a.w - 3) * s, bz = a.z + a.tx * (a.w - 3) * s;
+        const bx = A.a.x + (-A.a.tz) * (A.a.w - 3) * s, bz = A.a.z + A.a.tx * (A.a.w - 3) * s;
         if (!overOther(bx, bz, 'main', 0)) { tourBoat(bx, bz, ang, boatCount % 2 === 1); boatCount++; }
       }
     }
@@ -6857,7 +7181,26 @@ window.CHICAGO = {
 
     // ---------- RIVERWALK MURAL: a painted city-flag mural on the south quay wall ----------
     {
-      const q = U().pathAt(main, main.len * 0.31, {});
+      // 24 m of dead-flat plane cuts the corner on a bending bank: at the original anchor the
+      // downstream end stood 3.4 m out over the Main Stem. Slide along the reach until the
+      // centre and BOTH ends are on dry ground.
+      const MW = 24;
+      let q = null;
+      for (let k = 0; k <= 16 && !q; k++) {
+        for (const sg of (k ? [-1, 1] : [1])) {
+          const d = main.len * 0.31 + sg * k * 9;
+          if (d < 24 || d > main.len - 24) continue;
+          const c = U().pathAt(main, d, {});
+          const o = c.w + 8.7;
+          let ok = true;
+          for (const e of [-MW / 2, 0, MW / 2]) {
+            const w = RR.River.waterQuery(c.x + c.tz * o + c.tx * e, c.z - c.tx * o + c.tz * e);
+            if (!w || w.clear > -1.5) { ok = false; break; }
+          }
+          if (ok) { q = c; break; }
+        }
+      }
+      if (q) {
       const off = q.w + 8.7;
       const mx = q.x + q.tz * off, mz = q.z - q.tx * off;            // south bank retaining wall
       const muralTex = U().canvasTexture(512, 96, (c, w, h) => {
@@ -6876,14 +7219,17 @@ window.CHICAGO = {
         c.fillStyle = '#0b1e2d'; c.font = 'bold 26px Arial, sans-serif';
         c.textAlign = 'center'; c.fillText('SWEET HOME CHICAGO', w / 2, h - 6);
       });
-      const mural = new THREE.Mesh(new THREE.PlaneGeometry(24, 3.6),
+      const mural = new THREE.Mesh(new THREE.PlaneGeometry(MW, 3.6),
         new THREE.MeshLambertMaterial({ map: muralTex }));
       mural.position.set(mx, 3.4, mz);
-      mural.rotation.y = Math.atan2(-q.tz, q.tx) + Math.PI / 2;      // face the water
+      // +π/2 turned the mural broadside to the bank: 24 m of plane running ACROSS the channel,
+      // twelve of them out over open water. The wall's normal already faces the river.
+      mural.rotation.y = Math.atan2(-q.tz, q.tx);
       mural.layers.set(1);
       scene.add(mural);
       E.tags.push({ name: 'SWEET HOME CHICAGO MURAL', sub: 'FOUR STARS · TWO STRIPES · THE FLAG IS A MAP OF THIS RIVER',
         x: mx, z: mz, r2: 70 * 70 });
+      }
     }
 
     // ---------- #2 NICHOLAS J. MELAS CENTENNIAL FOUNTAIN — the best three seconds in the game --
@@ -7183,6 +7529,11 @@ window.CHICAGO = {
         const gx = a.x + nx * (a.w + 0.5), gz = a.z + nz * (a.w + 0.5);
         if (gx > C.lake.openWaterX - 20) continue;
         if (RR.City.landClearance(a.x + nx * (a.w + 7), a.z + nz * (a.w + 7)) < 1) continue;
+        // riverwalk.js drops a promenade segment wherever the offset bank curls back into the
+        // channel, so test the deck the same way — a gull perched on a railing that was never
+        // built is just a bird standing on the river
+        const dq = RR.River.waterQuery(a.x + nx * (a.w + 4.65), a.z + nz * (a.w + 4.65));
+        if (!dq || dq.clear > -1) continue;
         gull(gx, PYd + 1.10, gz, rng() * 6.28);                      // perched on the cable rail
       }
       // one peregrine: they genuinely nest on these bridges, and stoop at 390 km/h
@@ -7562,7 +7913,10 @@ window.CHICAGO = {
         whirl.m.material.opacity = 0.38 + 0.12 * Math.sin(t * 1.3);
       }
       if (playpen) {                                                 // #20 the raft bobs as one
-        playpen.position.y = U().waterHeight(playpen.position.x, playpen.position.z, t, 3.2) - 0.05;
+        // read the live sea state rather than a hardcoded amplitude — the lake's swell ramp is
+        // the single source of truth, and a raft 6 cm out of its own water reads as broken
+        playpen.position.y = U().waterHeight(playpen.position.x, playpen.position.z, t,
+          RR.River.waveAmp(playpen.position.x, playpen.position.z)) - 0.05;
         playpen.rotation.z = Math.sin(t * 0.55 + playpen.userData.ph) * 0.035;
         playpen.rotation.x = Math.sin(t * 0.43 + playpen.userData.ph * 2) * 0.03;
       }
@@ -10180,13 +10534,17 @@ window.CHICAGO = {
 
     // ---------- DuSable-style marina south of the river mouth ----------
     // moored hulls + masts are baked straight into the static mesh (they barely move at a dock)
+    // Chicago's harbour docks are FLOATING docks — they ride the water, they do not stand in it.
+    // Baked at a fixed y they were fine under the old 1 m lake, but the real swell now swings
+    // +/-1.1 m at the outer finger and washed the deck over. Collected separately and heaved.
     const mx = 2080, mz = 430;
+    const marina = [];
     const hullCols = [0x2b4a6b, 0x6b2b2b, 0x35393e, 0xdfe0e2, 0x3a5a45, 0x8a3a2a];
     for (let d = 0; d < 3; d++) {
       const dz = mz + d * 46;
       const dock = new THREE.BoxGeometry(150, 0.6, 4);
       dock.translate(mx + 40, 0.5, dz);
-      flat.push(tint(dock, 0x8a7c62, 0.08));
+      marina.push(tint(dock, 0x8a7c62, 0.08));
       for (let k = 0; k < 8; k++) {
         const bx = mx - 30 + k * 18, side = (k % 2) ? 1 : -1, bz = dz + side * 5;
         // rule 8: rotation, uniform scale and hue all vary, or eight identical hulls in a row
@@ -10199,17 +10557,17 @@ window.CHICAGO = {
         hull.computeVertexNormals();
         hull.rotateY(yaw);
         hull.translate(bx, 0.55 * sc, bz);
-        flat.push(tint(hull, hullCols[(k + d) % hullCols.length], 0.14));
+        marina.push(tint(hull, hullCols[(k + d) % hullCols.length], 0.14));
         const cabin = new THREE.BoxGeometry(2.0 * sc, 0.8 * sc, 1.6 * sc);
         cabin.rotateY(yaw); cabin.translate(bx - 0.5 * sc, 1.4 * sc, bz);
-        flat.push(tint(cabin, 0xe8e4d8, 0.10));
+        marina.push(tint(cabin, 0xe8e4d8, 0.10));
         const mast = new THREE.CylinderGeometry(0.1 * sc, 0.12 * sc, 10 * sc, 5);
-        mast.translate(bx, 5.5 * sc, bz); flat.push(tint(mast, 0xcfcabc, 0));
+        mast.translate(bx, 5.5 * sc, bz); marina.push(tint(mast, 0xcfcabc, 0));
       }
     }
     const spine = new THREE.BoxGeometry(4, 0.6, 150);
     spine.translate(mx - 34, 0.5, mz + 46);
-    flat.push(tint(spine, 0x8a7c62, 0.08));
+    marina.push(tint(spine, 0x8a7c62, 0.08));
 
     // ---------- sailboats under way, scattered across the open basin ----------
     // three hull colours → three instanced fleets, so ten boats cost three draw calls
@@ -10299,9 +10657,22 @@ window.CHICAGO = {
       scene.add(m);
     }
 
+    // one merged mesh, heaved and tilted as a raft by the update below
+    const marinaMesh = new THREE.Mesh(RR.City.mergeGeoms(marina), RR.City.flatMaterial());
+    marinaMesh.castShadow = true; marinaMesh.receiveShadow = true;
+    marinaMesh.geometry.translate(-(mx + 40), 0, -(mz + 46));      // pivot at the basin centre
+    marinaMesh.position.set(mx + 40, 0, mz + 46);
+    scene.add(marinaMesh);
+
     const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
     const _p = new THREE.Vector3(), _s = new THREE.Vector3();
+    const _mw = {};
     RR.Engine.onUpdate((dt, t) => {
+      // the marina rides the swell as one raft: heave from the basin centre, tilt from its slope
+      U().waterNormalPitchRoll(mx + 40, mz + 46, t, R.waveAmp(mx + 40, mz + 46), _mw);
+      marinaMesh.position.y = _mw.h;
+      marinaMesh.rotation.set(-_mw.pitch * 0.6, 0, _mw.roll * 0.6);
+
       for (const f of fleets) {
         for (let i = 0; i < f.units.length; i++) {
           const b = f.units[i];
@@ -10412,22 +10783,51 @@ window.CHICAGO = {
       return false;
     }
 
+    // A walker's patrol is a fixed offset off one centreline, and that offset folds back over
+    // the channel wherever the river bends hard — at Wolf Point it walked strollers sixteen
+    // metres out into the South Branch. So bake the answer once: for each bank and side, sample
+    // which stretches of promenade are genuinely dry, and clip every walker's patrol to the dry
+    // run it starts in. One boolean array per bank replaces a per-frame nearest-point test on
+    // ~900 figures, and the test it replaces could not see a neighbouring channel at all.
+    const SEG = 6;
+    function dryMask(p, s) {
+      const n = Math.ceil(p.len / SEG) + 1;
+      const ok = new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        const a = U().pathAt(p, Math.min(i * SEG, p.len), {});
+        let good = 1;
+        for (const o of [2.2, 5.5, 8.4]) {                        // the width the walkers use
+          const x = a.x + (-a.tz) * (a.w + o) * s, z = a.z + a.tx * (a.w + o) * s;
+          if (x > openX - 8 || overWater(x, z)) { good = 0; break; }
+        }
+        ok[i] = good;
+      }
+      return ok;
+    }
+
     // ---------- distribute walkers + cyclists along the promenades ----------
     const walkers = [], statics = [], cyclists = [];
     for (const key in RR.River.paths) {
       if (key.startsWith('lake')) continue;
       const p = RR.River.paths[key];
+      const masks = [dryMask(p, -1), dryMask(p, 1)];
       const density = key === 'main' ? 3.0 : 1.4;                 // people per ~40m of bank
       const count = Math.floor((p.len / 40) * density);
       for (let i = 0; i < count; i++) {
         for (const s of [-1, 1]) {
-          const d = rng() * p.len;
+          let d = rng() * p.len;
           const off = 2 + rng() * 6.2;                            // across the promenade
-          const a = U().pathAt(p, d, {});
-          const x = a.x + (-a.tz) * (a.w + off) * s, z = a.z + a.tx * (a.w + off) * s;
-          if (x > openX - 8 || overWater(x, z)) continue;
+          const mask = masks[s > 0 ? 1 : 0];
+          const mi = Math.min(mask.length - 1, Math.round(d / SEG));
+          if (!mask[mi]) continue;
+          let lo = mi, hi = mi;                                   // the dry run this walker is in
+          while (lo > 0 && mask[lo - 1]) lo--;
+          while (hi < mask.length - 1 && mask[hi + 1]) hi++;
+          const d0 = lo * SEG + 4, d1 = Math.min(p.len, hi * SEG) - 4;
+          if (d1 - d0 < 10) continue;
+          d = U().clamp(d, d0, d1);
           const isBike = rng() < 0.14;
-          const w = { p, key, s, d, off, dir: rng() < 0.5 ? 1 : -1, spd: isBike ? 5 + rng() * 3 : 1.1 + rng() * 0.8,
+          const w = { p, key, s, d, d0, d1, off, dir: rng() < 0.5 ? 1 : -1, spd: isBike ? 5 + rng() * 3 : 1.1 + rng() * 0.8,
                       col: SHIRTS[(rng() * SHIRTS.length) | 0], skin: SKINS[(rng() * SKINS.length) | 0],
                       acc: rng() < 0.5 ? ACCENT[(rng() * ACCENT.length) | 0] : 0,
                       sc: 0.93 + rng() * 0.14, ph: rng() * 9, bike: isBike };
@@ -10659,21 +11059,12 @@ window.CHICAGO = {
     for (let i = 0; i < peopleData.length; i++) {
       const w = peopleData[i];
       w.d += w.spd * w.dir * dt;
-      if (w.d > w.p.len) { w.d = w.p.len; w.dir = -1; }
-      else if (w.d < 0) { w.d = 0; w.dir = 1; }
-      let a = U().pathAt(w.p, w.d, bp);
-      let nx = -a.tz, nz = a.tx;
-      let x = a.x + nx * (a.w + w.off) * w.s, z = a.z + nz * (a.w + w.off) * w.s;
-      // guard against curling into the channel at a bend: if this step would put the walker
-      // on the water, turn around and re-place on the stretch just behind them (cheap windowed check)
-      const hint = (w.d / w.p.len * (w.p.n - 1)) | 0;
-      const q = U().pathNearest(w.p, x, z, hint, 5);
-      if (q.dist < q.w + 0.3) {
-        w.dir = -w.dir;
-        w.d = U().clamp(w.d + w.spd * w.dir * dt * 2, 0, w.p.len);
-        a = U().pathAt(w.p, w.d, bp); nx = -a.tz; nz = a.tx;
-        x = a.x + nx * (a.w + w.off) * w.s; z = a.z + nz * (a.w + w.off) * w.s;
-      }
+      // patrol bounds were baked at init to the dry run of promenade this walker started in
+      if (w.d > w.d1) { w.d = w.d1; w.dir = -1; }
+      else if (w.d < w.d0) { w.d = w.d0; w.dir = 1; }
+      const a = U().pathAt(w.p, w.d, bp);
+      const nx = -a.tz, nz = a.tx;
+      const x = a.x + nx * (a.w + w.off) * w.s, z = a.z + nz * (a.w + w.off) * w.s;
       const yaw = Math.atan2(a.tx * w.dir, a.tz * w.dir);
       const bob = w.bike ? 0 : Math.abs(Math.sin(t * 6 + w.ph)) * 0.06;
       _q.setFromAxisAngle(_up, yaw); _p.set(x, PY() + bob, z); _s.setScalar(w.sc);
@@ -10932,6 +11323,18 @@ window.CHICAGO = {
       hull: 0xd42a1e, deck: 0x1f242b, accent: 0xf5f6f7, seat: 0x14161c,
     },
     {
+      // The Architecture Tour boat. Not a racer: 30 m and a couple of hundred tonnes of open-deck
+      // river cruiser, so `plane` sits above her top end (a displacement hull never climbs onto a
+      // plane), accel is a seventh of the FORMULA's, and `turn` buys a ~34 m circle at full chat in
+      // a channel 60 m wide. hidden: she is crewed for the tour, not offered in the ride picker.
+      id: 'tourboat', name: 'WACKER BELLE', kind: 'tourboat', hidden: true,
+      desc: 'Open-deck architecture cruiser. Thirty metres, no brakes, and a turning circle that eats most of the Main Stem. Somehow this is fun.',
+      top: 13.5, accel: 2.6, turn: 0.60, grip: 4.4, lean: 0.10, boost: 1.12, mass: 4.6,
+      plane: 30, hump: 0.0, lift: 0.0, slap: 0.15, torque: 0.020, dive: 0.03, drift: 0.06, boostKick: 3.5,
+      engine: 'runabout',                                   // slow-turning diesel, not a V8
+      hull: 0xeef1f4, deck: 0x8a6a44, accent: 0xc0392b, seat: 0x1f5f8b,
+    },
+    {
       id: 'podracer', name: 'ANAKIN’S PODRACER', kind: 'podracer',
       desc: 'Twin radial turbines on a plasma tether, skimming the river on a cushion of thrust. Untouchable top end — if you can steer the thing.',
       top: 61, accel: 21.0, turn: 1.55, grip: 1.7, lean: 0.42, boost: 1.18, mass: 0.85,
@@ -10940,6 +11343,29 @@ window.CHICAGO = {
       hull: 0xd8a13a, deck: 0xc9ced2, accent: 0xff3ea6, seat: 0x161a1f,   // golden scoops · silver · magenta plasma
     },
   ];
+
+  // ---------- unlocks ----------
+  // A `hidden` entry is not offered in the ride picker until it has been earned. The WACKER BELLE
+  // is the Architecture Tour's payoff: take her wheel out on the river and she is yours from then
+  // on. The CATALOG itself is never filtered or reordered — a boat's index is what multiplayer
+  // sends over the wire and what the showroom addresses — so callers filter the VIEW, not the array.
+  const UNLOCK_KEY = 'rr_unlocked';
+  let unlocked = {};
+  try {
+    const saved = JSON.parse(localStorage.getItem(UNLOCK_KEY) || '{}');
+    if (saved && typeof saved === 'object') unlocked = saved;
+  } catch (e) { /* file:// may refuse storage entirely — then nothing is remembered, and that is fine */ }
+
+  B.isUnlocked = (v) => !!v && (!v.hidden || !!unlocked[v.id]);
+  // returns true only on the transition, so the caller announces the find exactly once
+  B.unlock = function (id) {
+    if (!id || unlocked[id]) return false;
+    unlocked[id] = 1;
+    try { localStorage.setItem(UNLOCK_KEY, JSON.stringify(unlocked)); } catch (e) { /* fine */ }
+    return true;
+  };
+  // what a player may choose right now, each entry carrying its real CATALOG index
+  B.pickable = () => B.CATALOG.map((v, i) => ({ v, i })).filter((e) => B.isUnlocked(e.v));
 
   function mat(color, opts) {
     return new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.5, metalness: 0.18 }, opts || {}));
@@ -11070,6 +11496,42 @@ window.CHICAGO = {
   function cleat(g, x, z, y) {
     const c = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.1, 0.4), chrome());
     c.position.set(x, y, z); g.add(c);
+  }
+
+  // driverFigure is for the one person you look AT. This is for the forty you look past: three
+  // prims a head, colour written into the vertex buffer, so a whole boatload merges into one mesh.
+  // o: { stand, lean, rotY, coat, skin }
+  function personGeoms(out, x, y, z, o) {
+    const lean = o.lean || 0, rotY = o.rotY || 0;
+    const push = (geo, hex) => {
+      if (rotY) geo.rotateY(rotY);
+      geo.translate(x, y, z);
+      RR.City.tintGeom(geo, hex);
+      out.push(geo);
+    };
+    if (o.stand) {
+      const torso = new THREE.CapsuleGeometry(0.19, 0.52, 2, 6);
+      torso.rotateX(lean); torso.translate(0, 1.12, 0);
+      push(torso, o.coat);
+      for (const s of [-1, 1]) {
+        const leg = new THREE.CapsuleGeometry(0.095, 0.62, 2, 5);
+        leg.translate(s * 0.15, 0.42, 0);
+        push(leg, o.legs == null ? o.coat : o.legs);
+      }
+      const head = new THREE.SphereGeometry(0.135, 8, 6);
+      head.translate(0, 1.62, lean * 0.5);
+      push(head, o.skin);
+      return;
+    }
+    const torso = new THREE.CapsuleGeometry(0.17, 0.40, 2, 6);
+    torso.rotateX(lean); torso.translate(0, 0.44, 0);
+    push(torso, o.coat);
+    const head = new THREE.SphereGeometry(0.125, 8, 6);
+    head.translate(0, 0.86, lean * 0.45);
+    push(head, o.skin);
+    const lap = new THREE.BoxGeometry(0.36, 0.17, 0.52);
+    lap.translate(0, 0.09, 0.26);
+    push(lap, o.coat);
   }
 
   const builders = {
@@ -11224,6 +11686,225 @@ window.CHICAGO = {
       return g;
     },
 
+    // The Chicago architecture cruise boat: long, low, open on top, canopy on posts, rows of
+    // benches, a wheelhouse forward and a docent at the mic amidships. Real ones run the Main Stem
+    // all day at about 8 knots. Everything repeated — seats, posts, passengers — is merged, so all
+    // thirty metres of her cost about what the speedboat costs.
+    tourboat(spec) {
+      const g = new THREE.Group();
+      const LOA = 30, BEAM = 7.0, DEP = 2.1, SHEER = 0.30;
+      const HY = 0.30;              // hull mesh offset: geometry-local y + HY = metres above the waterline
+      const DECK = 1.42;            // open deck surface
+      const rng = RR.U.mulberry(30301);
+      // shape() follows the hull: taper to the stem, V-bottom, sheer rise. flat() only tapers, for
+      // the bands that live at the waterline — a boot top is level, it does not sweep up at the bow.
+      const shape = (geo) => { shapeHull(geo, LOA, BEAM, DEP, SHEER); return geo; };
+      const flat = (geo) => { shapeHull(geo, LOA, BEAM, 0, 0); return geo; };
+      const white = mat(spec.hull, { roughness: 0.5, metalness: 0.08 });
+      const navy = mat(0x152c46, { roughness: 0.5, metalness: 0.1 });
+
+      // ---- hull: white topsides, red boot top ON the waterline, navy sheer stripe under the deck
+      const hull = new THREE.Mesh(shape(new THREE.BoxGeometry(BEAM, DEP, LOA, 4, 2, 18)), white);
+      hull.position.y = HY; g.add(hull);
+      const boot = new THREE.Mesh(flat(new THREE.BoxGeometry(BEAM + 0.08, 0.30, LOA - 0.6, 4, 1, 16)),
+        mat(spec.accent, { roughness: 0.55 }));
+      boot.position.y = 0.02; g.add(boot);                       // y = 0 is the water surface
+      const sheerStripe = new THREE.BoxGeometry(BEAM + 0.08, 0.22, LOA - 0.5, 4, 1, 16);
+      sheerStripe.translate(0, 0.82, 0); shape(sheerStripe);
+      const sheerM = new THREE.Mesh(sheerStripe, navy); sheerM.position.y = HY; g.add(sheerM);
+      // the enclosed lower saloon, read as one long strip of tinted glass down each side
+      const winBand = new THREE.BoxGeometry(BEAM + 0.06, 0.46, LOA - 8, 4, 1, 14);
+      winBand.translate(0, 0.30, -0.6); shape(winBand);
+      const winM = new THREE.Mesh(winBand, glassMat()); winM.position.y = HY; g.add(winM);
+
+      // ---- deck, bulwark boards and cap rail (all merged into two meshes) ----
+      const teak = RR.U.canvasTexture(64, 256, (c, w, h) => {
+        c.fillStyle = '#8a6a44'; c.fillRect(0, 0, w, h);
+        for (let i = 0; i < 8; i++) {
+          c.fillStyle = i % 2 ? 'rgba(60,38,18,.35)' : 'rgba(210,180,140,.18)';
+          c.fillRect(i * (w / 8), 0, 2, h);
+        }
+      });
+      teak.wrapS = teak.wrapT = THREE.RepeatWrapping; teak.repeat.set(2, 8);
+      const deckGeo = new THREE.BoxGeometry(BEAM - 0.6, 0.14, LOA - 1.6, 4, 1, 16);
+      deckGeo.translate(0, DECK - HY, 0); shape(deckGeo);
+      const deckM = new THREE.Mesh(deckGeo, new THREE.MeshStandardMaterial({ map: teak, color: spec.deck, roughness: 0.7 }));
+      deckM.position.y = HY; g.add(deckM);
+      const trimGeos = [];
+      for (const s of [-1, 1]) {                                  // bulwark board, converging at the stem
+        const b = new THREE.BoxGeometry(0.16, 0.62, LOA - 2.4, 1, 1, 16);
+        b.translate(s * (BEAM / 2 - 0.05), DECK - HY + 0.24, 0);
+        trimGeos.push(b);
+        const cap = new THREE.BoxGeometry(0.30, 0.10, LOA - 2.4, 1, 1, 16);
+        cap.translate(s * (BEAM / 2 - 0.05), DECK - HY + 0.58, 0);
+        trimGeos.push(cap);
+      }
+      const bowCap = new THREE.BoxGeometry(BEAM, 0.62, 1.2, 3, 1, 1);
+      bowCap.translate(0, DECK - HY + 0.24, LOA / 2 - 0.9); trimGeos.push(bowCap);
+      const transom = new THREE.BoxGeometry(BEAM, 0.62, 0.5, 3, 1, 1);
+      transom.translate(0, DECK - HY + 0.24, -LOA / 2 + 0.6); trimGeos.push(transom);
+      for (const geo of trimGeos) shape(geo);
+      const trim = new THREE.Mesh(RR.City.mergeGeoms(trimGeos), white);
+      trim.position.y = HY; g.add(trim);
+
+      // ---- rows of benches down both sides of a centre aisle ----
+      const padGeos = [], frameGeos = [];
+      const rows = [];
+      for (let z = -12.2; z <= 6.2; z += 1.55) rows.push(z);
+      for (const z of rows) {
+        for (const s of [-1, 1]) {
+          const pad = new THREE.BoxGeometry(2.3, 0.14, 0.54); pad.translate(s * 1.75, DECK + 0.42, z);
+          const back = new THREE.BoxGeometry(2.3, 0.52, 0.12); back.translate(s * 1.75, DECK + 0.70, z - 0.27);
+          padGeos.push(pad, back);
+          const rail = new THREE.BoxGeometry(2.2, 0.28, 0.10); rail.translate(s * 1.75, DECK + 0.22, z);
+          frameGeos.push(rail);
+        }
+      }
+      const seats = new THREE.Mesh(RR.City.mergeGeoms(padGeos), mat(spec.seat, { roughness: 0.85, metalness: 0 }));
+      g.add(seats);
+      g.add(new THREE.Mesh(RR.City.mergeGeoms(frameGeos), mat(0x2a2f36, { roughness: 0.7, metalness: 0.3 })));
+
+      // ---- the passengers: two to a bench on about half the rows, a few turned to look up ----
+      const COATS = [0xb03a2e, 0x27496d, 0x3d6b45, 0xd9c17a, 0x6c4675, 0x2f3640, 0xc98a3a];
+      const SKINS = [0xc9946a, 0x8d5a3b, 0xe0b189, 0x6b4229];
+      const people = [];
+      for (let i = 0; i < rows.length; i++) {
+        if (i % 2 === 1 && i !== 3) continue;                     // a real tour is never full
+        for (const s of [-1, 1]) {
+          for (const o of [-0.55, 0.55]) {
+            if (rng() < 0.22) continue;
+            const look = (rng() - 0.5) * 1.5;                     // heads turned toward the skyline
+            personGeoms(people, s * 1.75 + o, DECK + 0.48, rows[i] + 0.05, {
+              rotY: look, lean: 0.10 + rng() * 0.12,
+              coat: COATS[(i * 3 + (s > 0 ? 1 : 0) + (o > 0 ? 2 : 0)) % COATS.length],
+              skin: SKINS[Math.floor(rng() * SKINS.length)],
+            });
+          }
+        }
+      }
+      const crowdMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 });
+      g.add(new THREE.Mesh(RR.City.mergeGeoms(people), crowdMat));
+
+      // ---- canopy: striped awning on twelve posts over the seating ----
+      const awn = RR.U.canvasTexture(128, 128, (c, w, h) => {
+        c.fillStyle = '#f2ece0'; c.fillRect(0, 0, w, h);
+        c.fillStyle = '#b8362b';
+        for (let i = 0; i < 4; i++) c.fillRect(0, i * (h / 4), w, h / 8);
+      });
+      awn.wrapS = awn.wrapT = THREE.RepeatWrapping; awn.repeat.set(1, 6);
+      // stops short of the forward rows: on the real boats the best seats are the open ones,
+      // because the whole point is looking straight up at the buildings
+      const CY = DECK + 2.40, CZ0 = -12.8, CZ1 = 3.4;
+      const canopyGeos = [];
+      const roof = new THREE.BoxGeometry(BEAM - 0.7, 0.13, CZ1 - CZ0);
+      roof.translate(0, CY, (CZ0 + CZ1) / 2); canopyGeos.push(roof);
+      for (const s of [-1, 1]) {                                  // valance along both edges
+        const v = new THREE.BoxGeometry(0.10, 0.26, CZ1 - CZ0);
+        v.translate(s * (BEAM / 2 - 0.35), CY - 0.18, (CZ0 + CZ1) / 2); canopyGeos.push(v);
+      }
+      g.add(new THREE.Mesh(RR.City.mergeGeoms(canopyGeos), new THREE.MeshStandardMaterial({ map: awn, roughness: 0.9, side: THREE.DoubleSide })));
+      const postGeos = [];
+      for (let z = CZ0 + 1.2; z < CZ1; z += 3.2) {
+        for (const s of [-1, 1]) {
+          const p = new THREE.CylinderGeometry(0.07, 0.07, 2.40, 6);
+          p.translate(s * (BEAM / 2 - 0.42), DECK + 1.20, z); postGeos.push(p);
+        }
+      }
+      g.add(new THREE.Mesh(RR.City.mergeGeoms(postGeos), chrome()));
+
+      // ---- wheelhouse, forward, where the skipper can see the piers ----
+      const WZ = 9.6;
+      const house = new THREE.Mesh(new THREE.BoxGeometry(3.4, 2.3, 3.0), white);
+      house.position.set(0, DECK + 1.15, WZ); g.add(house);
+      const houseGlass = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.9, 3.1), glassMat());
+      houseGlass.position.set(0, DECK + 1.62, WZ); g.add(houseGlass);
+      const houseRoof = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.14, 3.4), navy);
+      houseRoof.position.set(0, DECK + 2.37, WZ); g.add(houseRoof);
+      const mastGeos = [];
+      const mast = new THREE.CylinderGeometry(0.06, 0.08, 1.5, 6); mast.translate(0, DECK + 3.15, WZ - 0.4);
+      const radar = new THREE.BoxGeometry(1.5, 0.10, 0.22); radar.translate(0, DECK + 3.85, WZ - 0.4);
+      mastGeos.push(mast, radar);
+      g.add(new THREE.Mesh(RR.City.mergeGeoms(mastGeos), chrome()));
+      // the skipper at the wheel — kept as her own mesh so main.js can stand her down when the
+      // passenger with five taps of F takes over
+      const skipperGeos = [];
+      personGeoms(skipperGeos, -0.55, DECK + 0.02, WZ - 0.5, { stand: true, lean: 0.12, coat: 0x1d3a5c, legs: 0x20252c, skin: 0xc9946a });
+      const skipper = new THREE.Mesh(RR.City.mergeGeoms(skipperGeos), crowdMat);
+      g.add(skipper);
+      const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.03, 6, 14), mat(0x3a2415, { metalness: 0.3 }));
+      wheel.position.set(-0.55, DECK + 1.05, WZ + 0.55); wheel.rotation.x = -0.35; g.add(wheel);
+
+      // ---- the docent, amidships at the mic, facing the passengers ----
+      const docent = driverFigure({
+        pose: 'stand', lean: 0.05, suit: 0x1c2a3a, vest: spec.accent, cap: 0x14203a,
+        handR: [0.16, 1.05, 0.22],
+      });
+      docent.position.set(0.9, DECK, 6.4); docent.rotation.y = Math.PI; g.add(docent);
+      const mic = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.9, 6), mat(0x14161c));
+      mic.position.set(0.72, DECK + 0.6, 6.2); g.add(mic);
+      const speaker = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.42, 0.24), mat(0x20252c, { roughness: 0.8 }));
+      speaker.position.set(0, DECK + 1.9, 5.6); g.add(speaker);
+
+      // ---- name boards, both sides, on the flat of the topsides ----
+      const nameTex = RR.U.canvasTexture(512, 64, (c, w, h) => {
+        c.clearRect(0, 0, w, h);
+        c.fillStyle = '#152c46'; c.font = 'bold 44px Georgia, "Times New Roman", serif';
+        c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText('WACKER BELLE', w / 2, h / 2 + 2);
+      });
+      const nameMat = new THREE.MeshStandardMaterial({ map: nameTex, transparent: true, roughness: 0.6 });
+      for (const s of [-1, 1]) {
+        const n = new THREE.Mesh(new THREE.PlaneGeometry(6.0, 0.55), nameMat);
+        n.position.set(s * (BEAM / 2 + 0.04), 1.02, -1.5);
+        n.rotation.y = s * Math.PI / 2; g.add(n);
+      }
+
+      // ---- the Chicago flag on the stern staff: two bars, four six-pointed stars ----
+      const flagTex = RR.U.canvasTexture(96, 64, (c, w, h) => {
+        c.fillStyle = '#ffffff'; c.fillRect(0, 0, w, h);
+        c.fillStyle = '#b3ddf2'; c.fillRect(0, h * 0.17, w, h * 0.16); c.fillRect(0, h * 0.67, w, h * 0.16);
+        c.fillStyle = '#ff0000';
+        for (let i = 0; i < 4; i++) {
+          const cx = w * (0.2 + i * 0.2), cy = h / 2, r = h * 0.13;
+          c.beginPath();
+          for (let k = 0; k < 12; k++) {
+            const a = -Math.PI / 2 + k * Math.PI / 6, rr = k % 2 ? r * 0.45 : r;
+            const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr;
+            k ? c.lineTo(x, y) : c.moveTo(x, y);
+          }
+          c.closePath(); c.fill();
+        }
+      });
+      const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.8, 6), chrome());
+      staff.position.set(1.9, DECK + 0.9, -14.3); g.add(staff);     // to starboard: the aisle is a view
+      const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.35, 0.9),
+        new THREE.MeshStandardMaterial({ map: flagTex, side: THREE.DoubleSide, roughness: 0.9 }));
+      flag.position.set(2.6, DECK + 1.35, -14.3); g.add(flag);
+
+      const ringGeos = [];
+      for (const s of [-1, 1]) {
+        const r = new THREE.TorusGeometry(0.34, 0.09, 6, 14);
+        r.rotateY(Math.PI / 2); r.translate(s * (BEAM / 2 - 0.16), DECK + 0.30, -8.5);
+        ringGeos.push(r);
+      }
+      g.add(new THREE.Mesh(RR.City.mergeGeoms(ringGeos), mat(0xff7a1a, { roughness: 0.7 })));
+
+      cleat(g, 3.0, 12.4, DECK + 0.5); cleat(g, -3.0, 12.4, DECK + 0.5);
+      navLights(g, 3.1, 12.0, -14.6, DECK + 0.55);
+      g.userData.size = { r: 5.4, len: LOA };
+      // Where a passenger's eyes actually are. main.js parks the tour cameras on these, in the
+      // hull's own frame, so the views ride the boat exactly like the seats do.
+      g.userData.seatCams = {
+        seat: [-1.75, DECK + 1.50, -2.9],        // port bench amidships, rows receding forward under the awning
+        foredeck: [0.9, DECK + 1.75, 12.9],      // right up in the bow, where you crane your neck
+        stern: [0, DECK + 3.4, -18.0],           // astern of the transom: the whole boat in frame
+        wheel: [-0.55, DECK + 1.95, WZ + 1.72],  // over the front of the pilot house, clear of its glass
+        helm: [0, DECK + 6.4, -28.0],            // the driving shot: 30 m of boat between you and the river
+      };
+      g.userData.crew = { skipper, docent };
+      return g;
+    },
+
     // Anakin's Podracer, matched to the film reference: each engine is a LONG SILVER
     // machinery cylinder (ribbed, chrome-banded, maroon belly) with a pointed silver
     // intake + spinner at the FRONT. The only gold is (a) the pair of rounded nacelle
@@ -11361,8 +12042,10 @@ window.CHICAGO = {
         bolt.rotation.z = Math.sin(i * 3.7) * 0.45;
         bolt.renderOrder = 3; sparks.push(bolt); g.add(bolt);
       }
-      const haze = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 0.9, 0.9, 0.6), plasmaMat());
-      haze.material.opacity = 0.16; haze.position.set(0, EY, EZ - 1.7); haze.renderOrder = 3;
+      // The glow AROUND the arc. It has to stay faint: an additive box at any real opacity paints
+      // its top face as a flat magenta panel from above, which read as an untextured face.
+      const haze = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 1.3, 0.44, 0.30), plasmaMat());
+      haze.position.set(0, EY, EZ - 1.7); haze.renderOrder = 3;
       plasma.push(haze); g.add(haze);
 
       // ---- the tiny cockpit sled, towed FAR behind across open air (film signature:
@@ -11406,7 +12089,7 @@ window.CHICAGO = {
         const rev = t * (10 + sp * 0.5);
         for (const r of rings) r.rotation.z = rev;
         const fl = 0.55 + 0.3 * Math.sin(t * 30) + 0.16 * Math.sin(t * 63 + 1.3);
-        for (const pl of plasma) pl.material.opacity = Math.max(0.28, Math.min(1, fl));
+        for (const pl of plasma) pl.material.opacity = 0.09 + 0.06 * fl;   // the haze only breathes
         for (let i = 0; i < sparks.length; i++) sparks[i].visible = Math.sin(t * 42 + i * 7.3) > 0.2;   // crackle
         const boost = boat ? (boat.boostHeat || 0) : 0.2;
         for (const gl of glows) {
@@ -11449,6 +12132,9 @@ window.CHICAGO = {
   const P = {};
   const U = () => RR.U;
   const wn = { pitch: 0, roll: 0, h: 0 };
+  // One slap = one clean thwack. SLAP_W is pi/SLAP_LIFE so the shudder is a single half-cycle that
+  // starts and ends at zero; the old 48 rad/s ran a whole cycle inside 130 ms, which is a wobble.
+  const SLAP_LIFE = 0.13, SLAP_W = Math.PI / SLAP_LIFE;
   // while resetLock is running the throttle is dead — hoisted so the sim never allocates per frame
   const lockCtl = { throttle: 0, brake: 0, steer: 0, boost: false };
 
@@ -11463,6 +12149,7 @@ window.CHICAGO = {
       rpm: 0,
       visRoll: 0, visPitch: 0,
       radius: (mesh.userData.size ? mesh.userData.size.r : 2) * 0.7,
+      hullLen: (mesh.userData.size && mesh.userData.size.len) || 5,   // waterline the hull averages
       mass: spec.mass || 1,
       bumpRecover: 0,
       hint: {},
@@ -11475,7 +12162,7 @@ window.CHICAGO = {
       planeF: 0, hump: 0,
       slapPhase: 0, slapT: 0,
       prevThrottle: 0, diveT: 0,
-      drifting: false, driftTime: 0,
+      drifting: false, driftTime: 0, launchArmed: true,
       draft: 0, _draftHit: 0,
       rubber: 1,
       scrapeT: 0, resetLock: 0,
@@ -11608,28 +12295,41 @@ window.CHICAGO = {
 
     // ---- vertical: ride the analytic wave field ----
     const amp = RR.River.waveAmp(boat.pos.x, boat.pos.z);
-    U().waterNormalPitchRoll(boat.pos.x, boat.pos.z, t, amp, wn);
+    U().waterNormalPitchRoll(boat.pos.x, boat.pos.z, t, amp, wn, boat.hullLen);
     const rideY = wn.h + 0.10 + planeF * (spec.lift == null ? 0.28 : spec.lift) + (spec.hover || 0);
 
-    // hull slap: a planing hull crossing chop slams at a rate set by speed over wave period.
-    // This is the texture that stops the ride feeling like ice.
+    // hull slap: a planing hull crossing chop slams once per wave it meets, so the rate is the
+    // ENCOUNTER frequency — speed over crest spacing — and crest spacing grows with fetch. The
+    // river's boat-wake slop is metres apart; Lake Michigan's swell runs 120-185 m crest to crest,
+    // so out there the hull pounds about once a second, hard, instead of buzzing at 7 Hz.
     const slapAmp = (spec.slap || 0) * planeF * amp * U().clamp(speed / topSpeed, 0.15, 1);
     if (!boat.airborne && slapAmp > 0.06) {
-      boat.slapPhase += dt * (1.7 + speed * 0.15);
+      const chopLen = 7.5 + (amp - 1) * 40;                  // 7.5 m in the canyon, ~99 m on open lake
+      boat.slapPhase += dt * (0.8 + speed / chopLen);
       if (boat.slapPhase >= 1) {
         boat.slapPhase -= 1;
-        boat.slapT = 0.13;                                   // 130 ms of visible shudder
+        boat.slapT = SLAP_LIFE;                              // 130 ms of visible shudder
         if (boat.onSlap) boat.onSlap(U().clamp(slapAmp * 0.9, 0, 1));
       }
     }
     boat.slapT = Math.max(0, boat.slapT - dt);
 
     if (!boat.airborne) {
-      // launch off steep lake swells at speed
+      // launch off steep lake swells at speed. One launch per face: re-arm only after the hull is
+      // back on level water, or it re-triggers the instant it lands and chatters up a long swell
+      // in a string of 20 cm hops.
+      // Thresholds track the swell: the lake face is ~1.6x steeper than it used to be, so 0.024
+      // would now trip on every second crest and the lake would be one long involuntary hop.
       const relSlope = -(wn.pitch * fz + wn.roll * fx);
-      if (speed > topSpeed * 0.7 && relSlope > 0.028 && amp > 2 && boat.pos.y <= rideY + 0.05) {
+      if (relSlope < 0.013) boat.launchArmed = true;
+      // The 0.10 tolerance is not slop: pos.y chases rideY through a rate-14 damper, and on a face
+      // dropping at 2 m/s it legitimately trails ~0.15 m behind. Hold it at the old 0.05 and the
+      // gate silently rejects exactly the steep descending faces it exists to catch.
+      if (boat.launchArmed && speed > topSpeed * 0.7 && relSlope > 0.030 && amp > 2 && boat.pos.y <= rideY + 0.10) {
         boat.airborne = true;
-        boat.vy = speed * relSlope * 2.1 + 1.2;
+        boat.launchArmed = false;
+        // rarer crests, so each one throws harder — but capped, or a big face at 35 m/s is 8 m of air
+        boat.vy = Math.min(7.0, speed * relSlope * 3.0 + 1.2);
         if (boat.onLaunch) boat.onLaunch(speed);
       } else {
         boat.pos.y = U().damp(boat.pos.y, rideY, 14, dt);
@@ -11706,18 +12406,20 @@ window.CHICAGO = {
     // sat at 10 deg nose-up all the way to the top end. A planing hull runs flat, so fade it out
     // as the hull comes up and the hump becomes the only place the bow really rears.
     let targetPitch = boat.airborne ? -0.12
-      : (-accelPitch - wn.pitch * 1.4 * fz - wn.roll * 1.4 * fx) * 0.5
+      : (-accelPitch - wn.pitch * 1.7 * fz - wn.roll * 1.7 * fx) * 0.5
         - Math.min(0.14, speed * 0.004) * (1 - planeF * 0.75) + trim + dive;
     if (boat._ramp) targetPitch = -boat._ramp.slope * 1.15;   // nose-up climbing the wedge
 
     // prop torque reaction: a right-hand prop rolls the hull to port under load. It vanishes on
     // plane, where the boat rides its own lift instead of hanging off the shaft.
     const torque = -(spec.torque || 0) * ctl.throttle * (1 - planeF * 0.6);
+    // 1.7 / 1.5 on a swell-only slope lands on the same peak-to-peak attitude the old 1.4 / 1.2
+    // reached against the full field — same size of motion, none of the ripple frequency in it.
     const targetRoll = ctl.steer * spec.lean * U().clamp(speed / 14, 0, 1)
-                     + (wn.roll * fz - wn.pitch * fx) * 1.2 + torque;
+                     + (wn.roll * fz - wn.pitch * fx) * 1.5 + torque;
 
     boat.visPitch = U().damp(boat.visPitch, targetPitch, 5, dt) +
-                    boat.slapT * 0.26 * Math.sin(boat.slapT * 48);
+                    boat.slapT * 0.26 * Math.sin(boat.slapT * SLAP_W);
     boat.visRoll = U().damp(boat.visRoll, targetRoll, 5, dt);
 
     // ---- engine rpm for audio ----
@@ -11837,7 +12539,8 @@ window.CHICAGO = {
 <script>
 /* ===== js/game/ai.js ===== */
 /* River Racer — opponent pilots: apex racing line, bounded rubber-band, drafting, discrete
-   mistakes, blocking. Every tunable lives in A.K so the difficulty curve is auditable. */
+   mistakes, blocking. Every tunable lives in A.K, and every difficulty knob is one ROOKIE->LEGEND
+   pair resolved once per pilot by tune(), so the whole curve is auditable in one place. */
 (function () {
   const A = {};
   const U = () => RR.U;
@@ -11851,32 +12554,85 @@ window.CHICAGO = {
   A.K = {
     APEX_GAIN: 0.62,        // half-widths pulled toward the inside of a bend at full lock
     APEX_DAMP: 2.5,         // how fast they slide onto the apex line
-    RUBBER_MAX: 0.07,       // +/-7% top speed at diff 1.0. HARD LIMIT: never above 0.12.
+    RUBBER_MAX: 0.07,       // +/-7% top speed at band 1.0. HARD LIMIT: never above 0.12.
     RUBBER_DEAD: 60,        // metres of gap inside which rubber-banding is ZERO. Never below 45.
     RUBBER_FULL: 400,       // metres at which the band saturates
+    PACE_MAX: 0.02,         // LEGEND's honest top-speed edge: +2%, and not one percent more.
     DRAFT_SEEK: 0.25,       // steer bias toward a tow
     DRAFT_MIN: 8, DRAFT_MAX: 30,
     MISTAKE_PERIOD: 12.0,   // seconds between mistake rolls
-    MISTAKE_CHANCE: 0.55,   // x (1.4 - diff); ~0.39 rookie, 0.0 legend
+    MISTAKE_CHANCE: 0.55,   // scaled by tier: ~0.50 rookie · 0.29 skipper · 0.0 legend
     BLOCK_GAIN: 0.35,       // half-widths of cover
     BLOCK_RANGE: 14,        // metres behind
     BLOCK_HOLD: 0.7, BLOCK_COOLDOWN: 5.0,
     SHOVE_RANGE: 9, SHOVE_COOLDOWN: 3.5,
+    BOOST_TANK: 0.90,       // physics.js pays 15% more for a boost lit from a tank this full
   };
 
-  A.createPilot = function (boat, route, idx, difficulty) {
-    const d = difficulty == null ? 1 : difficulty;    // 0.7 rookie · 1.0 skipper · 1.3 legend
+  // The whole difficulty curve, as ROOKIE-value -> LEGEND-value pairs. `w` walks between them and
+  // is deliberately CONVEX (q^0.65): SKIPPER already has to be a real race, so it sits 55% of the
+  // way to LEGEND rather than the 40% a straight line would give it. Quoted third number is where
+  // SKIPPER lands. d: 0.7 rookie · 1.0 skipper · 1.45 legend.
+  function tune(d) {
+    const K = A.K;
+    const q = U().clamp((d - 0.7) / 0.75, 0, 1);
+    const w = Math.pow(q, 0.65);                  // 0 rookie · 0.552 skipper · 1 legend
+    const L = (a, b) => a + (b - a) * w;
     return {
-      boat, route, diff: d,
+      throttle:   L(0.76, 1.00),      // 0.89  straight-line throttle cap. Drag is normalised to
+      // topSpeed, so cruise settles at sqrt(throttle): 87% / 94% / 100% of the hull's top end.
+      liftBend:   L(0.36, 0.60),      // 0.49  rad of channel swing before they ease at all
+      liftFloor:  L(0.40, 0.78),      // 0.61  throttle held at the apex of a big bend
+      liftSpan:   L(0.78, 0.68),      // 0.73  rad from first ease to the floor
+      brakeBend:  L(0.88, 1.20),      // 1.06  only a genuine hairpin is worth the brake
+      brakeSpeed: L(0.75, 0.82),      // 0.79  of top speed before braking beats just lifting
+      brakeForce: L(0.75, 0.44),      // 0.58
+      panicTh:    L(0.34, 0.44),      // 0.40  throttle while the nose is badly off line
+      apex:       L(0.78, 1.12),      // 0.97  x APEX_GAIN half-widths of cut to the inside
+      apexDamp:   L(2.40, 3.40),      // 2.95  legends are ON the apex line, not sliding toward it
+      look:       L(1.12, 1.38),      // 1.26  lookahead metres per m/s — reading further IS skill
+      wobble:     L(0.140, 0.028),    // 0.078 lazy sine wander across the channel
+      lane:       L(0.90, 0.45),      // 0.65  of the nominal lane offset; the fast line is the fast line
+      react:      L(15, 26),          // 21.1  steering slew rate (1/s) = reaction time
+      steerGain:  L(2.15, 2.70),      // 2.45
+      mistake:    K.MISTAKE_CHANCE * (1 - w) * 0.82,  // 0.45 / 0.20 / 0.00 chance per roll
+      blockGain:  L(0.32, 0.45),      // 0.39  half-widths of cover over the line behind
+      blockHold:  L(0.62, 0.90),      // 0.78  s
+      blockCool:  L(5.50, 4.20),      // 4.78  s
+      // +0.03 so the tank is comfortably OVER the bonus line when the button goes down, not on it
+      boostArm:   L(0.45, K.BOOST_TANK + 0.03), // 0.72  tank level they'll light it at
+      boostBend:  L(0.24, 0.32),      // 0.28  bend they'll light it in
+      boostHold:  L(0.38, 0.52),      // 0.46  bend they'll hold it through
+      boostGap:   L(2.60, 0.50),      // 1.44  s between stints
+      leadCap:    w < 0.15 ? 150 : 1e9,  // ROOKIE ONLY: a rival this far clear stops pressing it
+      bandUp:     L(0.70, 1.00),      // 0.87  catch-UP band, used when the PLAYER is ahead
+      // The catch-DOWN half is the one that quietly hands you races. It is exactly ZERO at LEGEND:
+      // a rival who has beaten you to the front is never throttled back to keep you in the picture.
+      bandDown:   L(1.60, 0.00),      // 0.72
+      // LEGEND's only outright physical edge, and it is deliberately tiny: +2% top speed, worth
+      // about 2 s over the Main Stem. They beat you on the line and the throttle, not the engine.
+      pace:       1 + K.PACE_MAX * U().clamp((w - 0.6) / 0.4, 0, 1), // 1.000 / 1.000 / 1.020
+    };
+  }
+  A.tune = tune;                                  // exposed so a tuning pass can print the table
+
+  A.createPilot = function (boat, route, idx, difficulty) {
+    const d = difficulty == null ? 1 : difficulty;    // 0.7 rookie · 1.0 skipper · 1.45 legend
+    const k = tune(d);
+    return {
+      boat, route, diff: d, k,
       name: NAMES[idx % NAMES.length],
-      lane: ((idx % 4) - 1.5) * 0.42,            // preferred offset across the channel (-1..1 of half width)
-      skill: 0.60 + d * 0.24 + (idx * 0.37 % 1) * 0.12,
+      // preferred offset across the channel (-1..1 of half width). Legends barely use it — the
+      // fast line is the fast line, and a rival sitting a lane wide of it is a rival losing.
+      lane: ((idx % 4) - 1.5) * 0.42 * k.lane,
+      skill: U().clamp(k.throttle + (idx * 0.37 % 1) * 0.10 - 0.03, 0.3, 1),
       aggression: 0.15 + d * 0.35 + (idx * 0.61 % 1) * 0.3,
       wobbleSeed: idx * 13.7,
       ctl: { throttle: 0, brake: 0, steer: 0, boost: false },
       stuckTimer: 0,
-      boostTimer: 2 + idx * 1.7,
-      apex: 0, block: 0, _blockTgt: 0, blockT: 0, blockHold: 0,
+      boostTimer: (0.4 + idx * 0.5) * k.boostGap,
+      boosting: false,
+      apex: 0, block: 0, _blockTgt: 0, blockT: 0, blockHold: 0, steerSm: 0,
       draftBias: 0, mistakeT: A.K.MISTAKE_PERIOD, errT: 0, errKind: '', errDir: 1,
     };
   };
@@ -11885,11 +12641,14 @@ window.CHICAGO = {
   A.update = function (pilot, dt, t, playerProgress) {
     const b = pilot.boat;
     const route = pilot.route;
+    const k = pilot.k || (pilot.k = tune(pilot.diff == null ? 1 : pilot.diff));
     const speed = Math.hypot(b.vel.x, b.vel.z);
     const S = RR.Race && RR.Race.state && RR.Race.state();
 
-    // progress along route (race.js keeps b.routeD updated); loops wrap the lookahead
-    const look = 16 + speed * 1.15;
+    // progress along route (race.js keeps b.routeD updated); loops wrap the lookahead.
+    // Reading further down the channel IS the skill: it is what lets a pilot start the turn early
+    // and carry speed instead of arriving hot and scrubbing it off.
+    const look = 14 + speed * k.look;
     const path = route.path;
     const wrap = (d) => path.loop ? ((d % path.len) + path.len) % path.len : d;
     U().pathAt(path, wrap(b.routeD + look), pt);
@@ -11903,9 +12662,8 @@ window.CHICAGO = {
     // cut to the inside of the bend; better pilots commit harder and earlier.
     // bendSigned > 0 = channel turns right = inside is right = laneOff must go negative, because
     // positive laneOff puts the aim point to the LEFT (tx = pt.x - pt.tz * laneOff).
-    const apexTgt = -Math.sign(bendSigned) * U().clamp(bend / 0.9, 0, 1) *
-      A.K.APEX_GAIN * (0.55 + pilot.diff * 0.35);
-    pilot.apex = U().damp(pilot.apex || 0, apexTgt, A.K.APEX_DAMP, dt);
+    const apexTgt = -Math.sign(bendSigned) * U().clamp(bend / 0.9, 0, 1) * A.K.APEX_GAIN * k.apex;
+    pilot.apex = U().damp(pilot.apex || 0, apexTgt, k.apexDamp, dt);
 
     // ---- drafting: hunt for a tow. A rival 8-30 m ahead within 7 m laterally is free speed.
     pilot.draftBias = 0;
@@ -11933,7 +12691,7 @@ window.CHICAGO = {
     pilot.blockT = Math.max(0, (pilot.blockT || 0) - dt);
     pilot.blockHold = Math.max(0, (pilot.blockHold || 0) - dt);
     if (pilot.blockHold <= 0) pilot._blockTgt = 0;
-    const tightHere = pt.w < 14 ||
+    const tightHere = pt.w < 16 ||
       (RR.Bridges && RR.Bridges.duckY && isFinite(RR.Bridges.duckY(b.pos.x, b.pos.z)));
     if (pilot.blockT <= 0 && !tightHere && S && S.phase === 'racing' && pilot.aggression > 0.35) {
       const bfx = Math.sin(b.heading), bfz = Math.cos(b.heading);
@@ -11944,9 +12702,9 @@ window.CHICAGO = {
         if (along < -2 && along > -A.K.BLOCK_RANGE && Math.abs(lat) < 9) {
           const closing = (o.vel.x * bfx + o.vel.z * bfz) - (b.vel.x * bfx + b.vel.z * bfz);
           if (closing > 1.5) {
-            pilot._blockTgt = Math.sign(lat || 1) * A.K.BLOCK_GAIN;
-            pilot.blockT = A.K.BLOCK_COOLDOWN;
-            pilot.blockHold = A.K.BLOCK_HOLD;
+            pilot._blockTgt = Math.sign(lat || 1) * k.blockGain;
+            pilot.blockT = k.blockCool;
+            pilot.blockHold = k.blockHold;
             break;
           }
         }
@@ -11956,19 +12714,25 @@ window.CHICAGO = {
 
     // steer toward the lookahead point, offset into lane + apex + block + draft, with a lazy
     // sine wobble. Better pilots wobble less and correct harder — legends hold a surgical line.
-    const wobble = Math.sin(t * 0.6 + pilot.wobbleSeed) * (0.205 - pilot.diff * 0.06);
+    const wobble = Math.sin(t * 0.6 + pilot.wobbleSeed) * k.wobble;
     const laneOff = (pilot.lane + pilot.apex + wobble + (pilot.block || 0) + (pilot.draftBias || 0)) *
       Math.max(4, pt.w - 8);
     const tx = pt.x - pt.tz * laneOff;
     const tz = pt.z + pt.tx * laneOff;
     const desired = Math.atan2(tx - b.pos.x, tz - b.pos.z);
     let err = U().wrapAngle(desired - b.heading);
-    pilot.ctl.steer = U().clamp(err * (1.9 + pilot.diff * 0.5), -1, 1);
+    // reaction time, modelled honestly as a slew rate on the hands rather than a stale aim point:
+    // a rookie's correction arrives ~60 ms late and overshoots, a legend's is already there.
+    const rawSteer = U().clamp(err * k.steerGain, -1, 1);
+    pilot.steerSm = U().damp(pilot.steerSm == null ? rawSteer : pilot.steerSm, rawSteer, k.react, dt);
+    pilot.ctl.steer = pilot.steerSm;
 
     // shoulder-check: a rival running alongside gets leaned on. Aggression (which scales with
-    // difficulty) sets how often; a long cooldown keeps it racing, not bumper cars.
+    // difficulty) sets how often; a long cooldown keeps it racing, not bumper cars. Same tight-water
+    // veto as blocking: leaning on someone inside the lock chamber or under a bridge pier isn't
+    // hard racing, it's pinball, and the wedged boat loses half a minute to it.
     pilot.shoveT = Math.max(0, (pilot.shoveT || 0) - dt);
-    if (pilot.shoveT <= 0 && speed > b.spec.top * 0.55 && S && S.phase === 'racing') {
+    if (pilot.shoveT <= 0 && !tightHere && speed > b.spec.top * 0.55 && S && S.phase === 'racing') {
       const fx = Math.sin(b.heading), fz = Math.cos(b.heading);
       const R2 = A.K.SHOVE_RANGE * A.K.SHOVE_RANGE;
       for (const o of S.boats) {
@@ -11990,29 +12754,32 @@ window.CHICAGO = {
       pilot.ctl.steer = U().clamp(pilot.ctl.steer + pilot.shoveDir * 0.5, -1, 1);
     }
 
-    // ---- rubber-band as a bounded TOP-SPEED band with a deadzone. A 7% nudge is invisible to
-    // the player, keeps the pack together, and — crucially — is OFF when you are actually racing
-    // someone. Past that, the player feels the game cheating and the illusion dies.
+    // ---- rubber-band as a bounded TOP-SPEED band with a deadzone, split into its two halves.
+    // Catch-UP (you're ahead, they lift the pace) keeps the pack in your mirrors. Catch-DOWN
+    // (they're ahead, held back so you can reel them in) is the half that quietly wins races FOR
+    // the player — it is fat at ROOKIE, small at SKIPPER and exactly ZERO at LEGEND.
     const gapM = playerProgress - b.routeD;                    // >0 = player ahead
     const mag = U().clamp((Math.abs(gapM) - A.K.RUBBER_DEAD) / (A.K.RUBBER_FULL - A.K.RUBBER_DEAD), 0, 1);
-    const band = A.K.RUBBER_MAX * (pilot.diff < 1 ? 1.7 : pilot.diff > 1.2 ? 0.55 : 1);
-    b.rubber = 1 + Math.sign(gapM) * mag * band;               // physics.js consumes this
+    const band = A.K.RUBBER_MAX * (gapM > 0 ? k.bandUp : k.bandDown);
+    b.rubber = k.pace * (1 + Math.sign(gapM) * mag * band);     // physics.js consumes this
 
-    // throttle: full unless a bend looms; brake hard only for hairpins
+    // throttle: full unless a bend looms. WHERE they lift is the single biggest difference between
+    // the tiers — a LEGEND holds ~78% through a bend a ROOKIE takes at 40%, and only a hairpin
+    // (>1.2 rad of channel swing) is worth touching the brake for.
     let th = 1;
-    if (bend > 0.35) th = U().lerp(1, 0.45, U().smoothstep(0.35, 1.1, bend));
-    if (Math.abs(err) > 1.1) th = 0.35;
-    pilot.ctl.brake = bend > 0.95 && speed > b.spec.top * 0.75 ? 0.6 : 0;
+    if (bend > k.liftBend) th = U().lerp(1, k.liftFloor, U().smoothstep(k.liftBend, k.liftBend + k.liftSpan, bend));
+    if (Math.abs(err) > 1.1) th = Math.min(th, k.panicTh);
+    pilot.ctl.brake = bend > k.brakeBend && speed > b.spec.top * k.brakeSpeed ? k.brakeForce : 0;
     th *= pilot.skill;
     pilot.ctl.throttle = U().clamp(th, 0, 1);
 
     // ---- discrete mistakes. Wobble amplitude alone makes low difficulty feel drunk, not human;
-    // a rival who actually blows a corner reads as a rival. At diff 1.45 the multiplier is 0, so
-    // LEGEND pilots literally never err. That is the correct shape of a difficulty curve.
+    // a rival who actually blows a corner reads as a rival. At LEGEND the multiplier is 0, so
+    // those pilots literally never err. That is the correct shape of a difficulty curve.
     pilot.mistakeT = (pilot.mistakeT == null ? A.K.MISTAKE_PERIOD : pilot.mistakeT) - dt;
     if (pilot.mistakeT <= 0) {
       pilot.mistakeT = A.K.MISTAKE_PERIOD * (0.7 + Math.random() * 0.6);
-      if (Math.random() < A.K.MISTAKE_CHANCE * Math.max(0, 1.4 - pilot.diff)) {
+      if (Math.random() < k.mistake) {
         pilot.errT = 0.6 + Math.random() * 0.5;
         pilot.errKind = bend > 0.4 ? 'wide' : 'lift';          // blow the corner, or just coast
         pilot.errDir = Math.random() < 0.5 ? -1 : 1;
@@ -12026,19 +12793,33 @@ window.CHICAGO = {
       } else pilot.ctl.throttle *= 0.45;
     }
 
-    // ---- boost discipline
+    // ---- boost discipline. physics.js pays a 15% BIGGER multiplier for a boost lit from a tank
+    // above 0.90, so the correct policy is to hoard to full and then dump the whole tank down a
+    // straight — not to trickle it away the instant the meter allows. LEGEND does exactly that;
+    // ROOKIE lights it early, half-full, and gives it back in the next bend.
     pilot.boostTimer -= dt;
-    pilot.ctl.boost = false;
-    if (pilot.boostTimer <= 0 && bend < 0.28 && b.boostEnergy > (pilot.diff > 1.2 ? 0.35 : 0.5)) {
-      if (gapM > -80 || Math.random() < pilot.aggression * 0.3) pilot.ctl.boost = true;
-      if (b.boostEnergy < 0.15) pilot.boostTimer = 4 + Math.random() * 5;
+    if (pilot.boosting) {
+      // stay lit until the tank is dry or a real bend arrives — a stint is worth more than a stab
+      pilot.boosting = b.boostEnergy > 0.03 && bend < k.boostHold && pilot.ctl.throttle > pilot.skill * 0.6;
+      if (!pilot.boosting) pilot.boostTimer = k.boostGap;
+    } else if (pilot.boostTimer <= 0 && b.boostEnergy >= k.boostArm && pilot.ctl.throttle > pilot.skill * 0.9 &&
+               (bend < k.boostBend || speed < b.spec.top * 0.82)) {
+      // out of a bend the same fuel buys more, because the boost KICK is an acceleration, not a
+      // top-speed number — so "straight ahead" and "still climbing back to speed" both qualify.
+      pilot.boosting = true;
     }
-    // final dash: within 250 m of the flag and inside 40 m of the player, empty the tank
+    // ROOKIE ONLY: a rival a long way clear stops pressing the button. Nobody else eases up.
+    if (gapM < -k.leadCap) pilot.boosting = false;
+    pilot.ctl.boost = pilot.boosting;
+    // final dash: inside the last 250 m the tank is worth nothing at the flag — empty it.
     if (S && S.route) {
       const toGo = S.route.len - (b.routeD % S.route.len);
-      if (toGo < 250 && Math.abs(gapM) < 40) pilot.ctl.boost = b.boostEnergy > 0.12;
+      if (toGo < 250 && (pilot.diff > 1.2 || Math.abs(gapM) < 60)) {
+        pilot.ctl.boost = b.boostEnergy > 0.05;
+        pilot.boosting = pilot.ctl.boost;
+      }
     }
-    if (b.bumpRecover > 0) pilot.ctl.boost = false;             // rattled pilots don't hit the button
+    if (b.bumpRecover > 0) { pilot.ctl.boost = false; pilot.boosting = false; }  // rattled pilots don't hit the button
 
     // unstick: if wedged against a wall, back off and re-aim
     if (speed < 1.2 && pilot.ctl.throttle > 0.5) pilot.stuckTimer += dt;
@@ -14583,6 +15364,43 @@ window.CHICAGO = {
     { name: 'NAVY PIER HEADLAND', x: 2520, z: -300, side: -1 },    // the wide outside line, biggest chop
   ];
 
+  // BOOST across the bar, with chevrons at both ends funnelling the eye into the gap.
+  function boostSignTex() {
+    return RR.U.canvasTexture(512, 96, (c, w, h) => {
+      c.fillStyle = '#07301b'; c.fillRect(0, 0, w, h);
+      c.fillStyle = '#25ff7a'; c.fillRect(0, 0, w, 7); c.fillRect(0, h - 7, w, 7);
+      c.fillStyle = '#eafff2';
+      c.font = 'bold 56px "Arial Black", Arial, sans-serif';
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText('BOOST', w / 2, h / 2 + 3);
+      c.strokeStyle = '#25ff7a'; c.lineWidth = 8; c.lineCap = 'round';
+      for (let k = 0; k < 3; k++) for (const s of [-1, 1]) {
+        const x = w / 2 + s * (140 + k * 26);
+        c.beginPath();
+        c.moveTo(x + s * 15, h * 0.22); c.lineTo(x, h / 2); c.lineTo(x + s * 15, h * 0.78);
+        c.stroke();
+      }
+    });
+  }
+  // Chevrons painted on the water, apex toward +v (CanvasTexture flips Y) = the way through.
+  // Drawn twice, dark under bright: the Chicago River is GREEN, and a green arrow on green water
+  // is an arrow nobody sees.
+  function boostMatTex() {
+    return RR.U.canvasTexture(128, 128, (c, w, h) => {
+      c.clearRect(0, 0, w, h);
+      c.lineCap = 'round'; c.lineJoin = 'round';
+      // a deep V, not a shallow one: seen from a boat's eye the mat is almost edge-on, and a
+      // shallow chevron foreshortens into a plain stripe
+      for (const pass of [['#06251a', 28], ['#b6ffd9', 15]]) {
+        c.strokeStyle = pass[0]; c.lineWidth = pass[1];
+        for (let k = 0; k < 3; k++) {
+          const y = 38 + k * 42;
+          c.beginPath(); c.moveTo(12, y); c.lineTo(w / 2, y - 34); c.lineTo(w - 12, y); c.stroke();
+        }
+      }
+    });
+  }
+
   function placeGate(route, x, z, side, out) {
     const q = U().pathNearest(route, x, z);
     if (q.dist > 70) return null;
@@ -14624,38 +15442,85 @@ window.CHICAGO = {
     state.boostGates = gates;
     if (!gates.length) return;
 
-    // one merged mesh for the posts, one for the glows: +2 draw calls for all six gates
-    const GOLD = new THREE.Color(0xffc857).convertSRGBToLinear();
-    const postGeos = [], glowGeos = [];
+    // A gate has to read as SPEED from 200 m out, not as a channel marker. Green (the only colour
+    // that means go), chevrons painted on the water pointing the way through, BOOST lettered across
+    // the bar so it reads from either direction, and a ring that pulses on the water like a start
+    // light — and goes dark the moment you have taken it.
+    const postGeos = [], glowGeos = [], signGeos = [], matGeos = [];
+    const HALF = 4.0;
     for (const g of gates) {
       const q = U().pathNearest(route, g.x, g.z);
+      const across = Math.atan2(q.tx, q.tz);            // rotateY(across) sends +x to (tz, -tx)
       for (const s of [-1, 1]) {
-        const px = g.x + q.tz * 3.4 * s, pz = g.z - q.tx * 3.4 * s;
-        const post = new THREE.CylinderGeometry(0.26, 0.42, 9, 6);
+        const px = g.x + q.tz * HALF * s, pz = g.z - q.tx * HALF * s;
+        const post = new THREE.CylinderGeometry(0.24, 0.44, 9, 6);
         post.translate(px, 4.5, pz);
         postGeos.push(post);
-        const glow = new THREE.SphereGeometry(0.7, 8, 6);
-        glow.translate(px, 9.4, pz);
+        const glow = new THREE.SphereGeometry(0.72, 8, 6);
+        glow.translate(px, 9.3, pz);
         glowGeos.push(glow);
       }
-      // rotateY(t) sends +x to (cos t, -sin t), so atan2(tx, tz) lays the bar ACROSS the channel
-      const bar = new THREE.BoxGeometry(7.6, 0.4, 0.4);
-      bar.rotateY(Math.atan2(q.tx, q.tz));
-      bar.translate(g.x, 8.6, g.z);
+      const bar = new THREE.BoxGeometry(HALF * 2 + 0.9, 0.34, 0.34);
+      bar.rotateY(across);
+      bar.translate(g.x, 8.35, g.z);
       postGeos.push(bar);
+      // one sign per side, each turned to face its own oncoming traffic, so BOOST never reads
+      // mirrored the way a single double-sided plane would
+      for (const s of [-1, 1]) {
+        const sign = new THREE.PlaneGeometry(HALF * 2 + 2.6, 2.2);
+        sign.rotateY(Math.atan2(q.tx * s, q.tz * s));   // plane normal +z -> (+/-tx, +/-tz)
+        sign.translate(g.x + q.tx * 0.26 * s, 8.4, g.z + q.tz * 0.26 * s);
+        signGeos.push(sign);
+      }
+      // chevron mat on the water. rotateX(-PI/2) puts the texture's +v on -z; the extra PI turns
+      // it back down the route, so the arrows point the way you are meant to go.
+      const pad = new THREE.PlaneGeometry(HALF * 2 + 1.0, 18);
+      pad.rotateX(-Math.PI / 2);
+      pad.rotateY(across + Math.PI);
+      pad.translate(g.x, 0.36, g.z);
+      const uv = pad.attributes.uv;                    // two tiles down the run: a chevron every 2 m
+      for (let i = 0; i < uv.count; i++) uv.setY(i, uv.getY(i) * 2);
+      matGeos.push(pad);
     }
     const merge = RR.City && RR.City.mergeGeoms;
     if (!merge) return;
+    const GO = new THREE.Color(0x25ff7a).convertSRGBToLinear();
     const posts = new THREE.Mesh(merge(postGeos), new THREE.MeshStandardMaterial({
-      color: 0x2a2419, emissive: GOLD, emissiveIntensity: 0.55, roughness: 0.45 }));
+      color: 0x16241c, emissive: GO, emissiveIntensity: 0.55, roughness: 0.42 }));
     const glows = new THREE.Mesh(merge(glowGeos), new THREE.MeshBasicMaterial({
-      color: 0xffd24a, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
-    glows.renderOrder = 2;
-    glows.layers.set(1);
+      color: 0x5cffa8, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
+    // unlit and fully opaque: the legend has to read at midnight as clearly as at noon
+    const signs = new THREE.Mesh(merge(signGeos), new THREE.MeshBasicMaterial({
+      map: boostSignTex(), side: THREE.FrontSide }));
+    const matTex = boostMatTex();
+    matTex.wrapS = matTex.wrapT = THREE.RepeatWrapping;
+    // Normal blending, not additive: green added to the river's own green clips straight to white
+    // (the same trap the lake ribbon fell into), and a white gate says nothing at all.
+    const mats = new THREE.Mesh(merge(matGeos), new THREE.MeshBasicMaterial({
+      map: matTex, transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide }));
+    glows.renderOrder = 2; mats.renderOrder = 2;
+    glows.layers.set(1); mats.layers.set(1);
     posts.frustumCulled = false; glows.frustumCulled = false;
-    gateGroup.add(posts, glows);
+    signs.frustumCulled = false; mats.frustumCulled = false;
+    gateGroup.add(posts, glows, signs, mats);
+    // The ring is the one part that may be SCALED, because each is its own mesh with untranslated
+    // geometry — the merged meshes above are baked at world coordinates and scaling them flies the
+    // Harbor Lock gate 400 m up the river.
+    const ringGeo = new THREE.RingGeometry(3.4, 4.5, 30);
+    ringGeo.rotateX(-Math.PI / 2);
+    for (const g of gates) {
+      const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
+        color: 0x25ff7a, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending,
+        depthWrite: false, side: THREE.DoubleSide }));
+      ring.position.set(g.x, 0.46, g.z);
+      ring.renderOrder = 3; ring.layers.set(1);
+      gateGroup.add(ring);
+      g.ring = ring;
+      g.hitT = 0;
+    }
     state.boostGateGlow = glows;
     state.boostGatePosts = posts;
+    state.boostGateMat = matTex;
   }
 
   // Pre-placed trackside cameras for the cinematic rig (FEEL §2.8 shot 2): sample the route every
@@ -14935,14 +15800,17 @@ window.CHICAGO = {
     if (!gates || !gates.length || b !== S.player || b.finished) return;
     for (const g of gates) {
       if (g.lastLap === (b.lap || 0)) continue;
-      if (U().dist2(b.pos.x, b.pos.z, g.x, g.z) > 49) continue;   // radius 7 m
+      if (U().dist2(b.pos.x, b.pos.z, g.x, g.z) > 56.25) continue;   // radius 7.5 m: the posts stand at 4
       g.lastLap = b.lap || 0;
+      g.hitT = 0.55;                                              // the ring blows out and goes dark
       b.boostEnergy = Math.min(1, b.boostEnergy + 0.30);
       if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.18);
       if (RR.HUD && RR.HUD.chip) RR.HUD.chip('near', '+BOOST');
       else if (RR.HUD && RR.HUD.flash) RR.HUD.flash('+BOOST');
       if (RR.Audio && RR.Audio.boostGate) RR.Audio.boostGate();
       else if (RR.Audio && RR.Audio.checkpoint) RR.Audio.checkpoint();
+      // a wall of spray through the gate: you FELT it, so you should see it
+      if (RR.FX && RR.FX.spray) RR.FX.spray(g.x, 0.6, g.z, 0, 7.5, 0, 14, 6.5, 1.1);
       if (RACE.onBoostGate) RACE.onBoostGate(g);
     }
   }
@@ -15021,6 +15889,32 @@ window.CHICAGO = {
       if (cps[i].pylonGlow) cps[i].pylonGlow.scale.setScalar(1 + Math.sin(t * 6) * (active ? 0.5 : 0.15));
     }
     if (S.lakeRibbon) S.lakeRibbon.tex.offset.y = -(t * 0.4) % 1;   // chevrons scroll toward the finish
+    if (S.boostGateMat) S.boostGateMat.offset.y = -(t * 0.55) % 1;  // the water chevrons run the way through
+    // the ring is the per-gate state light: pulsing green = open, blown out = you just took it,
+    // dark = already banked this lap
+    const gates = S.boostGates;
+    if (gates) {
+      const lap = S.player ? (S.player.lap || 0) : 0;
+      const dt = Math.min(0.1, Math.max(0, t - (S._gateT == null ? t : S._gateT)));
+      S._gateT = t;
+      for (let i = 0; i < gates.length; i++) {
+        const g = gates[i], r = g.ring;
+        if (!r) continue;
+        if (g.hitT > 0) {
+          g.hitT = Math.max(0, g.hitT - dt);
+          const k = 1 - g.hitT / 0.55;
+          r.scale.setScalar(1 + k * 2.4);
+          r.material.opacity = 0.95 * (1 - k);
+        } else if (g.lastLap === lap) {
+          r.scale.setScalar(1);
+          r.material.opacity = 0.10;                                // spent until the next lap
+        } else {
+          const p = 0.5 + 0.5 * Math.sin(t * 3.6 - i * 0.7);
+          r.scale.setScalar(1 + p * 0.13);
+          r.material.opacity = 0.34 + p * 0.42;
+        }
+      }
+    }
     if (S.boostGateGlow) {
       // Emission only — NEVER scale. The twelve glow spheres are baked at world coordinates into
       // one merged geometry, so mesh.scale works about the scene origin, not about each orb: the
@@ -15036,17 +15930,48 @@ window.CHICAGO = {
 
   // ---------- THE CHICAGO CUP ----------
   // Four rounds over the four courses, points 10/8/6/4/3/2, persisted so you can walk away and
-  // come back to a standings table that remembers.
+  // come back to a standings table that remembers — including WHO you were racing and what they
+  // did in each round. RACE.cupBoard() is the whole bracket in one object; the UI renders it.
   RACE.CUP_ROUNDS = ['mainstem', 'southbranch', 'riverrun', 'lakecircuit'];
   RACE.CUP_POINTS = [10, 8, 6, 4, 3, 2];
+
+  // A championship needs a FIELD, not five anonymous boats: the same rivals have to come back for
+  // round two under the same names. The roster is drawn once at cupBegin and stored with the cup,
+  // so it survives every reload. (ai.js keeps its own list for one-off races; if it ever exports
+  // one we use that instead of this copy.)
+  const CUP_RIVAL_NAMES = ['“Wacker” Wade', 'Lou Canal', 'Stella Skyline', 'Deep Dish Dre',
+    'Goose Island Gus', 'El Tracks Elena', 'Marina Mae', 'Bridgeport Bo',
+    'Pilsen Pearl', 'Bubbly Creek Benny', 'Lockport Lucia', 'Calumet Cal'];
+
+  function drawField(n, seed) {
+    const pool = ((RR.AI && RR.AI.NAMES) || CUP_RIVAL_NAMES).slice();
+    const rng = U().mulberry(seed >>> 0);                 // mulberry, never Math.random: the field
+    for (let i = pool.length - 1; i > 0; i--) {           // is game state and has to reload identically
+      const j = Math.floor(rng() * (i + 1));
+      const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+    }
+    const names = ['YOU'];
+    for (let i = 1; i < n; i++) names.push(pool[(i - 1) % pool.length]);
+    return names;
+  }
 
   function cupLoad() {
     try {
       const raw = localStorage.getItem('rr_cup');
       const c = raw ? JSON.parse(raw) : null;
-      if (c && typeof c.round === 'number' && Array.isArray(c.points)) return c;
+      if (c && typeof c.round === 'number' && Array.isArray(c.points)) return cupMigrate(c);
     } catch (e) { /* file:// storage may be unavailable — fine */ }
     return null;
+  }
+  // A cup saved by an older build has points and nothing else. Give it a roster and an empty
+  // per-round table rather than dropping the player's championship on the floor.
+  function cupMigrate(c) {
+    if (!Array.isArray(c.names) || c.names.length !== c.points.length) {
+      c.names = drawField(c.points.length, 0x9E3779B9 ^ ((c.hull | 0) * 2654435761));
+    }
+    if (!Array.isArray(c.rounds)) c.rounds = [];
+    c.rounds.length = RACE.CUP_ROUNDS.length;
+    return c;
   }
   function cupSave(c) {
     try { localStorage.setItem('rr_cup', JSON.stringify(c)); } catch (e) { /* fine */ }
@@ -15056,7 +15981,13 @@ window.CHICAGO = {
   RACE.cup = () => cupState || (cupState = cupLoad());
 
   RACE.cupBegin = function (hull, diff, fieldSize) {
-    cupState = { round: 0, points: new Array(fieldSize || 6).fill(0), hull: hull | 0, diff: diff == null ? 1 : diff };
+    const n = fieldSize || 6;
+    cupState = {
+      round: 0, done: false, hull: hull | 0, diff: diff == null ? 1 : diff,
+      points: new Array(n).fill(0),
+      names: drawField(n, (Date.now() ^ ((hull | 0) * 2654435761)) >>> 0),
+      rounds: new Array(RACE.CUP_ROUNDS.length).fill(null),
+    };
     cupSave(cupState);
     return cupState;
   };
@@ -15069,28 +16000,101 @@ window.CHICAGO = {
     const i = RACE.COURSES.findIndex((x) => x.id === id);
     return i < 0 ? 0 : i;
   };
+  // main.js reads these when it builds the field, so the boats on the water carry the same names
+  // the standings table shows, and the whole championship runs at the difficulty it began at.
+  RACE.cupFieldNames = function () { const c = RACE.cup(); return c && !c.done ? c.names.slice() : null; };
+  RACE.cupDifficulty = function () { const c = RACE.cup(); return c && !c.done ? c.diff : null; };
 
   // results = the array RACE.onRaceOver hands out, finishing order first. Player is index 0 of
   // the boats array, so standings are keyed by that index and survive a page reload.
   RACE.cupRecord = function (results) {
     const c = RACE.cup();
     if (!c || !S) return null;
+    cupMigrate(c);
+    const rIdx = Math.min(c.round, RACE.CUP_ROUNDS.length - 1);
+    const n = c.points.length;
+    const row = { course: RACE.CUP_ROUNDS[rIdx], pos: new Array(n).fill(0), pts: new Array(n).fill(0), time: new Array(n).fill(null) };
     for (let i = 0; i < results.length; i++) {
       const idx = S.boats.indexOf(results[i].boat);
       if (idx < 0) continue;
-      while (c.points.length <= idx) c.points.push(0);
-      c.points[idx] += RACE.CUP_POINTS[Math.min(i, RACE.CUP_POINTS.length - 1)];
+      while (c.points.length <= idx) { c.points.push(0); c.names.push('RIVAL ' + idx); }
+      const p = RACE.CUP_POINTS[Math.min(i, RACE.CUP_POINTS.length - 1)];
+      c.points[idx] += p;
+      row.pos[idx] = i + 1;
+      row.pts[idx] = p;
+      row.time[idx] = isFinite(results[i].time) ? results[i].time : null;
+      const nm = results[i].boat.isPlayer ? 'YOU' : results[i].boat.pilotName;
+      if (nm) c.names[idx] = nm;
     }
+    c.rounds[rIdx] = row;
     c.round++;
     c.done = c.round >= RACE.CUP_ROUNDS.length;
     cupSave(c);
     return c;
   };
+
+  // Ordered standings. Ties break on the better record — wins first, then best single finish —
+  // and only then on the player, because "level on points" is not a placing.
+  function standingsOf(c) {
+    const R = RACE.CUP_ROUNDS.length;
+    const rows = c.names.map((name, k) => {
+      const perRound = [], perRoundPts = [];
+      let wins = 0, best = 99, rounds = 0;
+      for (let i = 0; i < R; i++) {
+        const r = c.rounds[i];
+        const pos = r && r.pos[k] ? r.pos[k] : null;
+        perRound.push(pos);
+        perRoundPts.push(pos ? (r.pts[k] || 0) : null);   // null = did not take part, not "zero points"
+        if (pos) { rounds++; if (pos === 1) wins++; if (pos < best) best = pos; }
+      }
+      return { idx: k, name, isPlayer: k === 0, pts: c.points[k] || 0, perRound, perRoundPts, wins, rounds, best: best === 99 ? null : best };
+    });
+    rows.sort((a, b) => (b.pts - a.pts) || (b.wins - a.wins) ||
+      ((a.best || 99) - (b.best || 99)) || (a.isPlayer ? -1 : b.isPlayer ? 1 : a.idx - b.idx));
+    const top = rows.length ? rows[0].pts : 0;
+    rows.forEach((s, i) => { s.pos = i + 1; s.gap = top - s.pts; });
+    return rows;
+  }
+
   RACE.cupStandings = function () {
     const c = RACE.cup();
     if (!c) return [];
-    return c.points.map((p, i) => ({ idx: i, pts: p, isPlayer: i === 0 }))
-      .sort((a, b) => b.pts - a.pts);
+    cupMigrate(c);
+    return standingsOf(c);
+  };
+
+  // Everything a standings screen needs, in one call. See the shape in the README of this section:
+  //   { rounds[4], current, roundsDone, total, done, standings[], points[], fieldSize,
+  //     leader, player, champion, hull, diff }
+  RACE.cupBoard = function () {
+    const c = RACE.cup();
+    if (!c) return null;
+    cupMigrate(c);
+    const standings = standingsOf(c);
+    const rounds = RACE.CUP_ROUNDS.map((id, i) => {
+      const course = RACE.COURSES.find((x) => x.id === id) || null;
+      const row = c.rounds[i] || null;
+      const results = row ? c.names.map((name, k) => ({
+        idx: k, name, isPlayer: k === 0, pos: row.pos[k] || null, pts: row.pts[k] || 0, time: row.time[k],
+      })).filter((r) => r.pos).sort((a, b) => a.pos - b.pos) : [];
+      return {
+        idx: i, id, name: course ? course.name : id.toUpperCase(),
+        desc: course ? course.desc : '', laps: course ? course.laps : 1,
+        courseIdx: course ? RACE.COURSES.indexOf(course) : -1,
+        state: row ? 'done' : (i === c.round ? 'current' : 'upcoming'),
+        winner: results.length ? results[0] : null,
+        results,
+      };
+    });
+    return {
+      rounds, total: RACE.CUP_ROUNDS.length, roundsDone: Math.min(c.round, RACE.CUP_ROUNDS.length),
+      current: c.done ? -1 : c.round, done: !!c.done,
+      standings, points: RACE.CUP_POINTS.slice(), fieldSize: c.points.length,
+      leader: standings[0] || null,
+      player: standings.find((s) => s.isPlayer) || null,
+      champion: c.done ? (standings[0] || null) : null,
+      hull: c.hull, diff: c.diff,
+    };
   };
 
   RACE.isTour = () => !!(S && S.tour);
@@ -15185,8 +16189,11 @@ window.CHICAGO = {
 #delta.on{opacity:1} #delta.up{color:#EF3340} #delta.dn{color:#3ED17E}
 /* NB: on any element that sets its own font-size, an em offset resolves against THAT size, not
    the HUD's. Every such offset below is pre-divided so it still lands where §4.3's layout says. */
+/* The gap row is the one HUD element with no plate behind it, and it sits over open sky at the
+   top of the frame. Dim text there is unreadable on the water — it needs its own contrast. */
 #gaps{position:absolute;left:50%;top:7.56em;transform:translateX(-50%);display:flex;gap:1.1em;
-  font:700 .78em/1 var(--f-ui);letter-spacing:.14em;color:var(--text-dim);opacity:0;
+  font:700 .78em/1 var(--f-ui);letter-spacing:.14em;color:var(--text);opacity:0;
+  text-shadow:0 1px 3px rgba(0,0,0,.95),0 0 .7em rgba(0,0,0,.75);
   transition:opacity var(--t-std) var(--e-out);white-space:nowrap}
 #gaps.on{opacity:1}
 #gaps b{color:#fff;font-family:var(--f-num);font-variant-numeric:tabular-nums;margin-left:.35em}
@@ -15345,8 +16352,12 @@ window.CHICAGO = {
 /* the two light-blue bars at the flag's TRUE proportions — the flag is a map of this course */
 /* z-index:-1 keeps the pseudo-element BEHIND #menu's in-flow children. Without it an absolutely
    positioned ::before paints above them and the blur eats the menu's own text. */
+/* Layer one darkens the top and bottom of the flythrough: the star captions and the key line
+   land over a sunlit skyline and an orange jump ramp, and neither survived at full brightness. */
 #menu.title-screen::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:-1;
-  background:linear-gradient(180deg,transparent 0 16.6%,rgba(126,200,227,.13) 16.6% 33.3%,
+  background:linear-gradient(180deg,rgba(4,18,27,.66) 0,rgba(4,18,27,.24) 24%,rgba(4,18,27,0) 44%,
+      rgba(4,18,27,0) 60%,rgba(4,18,27,.34) 80%,rgba(4,18,27,.66) 100%),
+    linear-gradient(180deg,transparent 0 16.6%,rgba(126,200,227,.13) 16.6% 33.3%,
     transparent 33.3% 66.6%,rgba(126,200,227,.13) 66.6% 83.3%,transparent 83.3%)}
 #menu.title-screen{padding:2.2vh 0}
 #title{font:400 clamp(44px,7.2vw,104px)/.90 var(--f-display);letter-spacing:.005em;
@@ -15358,18 +16369,23 @@ window.CHICAGO = {
 /* star + its caption in one column, so the caption really does sit under its own star */
 .stars{display:flex;gap:2.6vw;justify-content:center;align-items:flex-start;margin-bottom:1.2vh;
   letter-spacing:0;color:inherit;font-size:inherit;text-shadow:none}
-.starcol{display:flex;flex-direction:column;align-items:center;gap:.75em;width:clamp(74px,7.8vw,116px)}
+/* wide enough for GREAT FIRE 1871 / FORT DEARBORN on one line at the new caption size */
+.starcol{display:flex;flex-direction:column;align-items:center;gap:.75em;width:clamp(86px,9.4vw,140px)}
 .starcol .star6{width:clamp(18px,2.0vw,28px);height:clamp(18px,2.0vw,28px);
   animation:starbeat 3.2s ease-in-out infinite}
 .starcol:nth-child(2) .star6{animation-delay:.12s} .starcol:nth-child(3) .star6{animation-delay:.24s}
 .starcol:nth-child(4) .star6{animation-delay:.36s}
-.starcol span{font:700 9px/1.25 var(--f-ui);letter-spacing:.14em;color:rgba(239,51,64,.85);
-  text-align:center;text-shadow:0 1px 3px rgba(0,0,0,.85)}
+/* 9px fixed was sub-legible at any resolution, and translucent red over a sunlit skyline read as
+   noise. Solid flag red on a hard shadow, sized like the rest of the kit. */
+.starcol span{font:700 clamp(10px,.88vw,14px)/1.25 var(--f-ui);letter-spacing:.12em;color:var(--chi-red);
+  text-align:center;text-shadow:0 1px 2px #000,0 0 .6em rgba(0,0,0,.95)}
 @keyframes starbeat{0%,100%{transform:scale(1);filter:none}
   50%{transform:scale(1.09);filter:drop-shadow(0 0 .5em rgba(239,51,64,.75))}}
 
-.menu-list{margin-top:2.2vh;gap:.5em;min-width:21em}
-.menu-item{font:700 1.05em/1 var(--f-ui);letter-spacing:.24em;padding:.76em 2em;border-radius:2px;
+/* max-content, so a long label ("CHAMPIONSHIP · ROUND 2/4") widens the plate instead of
+   overflowing it — every item in a list stays the same width as the longest */
+.menu-list{margin-top:2.2vh;gap:.5em;min-width:21em;width:max-content;max-width:92vw}
+.menu-item{white-space:nowrap;font:700 1.05em/1 var(--f-ui);letter-spacing:.24em;padding:.76em 2em;border-radius:2px;
   background:var(--panel);border:0;box-shadow:inset 0 0 0 2px var(--rule-soft);
   color:var(--text);transition:all var(--t-micro) var(--e-out);text-align:center;cursor:pointer}
 .menu-item.sel,.menu-item:hover{background:var(--sign-green);color:#fff;
@@ -15434,6 +16450,134 @@ window.CHICAGO = {
   font:700 .95em/1 var(--f-ui);letter-spacing:.28em;text-align:center;border-radius:2px;
   animation:recordin 620ms var(--e-pop) both}
 @keyframes recordin{from{transform:scale(.6) rotate(-3deg);opacity:0}to{transform:none;opacity:1}}
+
+/* ------------------------------------------------------ THE CHICAGO CUP ----*/
+/* A championship is a SEASON TABLE, not a leaderboard: one column per round, so the whole story —
+   who won what, who is climbing, what is still to play for — reads in one glance. Sized off both
+   viewport axes so the four-round board never runs off the bottom of a 1280x720 window. */
+/* Every post-race screen sits over a still-rendering city, and light stonework behind 8pt tracking
+   is unreadable. One blurred scrim buys back the whole contrast budget. */
+#menu.scrim::before{content:"";position:absolute;inset:0;z-index:-1;
+  backdrop-filter:blur(7px) saturate(.6);
+  background:linear-gradient(180deg,rgba(4,18,27,.86),rgba(4,18,27,.66) 42%,rgba(4,18,27,.88))}
+#cup-board{width:min(75em,95vw);display:flex;flex-direction:column;gap:.85em;
+  font:400 clamp(11px,min(1.02vw,1.80vh),16px)/1 var(--f-ui)}
+.cup-head{text-align:center}
+.cup-crest{display:flex;justify-content:center;gap:1.05em;margin-bottom:.5em}
+.cup-crest .star6{width:.7em;height:.7em;animation:starbeat 3.2s ease-in-out infinite}
+.cup-crest .star6:nth-child(2){animation-delay:.12s}
+.cup-crest .star6:nth-child(3){animation-delay:.24s}
+.cup-crest .star6:nth-child(4){animation-delay:.36s}
+.cup-title{font:400 3.1em/.92 var(--f-display);letter-spacing:.035em;color:#fff;
+  text-shadow:0 .045em 0 var(--chi-blue-ink),0 .09em .3em rgba(0,0,0,.65)}
+.cup-kicker{margin-top:.85em;font:700 .8em/1.5 var(--f-ui);letter-spacing:.26em;color:var(--chi-blue)}
+.cup-kicker b{color:#fff}
+.cup-kicker .nx{color:var(--gold)}
+
+/* the bracket: four plates, left to right, with the run of play arrowed between them */
+.cup-bracket{display:grid;grid-template-columns:repeat(4,1fr);gap:1.55em}
+.cup-round{position:relative;min-width:0;padding:.6em .8em .7em;border-radius:2px;
+  background:var(--panel);box-shadow:inset 0 0 0 2px var(--rule-soft)}
+.cup-round::after{content:"";position:absolute;right:-1.08em;top:50%;width:0;height:0;
+  border:.4em solid transparent;border-left-color:rgba(126,200,227,.5);transform:translateY(-50%)}
+.cup-round:last-child::after{display:none}
+.cup-round .rn{font:700 .66em/1 var(--f-ui);letter-spacing:.28em;color:var(--text-mute)}
+/* two lines, always: LAKE MICHIGAN CIRCUIT will not fit on one at a quarter of the board */
+.cup-round .rname{margin-top:.3em;font:400 1.24em/1.02 var(--f-display);letter-spacing:.02em;
+  color:var(--text-dim);min-height:2.04em}
+.cup-round .rline{margin-top:.42em;display:flex;align-items:center;gap:.42em;
+  font:700 .68em/1.3 var(--f-ui);letter-spacing:.12em;color:var(--text-mute);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cup-round .rline .star6{width:.6em;height:.6em;flex:0 0 auto}
+.cup-round .rline b{color:#fff;overflow:hidden;text-overflow:ellipsis}
+.cup-round .rline.me{color:var(--gold)}
+.cup-round.done{box-shadow:inset 0 0 0 2px var(--rule-soft),inset .26em 0 0 var(--sign-green)}
+.cup-round.done .rn{color:var(--text-dim)}
+.cup-round.done .rname{color:#fff}
+.cup-round.next{background:var(--panel-hi);box-shadow:inset 0 0 0 2px var(--gold)}
+.cup-round.next .rn,.cup-round.next .rline{color:var(--gold)}
+.cup-round.next .rname{color:#fff}
+.cup-round.next .rline b{color:var(--gold)}
+.cup-round.later{opacity:.5}
+/* the round you have just come off flashes gold once, then settles into the finished state */
+.cup-round.fresh{animation:cupfresh 1.25s var(--e-out) both}
+@keyframes cupfresh{
+  0%{box-shadow:inset 0 0 0 2px var(--gold),0 0 1.6em rgba(255,200,87,.55)}
+  100%{box-shadow:inset 0 0 0 2px var(--rule-soft),inset .26em 0 0 var(--sign-green)}}
+
+/* the season table */
+.cup-table{border-top:2px solid var(--chi-blue)}
+.cup-row{display:grid;grid-template-columns:2.8em minmax(7em,1fr) repeat(4,5.6em) 3.4em 4.8em 3.4em;
+  align-items:center;gap:.6em;padding:.28em .95em}
+.cup-row.head{padding:.7em .95em .62em;font:700 .7em/1 var(--f-ui);letter-spacing:.2em;
+  color:var(--chi-blue);text-align:center;border-bottom:1px solid var(--rule-soft)}
+.cup-row.head .n{text-align:left}
+.cup-row.head .rh i{display:block;margin-top:.42em;font:700 .84em/1 var(--f-ui);
+  letter-spacing:.06em;color:var(--text-mute)}
+.cup-row.head .rh.now,.cup-row.head .rh.now i{color:var(--gold)}
+.cup-row.line{background:var(--panel);border-bottom:1px solid rgba(255,255,255,.05);
+  font:700 .9em/1 var(--f-ui);letter-spacing:.08em;color:var(--text-dim);
+  animation:rowin 320ms var(--e-out) both}
+.cup-row.line:nth-child(3){animation-delay:55ms}  .cup-row.line:nth-child(4){animation-delay:110ms}
+.cup-row.line:nth-child(5){animation-delay:165ms} .cup-row.line:nth-child(6){animation-delay:220ms}
+.cup-row.line:nth-child(7){animation-delay:275ms} .cup-row.line:nth-child(8){animation-delay:330ms}
+.cup-row .ps{font:400 1.6em/1 var(--f-display);color:#fff;text-align:right}
+.cup-row.p1 .ps{color:var(--gold)} .cup-row.p2 .ps{color:#DDE3E8} .cup-row.p3 .ps{color:#C97B3C}
+.cup-row .n{position:relative;display:flex;align-items:center;gap:.5em;min-width:0;color:#fff}
+.cup-row .n b,.cup-row .n .star6{position:relative;z-index:1}
+.cup-row .n b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cup-row .n .star6{width:.62em;height:.62em;flex:0 0 auto}
+/* points as a bar behind the name: the shape of the championship, read without doing arithmetic */
+.cup-row .n .bar{position:absolute;left:-.45em;top:50%;height:1.85em;margin-top:-.925em;
+  background:rgba(126,200,227,.15);border-left:2px solid rgba(126,200,227,.45);border-radius:0 2px 2px 0}
+.cup-row.you .n .bar{background:rgba(255,200,87,.18);border-left-color:var(--gold)}
+.cup-cell{text-align:center;padding:.22em 0;border-radius:2px;background:rgba(255,255,255,.035)}
+.cup-cell .pp{display:block;font:400 1.45em/1 var(--f-display);color:#fff}
+.cup-cell .pv{display:block;margin-top:.2em;font:700 .68em/1 var(--f-ui);letter-spacing:.08em;color:var(--gold)}
+.cup-cell.p1 .pp{color:var(--gold)} .cup-cell.p2 .pp{color:#DDE3E8} .cup-cell.p3 .pp{color:#C97B3C}
+.cup-cell.none{font:700 1.1em/1.55 var(--f-ui);color:var(--text-mute)}
+.cup-cell.now{background:rgba(255,200,87,.09)}
+.cup-wins{text-align:center;font:700 .9em/1 var(--f-num);font-variant-numeric:tabular-nums;color:var(--text-dim)}
+.cup-wins.has{color:var(--gold)}
+.cup-tot{text-align:right}
+.cup-tot b{font:400 1.85em/1 var(--f-num);font-variant-numeric:tabular-nums;color:#fff}
+.cup-tot i{display:block;margin-top:.18em;font:700 .64em/1 var(--f-ui);letter-spacing:.1em;color:var(--text-mute)}
+.cup-row.p1 .cup-tot b{color:var(--gold)}
+.cup-row.p1 .cup-tot i{color:var(--chi-blue)}
+.cup-mv{text-align:center;font:700 .84em/1 var(--f-num);font-variant-numeric:tabular-nums;color:var(--text-mute)}
+.cup-mv.up{color:#3ED17E} .cup-mv.dn{color:var(--chi-red)}
+.cup-row.you{background:rgba(255,200,87,.11);box-shadow:inset .3em 0 0 var(--gold);color:#fff}
+
+/* champion */
+.cup-champ{width:min(100%,34em);align-self:center;text-align:center;padding:.85em 1.4em .95em;border-radius:2px;
+  background:linear-gradient(180deg,rgba(255,200,87,.20),rgba(255,200,87,.05)),var(--panel-hi);
+  box-shadow:inset 0 0 0 2px var(--gold);animation:champin 700ms var(--e-pop) both}
+@keyframes champin{from{transform:scale(.88);opacity:0}to{transform:none;opacity:1}}
+.cup-champ .band{display:flex;align-items:center;justify-content:center;gap:1em;
+  font:700 .76em/1 var(--f-ui);letter-spacing:.42em;color:var(--gold);text-indent:.42em}
+.cup-champ .band .star6{width:.8em;height:.8em;background:var(--gold)}
+.cup-champ .who{margin-top:.3em;font:400 3.3em/1 var(--f-display);letter-spacing:.03em;color:#fff;
+  text-shadow:0 .04em .3em rgba(0,0,0,.6)}
+.cup-champ .sub{margin-top:.35em;font:700 .72em/1 var(--f-ui);letter-spacing:.2em;color:var(--text-dim)}
+.cup-champ .run{margin-top:.65em;display:flex;justify-content:center;gap:.5em}
+.cup-champ .run span{font:700 .66em/1 var(--f-ui);letter-spacing:.14em;color:var(--text-dim);
+  background:rgba(4,18,27,.5);padding:.55em .85em;border-radius:2px;box-shadow:inset 0 0 0 1px var(--rule-soft)}
+.cup-champ .run b{color:#fff;margin-left:.35em}
+.cup-champ .run span.w{color:var(--gold);box-shadow:inset 0 0 0 1px rgba(255,200,87,.55)}
+.cup-champ .run span.w b{color:var(--gold)}
+.cup-champ .sub2{margin-top:.5em;font:700 .72em/1 var(--f-ui);letter-spacing:.2em;color:var(--chi-blue)}
+.cup-champ.mine{box-shadow:inset 0 0 0 2px var(--gold),0 0 2.4em rgba(255,200,87,.30)}
+
+/* call to action */
+.cup-cta{display:flex;flex-direction:column;align-items:center;gap:.4em;margin-top:.1em}
+.cup-cta .menu-item{min-width:26em;box-sizing:border-box;font:700 .98em/1 var(--f-ui);
+  letter-spacing:.22em;padding:.62em 2.2em}
+.cup-cta .menu-item.primary{font:700 1.42em/1 var(--f-ui);letter-spacing:.18em;padding:.58em 2.2em;
+  box-shadow:inset 0 0 0 2px var(--gold)}
+.cup-cta .menu-item.primary.sel,.cup-cta .menu-item.primary:hover{
+  box-shadow:inset 0 0 0 2px #fff,0 .3em 1.2em rgba(0,105,62,.45)}
+.cup-note{margin-top:.4em;text-align:center;font:700 .7em/1.7 var(--f-ui);letter-spacing:.18em;
+  color:var(--text-dim)}
 
 /* ----------------------------------------------------------------- pause ---*/
 #menu.paused::before{content:"";position:absolute;inset:0;z-index:-1;backdrop-filter:blur(6px) saturate(.55);
@@ -16113,7 +17257,7 @@ window.CHICAGO = {
   const $ = (id) => document.getElementById(id);
   let root, screen = 'title', sel = 0, vehicleIdx = 0, courseIdx = 0;
   let onStartRace = null;
-  let timeTrial = false, tourMode = false, cupMode = false;
+  let timeTrial = false, tourMode = false, cupMode = false, cupPending = false;
 
   const STAR = '<i class="star6"></i>';
   const STAR_CAPS = ['FORT DEARBORN', 'GREAT FIRE 1871', 'COLUMBIAN EXPO 1893', 'CENTURY OF PROGRESS 1933'];
@@ -16133,8 +17277,10 @@ window.CHICAGO = {
     root.classList.toggle('showroom', screen === 'vehicle');
     root.classList.toggle('title-screen', screen === 'title');
     root.classList.toggle('paused', screen === 'pause');
+    // the post-race screens sit over a still-rendering city: without a scrim the tables are unreadable
+    root.classList.toggle('scrim', screen === 'cup' || screen === 'results');
   }
-  MENU.hide = function () { root.classList.add('off'); root.classList.remove('paused', 'title-screen'); screen = 'none'; };
+  MENU.hide = function () { root.classList.add('off'); root.classList.remove('paused', 'title-screen', 'scrim'); screen = 'none'; };
 
   // ---------- livery: purely cosmetic, remembered between sessions ----------
   const LIVERIES = [null, 0xD8DCE0, 0x2F8F4F, 0x8A2FB0, 0xE07820, 0x16303F];
@@ -16143,9 +17289,13 @@ window.CHICAGO = {
 
   // ---------- title ----------
   function showTitle() {
-    screen = 'title'; sel = 0; timeTrial = false; tourMode = false; cupMode = false;
+    screen = 'title'; sel = 0; timeTrial = false; tourMode = false; cupMode = false; cupPending = false;
     const cup = RR.Race && RR.Race.cup ? RR.Race.cup() : null;
-    const cupLabel = cup && !cup.done ? 'CHAMPIONSHIP · ROUND ' + Math.min(4, cup.round + 1) + '/4' : 'CHAMPIONSHIP';
+    const rounds = (RR.Race && RR.Race.CUP_ROUNDS ? RR.Race.CUP_ROUNDS.length : 4);
+    // a championship in progress is a thing you RESUME, and the title screen should say where you are
+    const cupLabel = !cup ? 'CHAMPIONSHIP'
+      : cup.done ? 'CHAMPIONSHIP · FINAL'
+        : 'CHAMPIONSHIP · ROUND ' + Math.min(rounds, cup.round + 1) + '/' + rounds;
     html(`
       <div class="stars">${STAR_CAPS.map((c) => '<div class="starcol">' + STAR + '<span>' + c + '</span></div>').join('')}</div>
       <div id="title">RIVER<br>RACER</div>
@@ -16162,7 +17312,7 @@ window.CHICAGO = {
     `);
     bindClicks([
       () => showVehicles({}),
-      () => { cupMode = true; showVehicles({ cup: true }); },
+      () => { cupMode = true; if (cup) showCupBoard(-1); else { cupPending = true; showVehicles({ cup: true }); } },
       () => showVehicles({ tt: true }),
       () => { tourMode = true; showVehicles({ tour: true }); },
       () => { if (RR.NetUI && RR.NetUI.openEntry) RR.NetUI.openEntry(); },
@@ -16195,15 +17345,24 @@ window.CHICAGO = {
   }
 
   // ---------- vehicle select: live 3D showroom ----------
+  // The picker shows only the hulls you have earned, but the CATALOG keeps its numbering (indices
+  // go over the wire and address the showroom). `ridePick` is that filtered view: card data-i and
+  // `sel` are positions in it, and `.i` on each entry is the real catalog index.
+  let ridePick = [];
   function showVehicles(opts) {
     opts = opts || {};
-    screen = 'vehicle'; sel = vehicleIdx;
+    screen = 'vehicle';
+    ridePick = RR.Boats.pickable();
+    if (!ridePick.length) ridePick = [{ v: RR.Boats.CATALOG[0], i: 0 }];
+    const at = ridePick.findIndex((e) => e.i === vehicleIdx);
+    if (at < 0) vehicleIdx = ridePick[0].i;      // last ride is locked again (or was never pickable)
+    sel = Math.max(0, at);
     timeTrial = !!opts.tt; tourMode = !!opts.tour; cupMode = !!opts.cup;
-    const cards = RR.Boats.CATALOG.map((v, i) => `
-      <div class="card" data-i="${i}">
-        <div class="tag">${v.kind.toUpperCase()}</div>
-        <h3>${v.name}</h3>
-        <canvas width="220" height="110" id="vcard-${i}"></canvas>
+    const cards = ridePick.map((e, k) => `
+      <div class="card" data-i="${k}">
+        <div class="tag">${e.v.kind.toUpperCase()}</div>
+        <h3>${e.v.name}</h3>
+        <canvas width="220" height="110" id="vcard-${k}"></canvas>
       </div>`).join('');
     const label = cupMode ? 'THE CHICAGO CUP' : tourMode ? 'ARCHITECTURE TOUR' : timeTrial ? 'TIME TRIAL' : 'RACE';
     html(`
@@ -16219,10 +17378,11 @@ window.CHICAGO = {
       </div>
       <div id="cards" class="dock">${cards}</div>
     `);
-    bindCards(RR.Boats.CATALOG.length, (i) => {
-      vehicleIdx = i;
-      if (cupMode) { if (RR.Race.cupBegin) RR.Race.cupBegin(i, MENU.difficulty(), 6); showDifficulty(); }
-      else if (tourMode) showCourses();
+    bindCards(ridePick.length, (k) => {
+      vehicleIdx = ridePick[k].i;
+      // the cup is created only once the difficulty is CHOSEN — creating it here stamped the
+      // championship with the previous session's difficulty and wiped a cup already in progress
+      if (cupMode) showDifficulty();
       else showCourses();
     });
     drawVehicleCards();
@@ -16230,10 +17390,12 @@ window.CHICAGO = {
     paintSel();
   }
 
-  function buildLivery() {
+  // `spec` is the hull currently under the cursor, not the last one confirmed: the stock swatch
+  // has to show the paint you are actually looking at.
+  function buildLivery(spec) {
     const el = $('livery');
     if (!el) return;
-    const base = RR.Boats.CATALOG[vehicleIdx];
+    const base = spec || RR.Boats.CATALOG[vehicleIdx] || RR.Boats.CATALOG[0];
     el.innerHTML = LIVERIES.map((c, i) => {
       const hex = '#' + (c == null ? base.hull : c).toString(16).padStart(6, '0');
       return `<i data-l="${i}" class="${i === liveryIdx ? 'sel' : ''}" style="background:${hex}"></i>`;
@@ -16243,8 +17405,9 @@ window.CHICAGO = {
         e.stopPropagation();
         liveryIdx = +n.dataset.l;
         try { localStorage.setItem('rr_livery', String(liveryIdx)); } catch (err) { /* fine */ }
-        buildLivery();
-        if (MENU.onVehicleFocus) MENU.onVehicleFocus(sel);
+        buildLivery(base);
+        // the showroom speaks catalog indices, and `sel` is a position in the filtered picker
+        if (MENU.onVehicleFocus) MENU.onVehicleFocus(ridePick[sel] ? ridePick[sel].i : vehicleIdx);
         RR.Audio.uiMove();
       });
     });
@@ -16256,6 +17419,7 @@ window.CHICAGO = {
     f1: [['LOA', '5.4 M'], ['HULL', 'TUNNEL'], ['ENGINE', '2.5 L V6'], ['DRY', '390 KG']],
     runabout: [['LOA', '6.6 M'], ['HULL', 'MAHOGANY'], ['YEAR', '1947'], ['DISP', '1.2 T']],
     rescue: [['LOA', '7.8 M'], ['HULL', 'RIB COLLAR'], ['UNIT', 'CFD MARINE 7-1'], ['DISP', '1.6 T']],
+    tourboat: [['LOA', '30.0 M'], ['BEAM', '7.4 M'], ['ENGINE', 'TWIN DIESEL'], ['SEATS', '180']],
     podracer: [['DRIVE', '2× RADIAL'], ['TETHER', 'PLASMA BINDER'], ['CLASS', 'BOONTA'], ['DRY', '390 KG']],
   };
   const AXES = ['SPEED', 'ACCEL', 'TURN', 'GRIP', 'BOOST'];
@@ -16265,8 +17429,9 @@ window.CHICAGO = {
   }
   let radarCur = null, radarGhost = null, radarFrom = null, radarT = 1;
 
-  function updateRidePanel(i) {
-    const v = RR.Boats.CATALOG[i];
+  function updateRidePanel(k) {
+    const e = ridePick[k];
+    const v = e && e.v;
     const kind = $('ride-kind');
     if (!v || !kind) return;
     kind.textContent = v.kind.toUpperCase();
@@ -16279,8 +17444,8 @@ window.CHICAGO = {
     radarFrom = radarCur ? radarCur.slice() : next.slice();
     radarCur = next;
     radarT = 0;
-    buildLivery();
-    if (MENU.onVehicleFocus) MENU.onVehicleFocus(i);
+    buildLivery(v);
+    if (MENU.onVehicleFocus) MENU.onVehicleFocus(e.i);
   }
 
   // Radar over four bars: a ghost of the previously-focused hull turns a stat display into a
@@ -16332,8 +17497,9 @@ window.CHICAGO = {
   }
 
   function drawVehicleCards() {
-    RR.Boats.CATALOG.forEach((v, i) => {
-      const c = $('vcard-' + i);
+    ridePick.forEach((e, k) => {
+      const v = e.v;
+      const c = $('vcard-' + k);
       if (!c) return;
       const ctx = c.getContext('2d');
       const hull = '#' + v.hull.toString(16).padStart(6, '0');
@@ -16343,7 +17509,7 @@ window.CHICAGO = {
       ctx.strokeStyle = 'rgba(126,200,227,0.5)';
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(8, 84);
-      for (let x = 8; x < 212; x += 8) ctx.lineTo(x, 84 + Math.sin(x * 0.15 + i) * 2.5);
+      for (let x = 8; x < 212; x += 8) ctx.lineTo(x, 84 + Math.sin(x * 0.15 + k) * 2.5);
       ctx.stroke();
       ctx.save();
       ctx.translate(110, 70);
@@ -16368,6 +17534,15 @@ window.CHICAGO = {
           ctx.fillStyle = deck; poly([[-54, -13], [42, -13], [38, -18], [-48, -18]]);
           ctx.fillStyle = acc; ctx.fillRect(-40, -17, 60, 2);
         },
+        // she fills the card because she fills the channel: a long low open deck under an awning,
+        // with the pilot house right aft where the real architecture boats put it
+        tourboat() {
+          ctx.fillStyle = hull; poly([[-92, 8], [78, 8], [96, -2], [76, -9], [-88, -9]]);
+          ctx.fillStyle = deck; ctx.fillRect(-84, -13, 156, 4);
+          ctx.fillStyle = acc; poly([[-64, -15], [62, -15], [62, -19], [-64, -19]]);
+          ctx.fillStyle = deck; ctx.fillRect(-60, -19, 4, 6); ctx.fillRect(56, -19, 4, 6);
+          ctx.fillStyle = hull; poly([[-86, -13], [-56, -13], [-56, -27], [-84, -27]]);
+        },
       };
       (draw[v.kind] || draw.speedboat)();
       ctx.restore();
@@ -16389,13 +17564,14 @@ window.CHICAGO = {
     const rows = DIFFS.map((d, i) => `<div class="menu-item" data-i="${i}">${d.name}</div>`).join('');
     html(`
       <div id="select-title">HOW TOUGH ARE THE RIVALS?</div>
-      <div id="select-sub">↑↓ SELECT · ENTER RACE · BKSP BACK</div>
+      <div id="select-sub">${cupMode ? 'FOUR ROUNDS AT THIS SETTING · ' : ''}↑↓ SELECT · ENTER RACE · BKSP BACK</div>
       <div class="menu-list">${rows}</div>
       <div class="menu-note" id="diff-desc" style="max-width:520px;">${DIFFS[sel].desc}</div>
     `);
     bindClicks(DIFFS.map((d) => () => {
       difficulty = d.v;
       try { localStorage.setItem('rr_diff', String(d.v)); } catch (e) { /* fine */ }
+      if (cupMode && cupPending && RR.Race.cupBegin) { RR.Race.cupBegin(vehicleIdx, difficulty, 6); cupPending = false; }
       launch();
     }));
     paintSel();
@@ -16490,40 +17666,189 @@ window.CHICAGO = {
     const prevBest = bestAtStart;
     const me = results.find((r) => r.boat && r.boat.isPlayer);
     const record = !!(me && isFinite(me.time) && (!prevBest || me.time < prevBest - 1e-6));
+    // cupRecord() BANKS the round — call it exactly once, here, before anything reads the board
     const cup = cupMode && RR.Race.cupRecord ? RR.Race.cupRecord(results) : null;
+    const board = cup && RR.Race.cupBoard ? RR.Race.cupBoard() : null;
+    const fresh = board ? board.roundsDone - 1 : -1;
+    const round = board && board.rounds[fresh] ? board.rounds[fresh] : null;
     const head = `<div class="result-head${cup ? ' cup' : ''}"><span>POS</span><span>PILOT</span><span>HULL</span><span>TIME</span><span>GAP</span>${cup ? '<span>PTS</span>' : ''}</div>`;
-    const standings = cup ? cupTable(cup) : '';
-    const done = cup && cup.done;
+    const title = board ? 'ROUND ' + board.roundsDone + ' RESULT'
+      : (results[0] && results[0].boat && results[0].boat.isPlayer ? 'RIVER CHAMP' : 'RACE COMPLETE');
+    const sub = board
+      ? 'THE CHICAGO CUP · ROUND ' + board.roundsDone + ' OF ' + board.total + (round ? ' · ' + up(round.name) : '')
+      : 'BEST: ' + (prevBest ? RR.U.formatTime(prevBest) : '—');
     html(`
-      <div id="select-title">${results[0] && results[0].boat && results[0].boat.isPlayer ? 'RIVER CHAMP' : 'RACE COMPLETE'}</div>
-      <div id="select-sub">BEST: ${prevBest ? RR.U.formatTime(prevBest) : '—'}</div>
+      <div id="select-title">${title}</div>
+      <div id="select-sub">${sub}</div>
       ${record ? '<div id="record-banner">★ NEW COURSE RECORD ★</div>' : ''}
       <div id="results-list">${head}${resultRows(results, !!cup)}</div>
-      ${standings}
       <div class="menu-list" style="margin-top:1.4em;">
-        <div class="menu-item" data-i="0">${cup && !done ? 'NEXT ROUND' : 'RACE AGAIN'}</div>
+        ${board ? `<div class="menu-item" data-i="0">${board.done ? 'FINAL STANDINGS' : 'CHAMPIONSHIP STANDINGS'} ▸</div>
+        <div class="menu-item" data-i="1">TITLE SCREEN</div>`
+        : `<div class="menu-item" data-i="0">RACE AGAIN</div>
         <div class="menu-item" data-i="1">CHANGE COURSE</div>
-        <div class="menu-item" data-i="2">TITLE SCREEN</div>
+        <div class="menu-item" data-i="2">TITLE SCREEN</div>`}
       </div>
     `);
-    bindClicks([
-      () => { if (done) cupMode = false; launch(); },
-      () => { cupMode = false; showCourses(); },
-      () => { cupMode = false; showTitle(); },
-    ]);
+    bindClicks(board
+      ? [() => showCupBoard(fresh), () => { cupMode = false; showTitle(); }]
+      : [() => launch(), () => { cupMode = false; showCourses(); }, () => { cupMode = false; showTitle(); }]);
     paintSel();
   };
 
-  function cupTable(cup) {
-    if (!RR.Race.cupStandings) return '';
-    const st = RR.Race.cupStandings();
-    if (!st || !st.length) return '';
-    const rows = st.map((s, i) => `
-      <div class="result-row ${s.isPlayer ? 'you ' : ''}p${i + 1}"><span class="p">${i + 1}</span>
-      <span class="n">${s.isPlayer ? 'YOU' : 'RIVAL ' + s.idx}</span>
-      <span class="h">ROUND ${Math.min(4, cup.round)}/4</span><span class="t">—</span><span class="gap">${s.pts} PTS</span></div>`).join('');
-    return `<div id="select-sub" style="margin-top:1.2em">CHICAGO CUP STANDINGS</div><div id="results-list">${rows}</div>`;
+  // ---------- the championship board ----------
+  // Everything the owner asked for on one screen: which round just went, which is next, every
+  // racer by name with their finish and points in each round, the running total, and the move
+  // since last time. RR.Race.cupBoard() hands over the whole bracket; this only draws it.
+  const CUP_TAGS = { mainstem: 'MAIN STEM', southbranch: 'S BRANCH', riverrun: 'RIVER RUN', lakecircuit: 'LAKE' };
+  const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
+  function up(s) { return String(s == null ? '' : s).toUpperCase().replace(/[&<>"]/g, (c) => ESC[c]); }
+  function ord(n) { return n + RR.U.ordinal(n); }
+  function tagOf(r) { return CUP_TAGS[r.id] || String(r.name || '').split(' ')[0]; }
+
+  // Standings as they stood BEFORE the last round, so the table can show who climbed and who fell.
+  // Same tie-break as race.js (points, then wins, then best single finish, then the player).
+  function movementMap(board) {
+    const cut = board.roundsDone - 1;
+    if (cut < 1) return null;                       // before round two everyone is level: no movement
+    const prev = board.standings.map((r) => {
+      let pts = 0, wins = 0, best = 99;
+      for (let i = 0; i < cut; i++) {
+        const p = r.perRound[i];
+        if (!p) continue;
+        pts += r.perRoundPts[i] || 0;
+        if (p === 1) wins++;
+        if (p < best) best = p;
+      }
+      return { idx: r.idx, isPlayer: r.isPlayer, pts, wins, best };
+    });
+    prev.sort((a, b) => (b.pts - a.pts) || (b.wins - a.wins) || (a.best - b.best) ||
+      (a.isPlayer ? -1 : b.isPlayer ? 1 : a.idx - b.idx));
+    const m = new Map();
+    prev.forEach((r, i) => m.set(r.idx, i + 1));
+    return m;
   }
+
+  function cupBracket(board, fresh) {
+    return '<div class="cup-bracket">' + board.rounds.map((r, i) => {
+      const done = r.state === 'done', next = r.state === 'current';
+      const mine = done ? r.results.find((x) => x.isPlayer) : null;
+      const laps = r.laps > 1 ? r.laps + ' LAPS' : 'SPRINT';
+      let l1, l2;
+      if (done) {
+        l1 = `<i class="star6"></i><b>${up(r.winner ? r.winner.name : '—')}</b>`;
+        l2 = mine ? `YOU ${ord(mine.pos)} · ${mine.pts} PTS` : 'DID NOT RACE';
+      } else if (next) {
+        l1 = '<b>UP NEXT</b>';
+        l2 = laps + ' · ' + board.points[0] + ' PTS TO WIN';
+      } else {
+        l1 = 'TO COME';
+        l2 = laps;
+      }
+      const cls = done ? (i === fresh ? 'done fresh' : 'done') : next ? 'next' : 'later';
+      return `<div class="cup-round ${cls}">
+        <div class="rn">ROUND ${i + 1}</div>
+        <div class="rname">${up(r.name)}</div>
+        <div class="rline">${l1}</div>
+        <div class="rline${done && mine ? ' me' : ''}">${l2}</div>
+      </div>`;
+    }).join('') + '</div>';
+  }
+
+  function cupSeasonTable(board) {
+    const mv = movementMap(board);
+    const head = `<div class="cup-row head">
+      <span>POS</span><span class="n">PILOT</span>
+      ${board.rounds.map((r, i) => `<span class="rh${r.state === 'current' ? ' now' : ''}">R${i + 1}<i>${up(tagOf(r))}</i></span>`).join('')}
+      <span>WINS</span><span>PTS</span><span>+/−</span></div>`;
+    const lead = Math.max(1, board.standings.length ? board.standings[0].pts : 1);
+    const rows = board.standings.map((s) => {
+      const cells = board.rounds.map((r, i) => {
+        const pos = s.perRound[i];
+        if (!pos) return `<span class="cup-cell none${r.state === 'current' ? ' now' : ''}">–</span>`;
+        return `<span class="cup-cell p${pos}"><b class="pp">${pos}</b><i class="pv">+${s.perRoundPts[i] || 0}</i></span>`;
+      }).join('');
+      const d = mv ? (mv.get(s.idx) || s.pos) - s.pos : 0;
+      const move = !mv ? '<span class="cup-mv">–</span>'
+        : d > 0 ? `<span class="cup-mv up">▲${d}</span>`
+          : d < 0 ? `<span class="cup-mv dn">▼${-d}</span>` : '<span class="cup-mv">–</span>';
+      return `<div class="cup-row line p${s.pos}${s.isPlayer ? ' you' : ''}">
+        <span class="ps">${s.pos}</span>
+        <span class="n"><i class="bar" style="width:${(6 + 94 * s.pts / lead).toFixed(1)}%"></i>${s.isPlayer ? '<i class="star6"></i>' : ''}<b>${up(s.name)}</b></span>
+        ${cells}
+        <span class="cup-wins${s.wins ? ' has' : ''}">${s.wins || '–'}</span>
+        <span class="cup-tot"><b>${s.pts}</b><i>${s.gap ? '−' + s.gap : 'LEADER'}</i></span>
+        ${move}
+      </div>`;
+    }).join('');
+    return `<div class="cup-table">${head}${rows}</div>`;
+  }
+
+  function cupChampionBand(board) {
+    const c = board.champion;
+    if (!c) return '';
+    const p = board.player;
+    const wins = c.wins + (c.wins === 1 ? ' WIN' : ' WINS');
+    const tail = (!c.isPlayer && p) ? `<div class="sub2">YOU FINISHED ${ord(p.pos)} ON ${p.pts} POINTS</div>` : '';
+    // the champion's own season, round by round — the bracket makes way for this screen, so the
+    // run that won it has to survive somewhere
+    const run = board.rounds.map((r, i) => {
+      const pos = c.perRound[i];
+      return `<span class="${pos === 1 ? 'w' : ''}">${up(tagOf(r))} <b>${pos ? ord(pos) : '—'}</b></span>`;
+    }).join('');
+    return `<div class="cup-champ${c.isPlayer ? ' mine' : ''}">
+      <div class="band"><i class="star6"></i>CHICAGO CUP CHAMPION<i class="star6"></i></div>
+      <div class="who">${c.isPlayer ? 'YOU' : up(c.name)}</div>
+      <div class="sub">${c.pts} POINTS · ${wins} FROM ${board.total} ROUNDS</div>
+      <div class="run">${run}</div>
+      ${tail}
+    </div>`;
+  }
+
+  // fresh = index of the round that has just been raced, or -1 when opened from the title screen
+  function showCupBoard(fresh) {
+    const board = RR.Race.cupBoard ? RR.Race.cupBoard() : null;
+    if (!board) { showTitle(); return; }
+    screen = 'cup'; sel = 0; cupMode = true; cupPending = false;
+    timeTrial = false; tourMode = false;
+    // resuming a season from the title screen must put you back in the hull you started it in
+    if (RR.Boats.CATALOG[board.hull]) vehicleIdx = board.hull;
+    const nextRound = board.current >= 0 ? board.rounds[board.current] : null;
+    const justRan = fresh >= 0 ? board.rounds[fresh] : null;
+    const kicker = board.done
+      ? 'FOUR ROUNDS · ONE RIVER · THE CHAMPIONSHIP IS DECIDED'
+      : justRan
+        ? `ROUND ${fresh + 1} OF ${board.total} COMPLETE · <b>${up(justRan.name)}</b>` +
+          (nextRound ? ` &nbsp;·&nbsp; <span class="nx">NEXT: ${up(nextRound.name)}</span>` : '')
+        : board.roundsDone
+          ? `${board.roundsDone} OF ${board.total} ROUNDS RUN &nbsp;·&nbsp; <span class="nx">NEXT: ${up(nextRound ? nextRound.name : '')}</span>`
+          : `<span class="nx">ROUND 1 OF ${board.total} · ${up(nextRound ? nextRound.name : '')}</span>`;
+    const cta = board.done
+      ? `<div class="menu-item primary" data-i="0">NEW CHAMPIONSHIP</div>
+         <div class="menu-item" data-i="1">TITLE SCREEN</div>`
+      : `<div class="menu-item primary" data-i="0">RACE ROUND ${board.current + 1} · ${up(nextRound ? nextRound.name : '')}</div>
+         <div class="menu-item" data-i="1">TITLE SCREEN</div>
+         <div class="menu-item dim" data-i="2">ABANDON · START A NEW CHAMPIONSHIP</div>`;
+    html(`
+      <div id="cup-board">
+        <div class="cup-head">
+          <div class="cup-crest">${STAR}${STAR}${STAR}${STAR}</div>
+          <div class="cup-title">THE CHICAGO CUP</div>
+          <div class="cup-kicker">${kicker}</div>
+        </div>
+        ${board.done ? cupChampionBand(board) : cupBracket(board, fresh)}
+        ${cupSeasonTable(board)}
+        <div class="cup-cta">${cta}</div>
+        <div class="cup-note">↑↓ SELECT · ENTER CONFIRM${board.done ? '' : ' · POINTS ' + board.points.join('/')}</div>
+      </div>
+    `);
+    const newCup = () => { if (RR.Race.cupAbandon) RR.Race.cupAbandon(); cupMode = true; cupPending = true; showVehicles({ cup: true }); };
+    bindClicks(board.done
+      ? [newCup, () => { cupMode = false; showTitle(); }]
+      : [() => launch(), () => { cupMode = false; showTitle(); }, newCup]);
+    paintSel();
+  }
+  MENU.showCupBoard = showCupBoard;
 
   // multiplayer results come from the net roster, not from boat objects
   MENU.showNetResults = function (results, courseId) {
@@ -16628,14 +17953,15 @@ window.CHICAGO = {
   window.addEventListener('keydown', (e) => {
     if (screen === 'none') return;
     RR.Audio.init();
-    const vertical = screen === 'title' || screen === 'results' || screen === 'pause' || screen === 'help' || screen === 'difficulty';
+    const vertical = screen === 'title' || screen === 'results' || screen === 'pause' || screen === 'help' ||
+      screen === 'difficulty' || screen === 'cup';
     if ((vertical && e.code === 'ArrowUp') || (!vertical && e.code === 'ArrowLeft')) { sel = (sel - 1 + actions.length) % actions.length; RR.Audio.uiMove(); paintSel(); }
     else if ((vertical && e.code === 'ArrowDown') || (!vertical && e.code === 'ArrowRight')) { sel = (sel + 1) % actions.length; RR.Audio.uiMove(); paintSel(); }
     else if (e.code === 'Enter' || e.code === 'Space') { RR.Audio.uiSelect(); if (actions[sel]) actions[sel](); }
     else if (e.code === 'Backspace' || e.code === 'Escape') {
-      if (screen === 'vehicle' || screen === 'help') showTitle();
+      if (screen === 'vehicle' || screen === 'help' || screen === 'cup') showTitle();
       else if (screen === 'course') showVehicles({ tt: timeTrial, tour: tourMode, cup: cupMode });
-      else if (screen === 'difficulty') showCourses();
+      else if (screen === 'difficulty') { if (cupMode) showVehicles({ cup: true }); else showCourses(); }
       else if (screen === 'pause') { MENU.hide(); if (MENU.onResume) MENU.onResume(); }
       e.preventDefault();
     }
@@ -16938,7 +18264,10 @@ window.CHICAGO = {
   `;
 
   function boatOptions(sel) {
-    return RR.Boats.CATALOG.map((v, i) => `<option value="${i}"${i === sel ? ' selected' : ''}>${v.name}</option>`).join('');
+    // pickable() drops hulls that have not been earned yet — the option VALUE stays the catalog
+    // index, because that is what goes over the wire as boatIdx
+    const list = RR.Boats.pickable ? RR.Boats.pickable() : RR.Boats.CATALOG.map((v, i) => ({ v, i }));
+    return list.map((e) => `<option value="${e.i}"${e.i === sel ? ' selected' : ''}>${e.v.name}</option>`).join('');
   }
   function fmt(t) { const m = Math.floor(t / 60), s = (t - m * 60); return m + ':' + s.toFixed(1).padStart(4, '0'); }
   function esc(s) { return String(s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])); }
@@ -17127,6 +18456,10 @@ window.CHICAGO = {
       showBoat = RR.Boats.build(liverySpec(RR.Boats.CATALOG[i]));
       showBoat.userData.livery = liv;
       showBoat.position.set(SHOW.x, 0.3, SHOW.z);
+      // A fixed 10.5 m orbit frames a 6 m runabout and parks the lens INSIDE the 30 m WACKER
+      // BELLE, so measure the hull once and pull the rig back only when she outgrows the shot.
+      const bb = new THREE.Box3().setFromObject(showBoat);
+      showBoat.userData.showLen = Math.max(bb.max.z - bb.min.z, bb.max.x - bb.min.x);
       RR.Engine.scene.add(showBoat);
       showIdx = i;
     };
@@ -17173,8 +18506,89 @@ window.CHICAGO = {
     return liv == null ? base : Object.assign({}, base, { hull: liv });
   }
 
+  // The Architecture Tour is not a race and it is not a free camera: it is a ride. You board the
+  // WACKER BELLE as a passenger, she runs the river herself, and five taps of F buy you the wheel.
+  let docent = null;                 // the skipper's autopilot (an AI pilot with the racing filed off)
+  let tourDriving = false, tourCam = 0;
+  // look[] is an offset from the eye, in the boat's own frame: +z is forward, +y is up.
+  const TOUR_VIEWS = [
+    { key: 'seat', name: 'PASSENGER SEAT', look: [1.4, 2.0, 32], fov: 62 },
+    { key: 'foredeck', name: 'FOREDECK', look: [-0.9, 5.0, 26], fov: 64 },
+    { key: 'stern', name: 'AFT DECK', look: [0, -1.4, 26], fov: 60 },
+    { key: 'wheel', name: 'WHEELHOUSE', look: [0.55, 0.35, 30], fov: 60 },
+    { key: 'helm', name: 'HELM', look: [0, -6.5, 44], fov: 56, contain: 3 },
+    { name: 'CHASE', stock: 0 },
+  ];
+  const tcEye = new THREE.Vector3(), tcLook = new THREE.Vector3();
+  const tcQuat = new THREE.Quaternion(), tcEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+  const tourPt = {};
+  function tourSpec() {
+    const c = RR.Boats.CATALOG;
+    return c.find((v) => v.id === 'tourboat') || c[0];
+  }
+  // A point in the boat's own frame, in world space. Same basis physics.applyVisual gives the mesh
+  // (rotateY -> rotateX -> rotateZ = Euler order YXZ), so a seat pose really is bolted to the deck:
+  // when her bow lifts, so does the view, and the bulwark stays put in the frame.
+  function boatLocal(out, b, l) {
+    tcEuler.set(b.visPitch || 0, b.heading, -(b.visRoll || 0));
+    tcQuat.setFromEuler(tcEuler);
+    return out.set(l[0], l[1], l[2]).applyQuaternion(tcQuat).add(b.pos);
+  }
+  function setTourView(i) {
+    tourCam = ((i % TOUR_VIEWS.length) + TOUR_VIEWS.length) % TOUR_VIEWS.length;
+    const v = TOUR_VIEWS[tourCam];
+    if (v.stock != null) { RR.Camera.setMode(v.stock); if (player) RR.Camera.snapTo(player); }
+    if (RR.HUD.flash) RR.HUD.flash(v.name);
+  }
+  // The seats are bolted to the boat, so these poses are rigid — no spring, no lag. The vessel
+  // itself is 200 tonnes of slow, which is all the smoothing a shot from her deck needs.
+  function tourCamera(b) {
+    const v = TOUR_VIEWS[tourCam];
+    const seats = (b.mesh.userData && b.mesh.userData.seatCams) || null;
+    if (v.stock != null || !seats || !seats[v.key]) return false;
+    const cam = RR.Engine.camera;
+    const eye = seats[v.key];
+    boatLocal(tcEye, b, eye);
+    boatLocal(tcLook, b, [eye[0] + v.look[0], eye[1] + v.look[1], eye[2] + v.look[2]]);
+    // the seats ride the boat and cannot land in a wall; a lens hung 30 m astern can, so that one
+    // gets the same keep-out the chase rig uses
+    if (v.contain && RR.River && RR.River.waterQuery) {
+      const q = RR.River.waterQuery(tcEye.x, tcEye.z, null);
+      if (q && q.clear < v.contain) { tcEye.x += q.nx * (v.contain - q.clear); tcEye.z += q.nz * (v.contain - q.clear); }
+      // and duck it under the bridge decks, or every crossing on the Main Stem is a black frame
+      if (RR.Bridges && RR.Bridges.duckY) {
+        const deckY = Math.min(RR.Bridges.duckY(tcEye.x, tcEye.z),
+          RR.Bridges.duckY((tcEye.x + b.pos.x) * 0.5, (tcEye.z + b.pos.z) * 0.5),
+          RR.Bridges.duckY(b.pos.x, b.pos.z));
+        if (isFinite(deckY)) tcEye.y = Math.min(tcEye.y, deckY - 1.3);
+      }
+    }
+    cam.position.copy(tcEye);
+    cam.up.set(0, 1, 0);
+    cam.lookAt(tcLook);
+    if (cam.fov !== v.fov) { cam.fov = v.fov; cam.updateProjectionMatrix(); }
+    return true;
+  }
+  function setTourDriving(on) {
+    if (!raceState || !raceState.tour || tourDriving === on) return;
+    tourDriving = on;
+    const crew = player.mesh.userData.crew;
+    if (crew && crew.skipper) crew.skipper.visible = !on;
+    if (RR.HUD.flash) RR.HUD.flash(on ? 'YOU HAVE THE WHEEL' : 'THE SKIPPER HAS THE WHEEL');
+    if (RR.HUD.chip) RR.HUD.chip('near', on ? 'ALL THIRTY METRES OF HER — W/S/A/D' : 'DOCENT TOUR RESUMED', 3000);
+    // Steering her yourself is the whole point of the secret, so that is what unlocks her. From
+    // here on she is in the ride picker — announced on a chip of her own, since flash() shows
+    // one line at a time and that line belongs to the handover.
+    if (on && RR.Boats.unlock && RR.Boats.unlock('tourboat') && RR.HUD.chip) {
+      RR.HUD.chip('gold', 'WACKER BELLE UNLOCKED · SHE IS IN THE RIDE PICKER NOW', 8000);
+    }
+    RR.Audio.airhorn();
+    RR.Camera.kick(0.3);
+    setTourView(on ? 4 : 0);              // hand her over from the HELM shot: you need to see her length
+  }
+
   // roster (multiplayer) = [{id, name, boatIdx, isSelf}] sorted identically on every client
-  function startRace(courseIdx, vehicleIdx, timeTrial, roster, tourMode) {
+  function startRace(courseIdx, vehicleIdx, timeTrial, roster, tourMode, cupRound) {
     clearBoats();
     if (RR.HUD.resetSession) RR.HUD.resetSession();
     RR.Engine.timeScale = 1;                          // clear any pause/photo slo-mo from a prior race
@@ -17184,7 +18598,8 @@ window.CHICAGO = {
     if (mp) {
       // one boat per real player — each brings their OWN chosen boat; mine is the player
       for (const r of roster) {
-        const spec = catalog[(r.boatIdx | 0) % catalog.length];
+        // the index is remote input: wrap it into range in both directions, never index off the end
+        const spec = catalog[(((r.boatIdx | 0) % catalog.length) + catalog.length) % catalog.length];
         const mesh = RR.Boats.build(spec);
         RR.Engine.scene.add(mesh);
         const b = RR.Physics.createBoat(spec, mesh);
@@ -17200,9 +18615,14 @@ window.CHICAGO = {
       // one-design racing: every rival runs the SAME hull as you (fair fight, pure skill),
       // each in its own livery so you can tell the field apart at speed
       const LIVERY = [0xd8dce0, 0x2f8f4f, 0x8a2fb0, 0xe07820, 0x16303f];
+      const base = tourMode ? tourSpec() : (catalog[vehicleIdx] || catalog[0]);
+      // …with one exception: six 30 m tour boats in a 60 m channel cannot pass each other, they can
+      // only gridlock. Take the BELLE out for a race and the field runs the stock offshore hull.
+      const rivalBase = base.kind === 'tourboat' ? (catalog.find((v) => v.id === 'speedboat') || catalog[0]) : base;
       for (let i = 0; i < N; i++) {
-        const base = catalog[vehicleIdx];
-        const spec = i === 0 ? liverySpec(base) : Object.assign({}, base, { hull: LIVERY[(i - 1) % LIVERY.length] });
+        // the tour boat is a working vessel with a name on her bow — no livery paint
+        const spec = tourMode ? base
+          : i === 0 ? liverySpec(base) : Object.assign({}, rivalBase, { hull: LIVERY[(i - 1) % LIVERY.length] });
         const mesh = RR.Boats.build(spec);
         RR.Engine.scene.add(mesh);
         const b = RR.Physics.createBoat(spec, mesh);
@@ -17217,10 +18637,41 @@ window.CHICAGO = {
     raceState.mp = mp;
 
     pilots = [];
-    if (!mp && !tourMode) {
-      const diff = RR.Menus && RR.Menus.difficulty ? RR.Menus.difficulty() : 1;
+    docent = null;
+    tourDriving = false;
+    RR.Input.onFTap = null; RR.Input.onFiveF = null;
+    if (tourMode) {
+      // The skipper is an AI pilot with the racing filed off her: she reads the river four times
+      // further ahead than a jet ski does (a 30 m hull that turns in 34 m has to), never cuts an
+      // apex, never touches the boost, and never makes a mistake with forty passengers aboard.
+      docent = RR.AI.createPilot(player, { path: raceState.route }, 0, 1.2);
+      const k = docent.k;
+      k.look = 3.6; k.apex = 0.30; k.wobble = 0.02; k.mistake = 0; k.boostArm = 9;
+      k.liftBend = 0.45; k.liftFloor = 0.72; k.liftSpan = 0.80; k.react = 8; k.steerGain = 2.2;
+      docent.lane = 0; docent.aggression = 0;
+      // 0.75 throttle settles this hull at 9 m/s — 18 knots, about what the real boats run. (Not
+      // sqrt(0.75) x top: at part throttle the friction term physics.js adds below full throttle
+      // dominates a hull with an acceleration this low.)
+      docent.skill = 0.75;
+      // F five times in a row hands over the wheel. The window between taps is short enough that
+      // nobody trips it by leaning on a key, and every tap says how far along you are.
+      RR.Input.onFTap = (n, need) => {
+        if (n < need && RR.HUD.chip) RR.HUD.chip('near', 'F ' + n + '/' + need + ' — TAKE THE WHEEL?', 1100);
+      };
+      RR.Input.onFiveF = () => setTourDriving(!tourDriving);
+    } else if (!mp) {
+      // A championship is a season, so the field has to be the same six boats every round, under
+      // the same names, at the difficulty the cup began at. race.js stores that roster; without it
+      // the standings table can only say "RIVAL 3".
+      const board = RR.Race.cup ? RR.Race.cup() : null;
+      const isCupRound = !!(board && !board.done &&
+        (cupRound === true || (cupRound == null && RR.Race.cupCourseIdx && RR.Race.cupCourseIdx() === courseIdx)));
+      const names = isCupRound && RR.Race.cupFieldNames ? RR.Race.cupFieldNames() : null;
+      const cupDiff = isCupRound && RR.Race.cupDifficulty ? RR.Race.cupDifficulty() : null;
+      const diff = cupDiff != null ? cupDiff : (RR.Menus && RR.Menus.difficulty ? RR.Menus.difficulty() : 1);
       for (let i = 1; i < boats.length; i++) {
         const p = RR.AI.createPilot(boats[i], { path: raceState.route }, i - 1, diff);
+        if (names && names[i]) p.name = names[i];
         boats[i].pilotName = p.name;
         pilots.push(p);
       }
@@ -17285,17 +18736,23 @@ window.CHICAGO = {
     };
 
     RR.Audio.init();
-    RR.Audio.startEngine(player.spec.kind);
+    RR.Audio.startEngine(player.spec.engine || player.spec.kind);   // the tour boat runs a diesel
     if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(true);
     RR.HUD.show(true);
     RR.Camera.setMode(0);
     RR.Camera.snapTo(player);
+    if (tourMode) {
+      tourCam = 0;
+      if (RR.HUD.chip) RR.HUD.chip('near', 'C: CHANGE SEAT · SPACE: DOCENT · F ×5: TAKE THE WHEEL', 7000);
+    }
     mode = 'race';
   }
 
   function quitToTitle() {
     mode = 'menu';
     RR.Engine.timeScale = 1;
+    docent = null; tourDriving = false;
+    RR.Input.onFTap = null; RR.Input.onFiveF = null;
     RR.HUD.show(false);
     RR.Audio.stopEngine();
     if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(false);
@@ -17319,7 +18776,12 @@ window.CHICAGO = {
 
   // ---------- global keys ----------
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'KeyC' && mode === 'race') RR.Camera.cycle();
+    // Aboard the tour boat C walks the boat: four places to stand or sit, the helm shot, then the
+    // stock chase rig — so the free look you have in a race is still there on the ride.
+    if (e.code === 'KeyC' && mode === 'race') {
+      if (raceState && raceState.tour) setTourView(tourCam + 1);
+      else RR.Camera.cycle();
+    }
     if (e.code === 'KeyR' && mode === 'race') resetToCourse();
     if (e.code === 'KeyN' && RR.Theme) { const m = RR.Theme.toggle(); if (RR.HUD && RR.HUD.flash) RR.HUD.flash(m.toUpperCase()); }
     if (e.code === 'KeyG' && RR.Theme && RR.Theme.toggleGreenRiver) {
@@ -17378,10 +18840,12 @@ window.CHICAGO = {
         showBoat.rotation.set(Math.sin(t * 0.7) * 0.035, t * 0.4, Math.sin(t * 0.55) * 0.045);
         if (showBoat.userData.tick) showBoat.userData.tick(t, null);   // spin turbines / flicker plasma on display
         const cam = RR.Engine.camera;
-        const oa = t * 0.14, r = 10.5;
-        cam.position.set(SHOW.x + Math.sin(oa) * r, 3.4 + Math.sin(t * 0.3) * 0.5, SHOW.z + Math.cos(oa) * r);
+        const len = showBoat.userData.showLen || 0;
+        const r = Math.max(10.5, len * 0.85), up = Math.max(3.4, len * 0.20);
+        const oa = t * 0.14;
+        cam.position.set(SHOW.x + Math.sin(oa) * r, up + Math.sin(t * 0.3) * 0.5, SHOW.z + Math.cos(oa) * r);
         cam.up.set(0, 1, 0);
-        cam.lookAt(SHOW.x, showBoat.position.y + 0.9, SHOW.z);
+        cam.lookAt(SHOW.x, showBoat.position.y + Math.max(0.9, len * 0.06), SHOW.z);
         if (cam.fov !== 50) { cam.fov = 50; cam.updateProjectionMatrix(); }
         return;
       }
@@ -17403,9 +18867,28 @@ window.CHICAGO = {
 
     const racing = raceState.phase !== 'countdown';
 
-    // player
-    const pc = racing && !player.finished ? RR.Input : { throttle: player.finished ? 0.25 : 0, brake: 0, steer: RR.Input.steer * 0.4, boost: false };
+    // player — or, on the Architecture Tour until you have taken the wheel, the skipper
+    let pc;
+    if (raceState.tour && !tourDriving && docent) {
+      RR.AI.update(docent, dt, t, player.routeD);
+      docent.ctl.boost = false;                       // she does not have a boost button
+      pc = docent.ctl;
+    } else {
+      pc = racing && !player.finished ? RR.Input : { throttle: player.finished ? 0.25 : 0, brake: 0, steer: RR.Input.steer * 0.4, boost: false };
+    }
     RR.Physics.update(player, dt, pc, t);
+    // The tour is a loop, not a one-way trip: at the far end of the route the run starts over at
+    // the head of the river rather than steaming off into open lake for ten minutes.
+    if (raceState.tour && !tourDriving && raceState.route && !raceState.route.loop &&
+        player.routeD > raceState.route.len - 70) {
+      RR.U.pathAt(raceState.route, 14, tourPt);
+      player.pos.set(tourPt.x, 0.2, tourPt.z);
+      player.heading = Math.atan2(tourPt.tx, tourPt.tz);
+      player.vel.x = Math.sin(player.heading) * 6; player.vel.z = Math.cos(player.heading) * 6;
+      player.routeD = 14; player._inLap = 14; player.routeHint = null; player.hint = {};
+      RR.Audio.airhorn();
+      if (RR.HUD.chip) RR.HUD.chip('near', 'NEXT TOUR DEPARTING', 3000);
+    }
 
     // AI (single-player only)
     for (const p of pilots) {
@@ -17466,19 +18949,27 @@ window.CHICAGO = {
 
     RR.Race.animateGates(t);
     RR.FX.update(boats, dt, t);
+    let seated = false;
     if (mode === 'photo') {
       // rawDt so the rig keeps swinging at a natural rate while the world runs at 0.25x
       RR.Camera.cinematic(player, dt, RR.Engine.rawDt || dt);   // [ and ] cycle the five shots
       if (RR.HUD.cine) RR.HUD.cine(true, RR.Camera.shotLabel ? RR.Camera.shotLabel() : '');
     } else if (!(window.RRTest && window.RRTest._freecam)) {
-      RR.Camera.follow(player, dt);
+      seated = raceState.tour && tourCamera(player);
+      if (!seated) RR.Camera.follow(player, dt);
     }
     RR.Engine.trackShadow(player.pos.x, player.pos.z);
 
     RR.HUD.update(dt, player, raceState);
     RR.Minimap.draw(raceState, player, boats);
 
-    const duck = RR.Camera.duck ? RR.Camera.duck() : 0;
+    // the chase rig computes its own bridge duck; a seat bolted to the deck has to ask directly,
+    // and passing under a bascule leaf on the open deck is exactly when the reverb should slam shut
+    let duck = RR.Camera.duck ? RR.Camera.duck() : 0;
+    if (seated) {
+      const deckY = RR.Bridges && RR.Bridges.duckY ? RR.Bridges.duckY(player.pos.x, player.pos.z) : Infinity;
+      duck = isFinite(deckY) ? 1 : 0;
+    }
     const lock = window.CHICAGO && CHICAGO.lake && CHICAGO.lake.lock;
     const inLock = !!lock && RR.U.dist2(player.pos.x, player.pos.z, lock.x, lock.z) < 90 * 90;
     RR.Audio.update(dt, {
@@ -17540,6 +19031,15 @@ window.CHICAGO = {
   window.RRTest = {
     ready: false,
     startRace: (c, v) => { RR.Menus.hide(); RR.Audio.setMusic(false); startRace(c || 0, v || 0, false); },
+    // Architecture Tour hooks: board her, change seats, take the wheel
+    startTour: (c) => { RR.Menus.hide(); RR.Audio.setMusic(false); startRace(c || 0, 0, false, null, true); },
+    tourView: (i) => setTourView(i | 0),
+    tourWheel: (on) => setTourDriving(on !== false),
+    tourState: () => (raceState && raceState.tour ? {
+      driving: tourDriving, view: TOUR_VIEWS[tourCam].name,
+      speed: Math.hypot(player.vel.x, player.vel.z), routeD: Math.round(player.routeD),
+    } : null),
+    cupBoard: () => (RR.Race.cupBoard ? RR.Race.cupBoard() : null),
     // multiplayer test hooks (mock transport = same-browser tabs talk over BroadcastChannel)
     netJoin: (room, name, boatIdx) => RR.Net.join({ room, name, boatIdx: boatIdx || 0, transport: RR.Transports.mock() }),
     netStart: (c) => RR.Net.startAsHost(c || 0),

@@ -95,15 +95,24 @@
   }
 
   // ---------- vehicle select: live 3D showroom ----------
+  // The picker shows only the hulls you have earned, but the CATALOG keeps its numbering (indices
+  // go over the wire and address the showroom). `ridePick` is that filtered view: card data-i and
+  // `sel` are positions in it, and `.i` on each entry is the real catalog index.
+  let ridePick = [];
   function showVehicles(opts) {
     opts = opts || {};
-    screen = 'vehicle'; sel = vehicleIdx;
+    screen = 'vehicle';
+    ridePick = RR.Boats.pickable();
+    if (!ridePick.length) ridePick = [{ v: RR.Boats.CATALOG[0], i: 0 }];
+    const at = ridePick.findIndex((e) => e.i === vehicleIdx);
+    if (at < 0) vehicleIdx = ridePick[0].i;      // last ride is locked again (or was never pickable)
+    sel = Math.max(0, at);
     timeTrial = !!opts.tt; tourMode = !!opts.tour; cupMode = !!opts.cup;
-    const cards = RR.Boats.CATALOG.map((v, i) => `
-      <div class="card" data-i="${i}">
-        <div class="tag">${v.kind.toUpperCase()}</div>
-        <h3>${v.name}</h3>
-        <canvas width="220" height="110" id="vcard-${i}"></canvas>
+    const cards = ridePick.map((e, k) => `
+      <div class="card" data-i="${k}">
+        <div class="tag">${e.v.kind.toUpperCase()}</div>
+        <h3>${e.v.name}</h3>
+        <canvas width="220" height="110" id="vcard-${k}"></canvas>
       </div>`).join('');
     const label = cupMode ? 'THE CHICAGO CUP' : tourMode ? 'ARCHITECTURE TOUR' : timeTrial ? 'TIME TRIAL' : 'RACE';
     html(`
@@ -119,8 +128,8 @@
       </div>
       <div id="cards" class="dock">${cards}</div>
     `);
-    bindCards(RR.Boats.CATALOG.length, (i) => {
-      vehicleIdx = i;
+    bindCards(ridePick.length, (k) => {
+      vehicleIdx = ridePick[k].i;
       // the cup is created only once the difficulty is CHOSEN — creating it here stamped the
       // championship with the previous session's difficulty and wiped a cup already in progress
       if (cupMode) showDifficulty();
@@ -131,10 +140,12 @@
     paintSel();
   }
 
-  function buildLivery() {
+  // `spec` is the hull currently under the cursor, not the last one confirmed: the stock swatch
+  // has to show the paint you are actually looking at.
+  function buildLivery(spec) {
     const el = $('livery');
     if (!el) return;
-    const base = RR.Boats.CATALOG[vehicleIdx];
+    const base = spec || RR.Boats.CATALOG[vehicleIdx] || RR.Boats.CATALOG[0];
     el.innerHTML = LIVERIES.map((c, i) => {
       const hex = '#' + (c == null ? base.hull : c).toString(16).padStart(6, '0');
       return `<i data-l="${i}" class="${i === liveryIdx ? 'sel' : ''}" style="background:${hex}"></i>`;
@@ -144,8 +155,9 @@
         e.stopPropagation();
         liveryIdx = +n.dataset.l;
         try { localStorage.setItem('rr_livery', String(liveryIdx)); } catch (err) { /* fine */ }
-        buildLivery();
-        if (MENU.onVehicleFocus) MENU.onVehicleFocus(sel);
+        buildLivery(base);
+        // the showroom speaks catalog indices, and `sel` is a position in the filtered picker
+        if (MENU.onVehicleFocus) MENU.onVehicleFocus(ridePick[sel] ? ridePick[sel].i : vehicleIdx);
         RR.Audio.uiMove();
       });
     });
@@ -157,6 +169,7 @@
     f1: [['LOA', '5.4 M'], ['HULL', 'TUNNEL'], ['ENGINE', '2.5 L V6'], ['DRY', '390 KG']],
     runabout: [['LOA', '6.6 M'], ['HULL', 'MAHOGANY'], ['YEAR', '1947'], ['DISP', '1.2 T']],
     rescue: [['LOA', '7.8 M'], ['HULL', 'RIB COLLAR'], ['UNIT', 'CFD MARINE 7-1'], ['DISP', '1.6 T']],
+    tourboat: [['LOA', '30.0 M'], ['BEAM', '7.4 M'], ['ENGINE', 'TWIN DIESEL'], ['SEATS', '180']],
     podracer: [['DRIVE', '2× RADIAL'], ['TETHER', 'PLASMA BINDER'], ['CLASS', 'BOONTA'], ['DRY', '390 KG']],
   };
   const AXES = ['SPEED', 'ACCEL', 'TURN', 'GRIP', 'BOOST'];
@@ -166,8 +179,9 @@
   }
   let radarCur = null, radarGhost = null, radarFrom = null, radarT = 1;
 
-  function updateRidePanel(i) {
-    const v = RR.Boats.CATALOG[i];
+  function updateRidePanel(k) {
+    const e = ridePick[k];
+    const v = e && e.v;
     const kind = $('ride-kind');
     if (!v || !kind) return;
     kind.textContent = v.kind.toUpperCase();
@@ -180,8 +194,8 @@
     radarFrom = radarCur ? radarCur.slice() : next.slice();
     radarCur = next;
     radarT = 0;
-    buildLivery();
-    if (MENU.onVehicleFocus) MENU.onVehicleFocus(i);
+    buildLivery(v);
+    if (MENU.onVehicleFocus) MENU.onVehicleFocus(e.i);
   }
 
   // Radar over four bars: a ghost of the previously-focused hull turns a stat display into a
@@ -233,8 +247,9 @@
   }
 
   function drawVehicleCards() {
-    RR.Boats.CATALOG.forEach((v, i) => {
-      const c = $('vcard-' + i);
+    ridePick.forEach((e, k) => {
+      const v = e.v;
+      const c = $('vcard-' + k);
       if (!c) return;
       const ctx = c.getContext('2d');
       const hull = '#' + v.hull.toString(16).padStart(6, '0');
@@ -244,7 +259,7 @@
       ctx.strokeStyle = 'rgba(126,200,227,0.5)';
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(8, 84);
-      for (let x = 8; x < 212; x += 8) ctx.lineTo(x, 84 + Math.sin(x * 0.15 + i) * 2.5);
+      for (let x = 8; x < 212; x += 8) ctx.lineTo(x, 84 + Math.sin(x * 0.15 + k) * 2.5);
       ctx.stroke();
       ctx.save();
       ctx.translate(110, 70);
@@ -268,6 +283,15 @@
           ctx.fillStyle = hull; poly([[-60, 6], [48, 6], [66, -8], [44, -13], [-56, -13]]);
           ctx.fillStyle = deck; poly([[-54, -13], [42, -13], [38, -18], [-48, -18]]);
           ctx.fillStyle = acc; ctx.fillRect(-40, -17, 60, 2);
+        },
+        // she fills the card because she fills the channel: a long low open deck under an awning,
+        // with the pilot house right aft where the real architecture boats put it
+        tourboat() {
+          ctx.fillStyle = hull; poly([[-92, 8], [78, 8], [96, -2], [76, -9], [-88, -9]]);
+          ctx.fillStyle = deck; ctx.fillRect(-84, -13, 156, 4);
+          ctx.fillStyle = acc; poly([[-64, -15], [62, -15], [62, -19], [-64, -19]]);
+          ctx.fillStyle = deck; ctx.fillRect(-60, -19, 4, 6); ctx.fillRect(56, -19, 4, 6);
+          ctx.fillStyle = hull; poly([[-86, -13], [-56, -13], [-56, -27], [-84, -27]]);
         },
       };
       (draw[v.kind] || draw.speedboat)();

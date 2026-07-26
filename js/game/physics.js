@@ -173,11 +173,11 @@
 
     // hull slap: a planing hull crossing chop slams once per wave it meets, so the rate is the
     // ENCOUNTER frequency — speed over crest spacing — and crest spacing grows with fetch. The
-    // river's boat-wake slop is metres apart; Lake Michigan's rollers are tens of metres apart, so
-    // out there the hull pounds about once a second, hard, instead of buzzing at 7 Hz.
+    // river's boat-wake slop is metres apart; Lake Michigan's swell runs 120-185 m crest to crest,
+    // so out there the hull pounds about once a second, hard, instead of buzzing at 7 Hz.
     const slapAmp = (spec.slap || 0) * planeF * amp * U().clamp(speed / topSpeed, 0.15, 1);
     if (!boat.airborne && slapAmp > 0.06) {
-      const chopLen = 7.5 + (amp - 1) * 20;                  // 7.5 m in the canyon, ~53 m on open lake
+      const chopLen = 7.5 + (amp - 1) * 40;                  // 7.5 m in the canyon, ~99 m on open lake
       boat.slapPhase += dt * (0.8 + speed / chopLen);
       if (boat.slapPhase >= 1) {
         boat.slapPhase -= 1;
@@ -191,12 +191,18 @@
       // launch off steep lake swells at speed. One launch per face: re-arm only after the hull is
       // back on level water, or it re-triggers the instant it lands and chatters up a long swell
       // in a string of 20 cm hops.
+      // Thresholds track the swell: the lake face is ~1.6x steeper than it used to be, so 0.024
+      // would now trip on every second crest and the lake would be one long involuntary hop.
       const relSlope = -(wn.pitch * fz + wn.roll * fx);
-      if (relSlope < 0.010) boat.launchArmed = true;
-      if (boat.launchArmed && speed > topSpeed * 0.7 && relSlope > 0.024 && amp > 2 && boat.pos.y <= rideY + 0.05) {
+      if (relSlope < 0.013) boat.launchArmed = true;
+      // The 0.10 tolerance is not slop: pos.y chases rideY through a rate-14 damper, and on a face
+      // dropping at 2 m/s it legitimately trails ~0.15 m behind. Hold it at the old 0.05 and the
+      // gate silently rejects exactly the steep descending faces it exists to catch.
+      if (boat.launchArmed && speed > topSpeed * 0.7 && relSlope > 0.030 && amp > 2 && boat.pos.y <= rideY + 0.10) {
         boat.airborne = true;
         boat.launchArmed = false;
-        boat.vy = speed * relSlope * 3.6 + 1.2;              // rarer crests, so each one throws harder
+        // rarer crests, so each one throws harder — but capped, or a big face at 35 m/s is 8 m of air
+        boat.vy = Math.min(7.0, speed * relSlope * 3.0 + 1.2);
         if (boat.onLaunch) boat.onLaunch(speed);
       } else {
         boat.pos.y = U().damp(boat.pos.y, rideY, 14, dt);

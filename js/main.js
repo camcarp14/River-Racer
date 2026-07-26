@@ -73,6 +73,10 @@
       showBoat = RR.Boats.build(liverySpec(RR.Boats.CATALOG[i]));
       showBoat.userData.livery = liv;
       showBoat.position.set(SHOW.x, 0.3, SHOW.z);
+      // A fixed 10.5 m orbit frames a 6 m runabout and parks the lens INSIDE the 30 m WACKER
+      // BELLE, so measure the hull once and pull the rig back only when she outgrows the shot.
+      const bb = new THREE.Box3().setFromObject(showBoat);
+      showBoat.userData.showLen = Math.max(bb.max.z - bb.min.z, bb.max.x - bb.min.x);
       RR.Engine.scene.add(showBoat);
       showIdx = i;
     };
@@ -189,6 +193,12 @@
     if (crew && crew.skipper) crew.skipper.visible = !on;
     if (RR.HUD.flash) RR.HUD.flash(on ? 'YOU HAVE THE WHEEL' : 'THE SKIPPER HAS THE WHEEL');
     if (RR.HUD.chip) RR.HUD.chip('near', on ? 'ALL THIRTY METRES OF HER — W/S/A/D' : 'DOCENT TOUR RESUMED', 3000);
+    // Steering her yourself is the whole point of the secret, so that is what unlocks her. From
+    // here on she is in the ride picker — announced on a chip of her own, since flash() shows
+    // one line at a time and that line belongs to the handover.
+    if (on && RR.Boats.unlock && RR.Boats.unlock('tourboat') && RR.HUD.chip) {
+      RR.HUD.chip('gold', 'WACKER BELLE UNLOCKED · SHE IS IN THE RIDE PICKER NOW', 8000);
+    }
     RR.Audio.airhorn();
     RR.Camera.kick(0.3);
     setTourView(on ? 4 : 0);              // hand her over from the HELM shot: you need to see her length
@@ -205,7 +215,8 @@
     if (mp) {
       // one boat per real player — each brings their OWN chosen boat; mine is the player
       for (const r of roster) {
-        const spec = catalog[(r.boatIdx | 0) % catalog.length];
+        // the index is remote input: wrap it into range in both directions, never index off the end
+        const spec = catalog[(((r.boatIdx | 0) % catalog.length) + catalog.length) % catalog.length];
         const mesh = RR.Boats.build(spec);
         RR.Engine.scene.add(mesh);
         const b = RR.Physics.createBoat(spec, mesh);
@@ -221,11 +232,14 @@
       // one-design racing: every rival runs the SAME hull as you (fair fight, pure skill),
       // each in its own livery so you can tell the field apart at speed
       const LIVERY = [0xd8dce0, 0x2f8f4f, 0x8a2fb0, 0xe07820, 0x16303f];
+      const base = tourMode ? tourSpec() : (catalog[vehicleIdx] || catalog[0]);
+      // …with one exception: six 30 m tour boats in a 60 m channel cannot pass each other, they can
+      // only gridlock. Take the BELLE out for a race and the field runs the stock offshore hull.
+      const rivalBase = base.kind === 'tourboat' ? (catalog.find((v) => v.id === 'speedboat') || catalog[0]) : base;
       for (let i = 0; i < N; i++) {
-        const base = tourMode ? tourSpec() : catalog[vehicleIdx];
         // the tour boat is a working vessel with a name on her bow — no livery paint
         const spec = tourMode ? base
-          : i === 0 ? liverySpec(base) : Object.assign({}, base, { hull: LIVERY[(i - 1) % LIVERY.length] });
+          : i === 0 ? liverySpec(base) : Object.assign({}, rivalBase, { hull: LIVERY[(i - 1) % LIVERY.length] });
         const mesh = RR.Boats.build(spec);
         RR.Engine.scene.add(mesh);
         const b = RR.Physics.createBoat(spec, mesh);
@@ -443,10 +457,12 @@
         showBoat.rotation.set(Math.sin(t * 0.7) * 0.035, t * 0.4, Math.sin(t * 0.55) * 0.045);
         if (showBoat.userData.tick) showBoat.userData.tick(t, null);   // spin turbines / flicker plasma on display
         const cam = RR.Engine.camera;
-        const oa = t * 0.14, r = 10.5;
-        cam.position.set(SHOW.x + Math.sin(oa) * r, 3.4 + Math.sin(t * 0.3) * 0.5, SHOW.z + Math.cos(oa) * r);
+        const len = showBoat.userData.showLen || 0;
+        const r = Math.max(10.5, len * 0.85), up = Math.max(3.4, len * 0.20);
+        const oa = t * 0.14;
+        cam.position.set(SHOW.x + Math.sin(oa) * r, up + Math.sin(t * 0.3) * 0.5, SHOW.z + Math.cos(oa) * r);
         cam.up.set(0, 1, 0);
-        cam.lookAt(SHOW.x, showBoat.position.y + 0.9, SHOW.z);
+        cam.lookAt(SHOW.x, showBoat.position.y + Math.max(0.9, len * 0.06), SHOW.z);
         if (cam.fov !== 50) { cam.fov = 50; cam.updateProjectionMatrix(); }
         return;
       }

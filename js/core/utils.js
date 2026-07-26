@@ -24,23 +24,40 @@ window.RR = window.RR || {};
   };
 
   // ---- Water surface height (CPU mirror of the vertex shader — keep in sync with water.js) ----
-  // amp: wave amplitude scale (river ~1, lake ~3.2)
-  U.waterHeight = function (x, z, t, amp) {
-    return amp * (
-      0.055 * Math.sin(x * 0.11 + t * 1.35) +
-      0.045 * Math.sin(z * 0.13 - t * 1.02 + x * 0.04) +
-      0.032 * Math.sin((x + z) * 0.061 + t * 0.71) +
-      0.022 * Math.sin(x * 0.23 - z * 0.17 + t * 2.1)
-    );
-  };
-  // The long swell only — the first three terms, 46-73 m from crest to crest. The fourth term of
-  // waterHeight is a ~27 m ripple: surface texture a hull straddles rather than a wave it can climb.
+  // amp: wave amplitude scale (river ~1, lake ~3.3).
+  //
+  // Two seas live in this field. The CHOP (22-73 m crests) is boat-wake slop: it owns the river,
+  // and it is deliberately damped offshore, where on a 20 m lake grid it mostly aliases anyway.
+  // Under it, and ONLY offshore, runs a real Lake Michigan SWELL — two trains off the lake's two
+  // long fetches, north-northeast and east-northeast. Their periods are not chosen, they are the
+  // deep-water dispersion relation w = sqrt(g*k): 185 m gives 10.9 s, 118 m gives 8.7 s. That is
+  // the whole trick. Three and a half metres of sea feels heavy rather than buzzy because all the
+  // energy sits near 0.1 Hz and none of it in the 1 Hz band the body reads as a rattle.
+  U.swellFactor = (amp) => U.clamp((amp - 1) / 2.3, 0, 1);   // 0 in the river canyon, 1 on open lake
+
+  // The long field only — everything a hull is long enough to climb. waterHeight adds a ~27 m
+  // ripple on top; that is surface texture a hull straddles, and sampling IT for attitude is what
+  // fed a ~1.4 Hz tremor into the boat on the lake. Keep the two separate.
   U.swellHeight = function (x, z, t, amp) {
-    return amp * (
-      0.055 * Math.sin(x * 0.11 + t * 1.35) +
-      0.045 * Math.sin(z * 0.13 - t * 1.02 + x * 0.04) +
-      0.032 * Math.sin((x + z) * 0.061 + t * 0.71)
-    );
+    const s = U.swellFactor(amp), c = amp * (1 - 0.45 * s);
+    return c * (
+        0.055 * Math.sin(x * 0.11 + t * 1.35) +
+        0.045 * Math.sin(z * 0.13 - t * 1.02 + x * 0.04) +
+        0.032 * Math.sin((x + z) * 0.061 + t * 0.71)
+      ) + s * (
+        0.95 * Math.sin(z * 0.031822 - x * 0.011852 - t * 0.57717) +
+        0.55 * Math.sin(z * 0.023320 - x * 0.047865 - t * 0.72272)
+      );
+  };
+  U.waterHeight = function (x, z, t, amp) {
+    const s = U.swellFactor(amp);
+    return U.swellHeight(x, z, t, amp) +
+      amp * (1 - 0.45 * s) * 0.022 * Math.sin(x * 0.23 - z * 0.17 + t * 2.1);
+  };
+  // peak |height| the field can reach at this amp — water.js normalises crest shading by it
+  U.waveCrestScale = function (amp) {
+    const s = U.swellFactor(amp);
+    return amp * (1 - 0.45 * s) * 0.154 + s * 1.50;
   };
   // Attitude of a hull `len` metres long floating here. HEIGHT still comes from the full field —
   // that is what the vertex shader draws and the boat has to sit on it — but PITCH and ROLL come

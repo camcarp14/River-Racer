@@ -71,13 +71,17 @@
 
     // ---------- DuSable-style marina south of the river mouth ----------
     // moored hulls + masts are baked straight into the static mesh (they barely move at a dock)
+    // Chicago's harbour docks are FLOATING docks — they ride the water, they do not stand in it.
+    // Baked at a fixed y they were fine under the old 1 m lake, but the real swell now swings
+    // +/-1.1 m at the outer finger and washed the deck over. Collected separately and heaved.
     const mx = 2080, mz = 430;
+    const marina = [];
     const hullCols = [0x2b4a6b, 0x6b2b2b, 0x35393e, 0xdfe0e2, 0x3a5a45, 0x8a3a2a];
     for (let d = 0; d < 3; d++) {
       const dz = mz + d * 46;
       const dock = new THREE.BoxGeometry(150, 0.6, 4);
       dock.translate(mx + 40, 0.5, dz);
-      flat.push(tint(dock, 0x8a7c62, 0.08));
+      marina.push(tint(dock, 0x8a7c62, 0.08));
       for (let k = 0; k < 8; k++) {
         const bx = mx - 30 + k * 18, side = (k % 2) ? 1 : -1, bz = dz + side * 5;
         // rule 8: rotation, uniform scale and hue all vary, or eight identical hulls in a row
@@ -90,17 +94,17 @@
         hull.computeVertexNormals();
         hull.rotateY(yaw);
         hull.translate(bx, 0.55 * sc, bz);
-        flat.push(tint(hull, hullCols[(k + d) % hullCols.length], 0.14));
+        marina.push(tint(hull, hullCols[(k + d) % hullCols.length], 0.14));
         const cabin = new THREE.BoxGeometry(2.0 * sc, 0.8 * sc, 1.6 * sc);
         cabin.rotateY(yaw); cabin.translate(bx - 0.5 * sc, 1.4 * sc, bz);
-        flat.push(tint(cabin, 0xe8e4d8, 0.10));
+        marina.push(tint(cabin, 0xe8e4d8, 0.10));
         const mast = new THREE.CylinderGeometry(0.1 * sc, 0.12 * sc, 10 * sc, 5);
-        mast.translate(bx, 5.5 * sc, bz); flat.push(tint(mast, 0xcfcabc, 0));
+        mast.translate(bx, 5.5 * sc, bz); marina.push(tint(mast, 0xcfcabc, 0));
       }
     }
     const spine = new THREE.BoxGeometry(4, 0.6, 150);
     spine.translate(mx - 34, 0.5, mz + 46);
-    flat.push(tint(spine, 0x8a7c62, 0.08));
+    marina.push(tint(spine, 0x8a7c62, 0.08));
 
     // ---------- sailboats under way, scattered across the open basin ----------
     // three hull colours → three instanced fleets, so ten boats cost three draw calls
@@ -190,9 +194,22 @@
       scene.add(m);
     }
 
+    // one merged mesh, heaved and tilted as a raft by the update below
+    const marinaMesh = new THREE.Mesh(RR.City.mergeGeoms(marina), RR.City.flatMaterial());
+    marinaMesh.castShadow = true; marinaMesh.receiveShadow = true;
+    marinaMesh.geometry.translate(-(mx + 40), 0, -(mz + 46));      // pivot at the basin centre
+    marinaMesh.position.set(mx + 40, 0, mz + 46);
+    scene.add(marinaMesh);
+
     const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
     const _p = new THREE.Vector3(), _s = new THREE.Vector3();
+    const _mw = {};
     RR.Engine.onUpdate((dt, t) => {
+      // the marina rides the swell as one raft: heave from the basin centre, tilt from its slope
+      U().waterNormalPitchRoll(mx + 40, mz + 46, t, R.waveAmp(mx + 40, mz + 46), _mw);
+      marinaMesh.position.y = _mw.h;
+      marinaMesh.rotation.set(-_mw.pitch * 0.6, 0, _mw.roll * 0.6);
+
       for (const f of fleets) {
         for (let i = 0; i < f.units.length; i++) {
           const b = f.units[i];

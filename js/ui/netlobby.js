@@ -36,7 +36,10 @@
   `;
 
   function boatOptions(sel) {
-    return RR.Boats.CATALOG.map((v, i) => `<option value="${i}"${i === sel ? ' selected' : ''}>${v.name}</option>`).join('');
+    // pickable() drops hulls that have not been earned yet — the option VALUE stays the catalog
+    // index, because that is what goes over the wire as boatIdx
+    const list = RR.Boats.pickable ? RR.Boats.pickable() : RR.Boats.CATALOG.map((v, i) => ({ v, i }));
+    return list.map((e) => `<option value="${e.i}"${e.i === sel ? ' selected' : ''}>${e.v.name}</option>`).join('');
   }
   function fmt(t) { const m = Math.floor(t / 60), s = (t - m * 60); return m + ':' + s.toFixed(1).padStart(4, '0'); }
   function esc(s) { return String(s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])); }

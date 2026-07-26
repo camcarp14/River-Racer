@@ -72,6 +72,29 @@
     },
   ];
 
+  // ---------- unlocks ----------
+  // A `hidden` entry is not offered in the ride picker until it has been earned. The WACKER BELLE
+  // is the Architecture Tour's payoff: take her wheel out on the river and she is yours from then
+  // on. The CATALOG itself is never filtered or reordered — a boat's index is what multiplayer
+  // sends over the wire and what the showroom addresses — so callers filter the VIEW, not the array.
+  const UNLOCK_KEY = 'rr_unlocked';
+  let unlocked = {};
+  try {
+    const saved = JSON.parse(localStorage.getItem(UNLOCK_KEY) || '{}');
+    if (saved && typeof saved === 'object') unlocked = saved;
+  } catch (e) { /* file:// may refuse storage entirely — then nothing is remembered, and that is fine */ }
+
+  B.isUnlocked = (v) => !!v && (!v.hidden || !!unlocked[v.id]);
+  // returns true only on the transition, so the caller announces the find exactly once
+  B.unlock = function (id) {
+    if (!id || unlocked[id]) return false;
+    unlocked[id] = 1;
+    try { localStorage.setItem(UNLOCK_KEY, JSON.stringify(unlocked)); } catch (e) { /* fine */ }
+    return true;
+  };
+  // what a player may choose right now, each entry carrying its real CATALOG index
+  B.pickable = () => B.CATALOG.map((v, i) => ({ v, i })).filter((e) => B.isUnlocked(e.v));
+
   function mat(color, opts) {
     return new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.5, metalness: 0.18 }, opts || {}));
   }

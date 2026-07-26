@@ -95,7 +95,10 @@
     return null;
   };
 
-  // wave amplitude by locale: calm in the river canyon, rolling out on the lake
+  // Wave amplitude by locale: calm in the river canyon, rolling out on the lake. This is also the
+  // SWELL ramp — RR.U.swellFactor reads (amp-1)/2.3 off this number to decide how much of the long
+  // Lake Michigan swell exists here, so the 420 m past the lock is the boat clearing the harbour
+  // breakwater and meeting open-lake fetch. Move these numbers and you move the sea state.
   R.waveAmp = function (x, z) {
     if (!R.inLake(x, z)) return 1;
     const t = U().smoothstep(R.lakeWestX, R.lakeWestX + 420, x);

@@ -55,18 +55,33 @@
         varying float vAmp;
         varying float vH;
         varying vec4 vReflectCoord;
+        // THE FOUR FUNCTIONS BELOW ARE A LITERAL MIRROR OF RR.U.swellFactor / swellHeight /
+        // waterHeight / waveCrestScale. Change one, change both, or hulls float or sink.
+        float swellF(float amp) { return clamp((amp - 1.0) / 2.3, 0.0, 1.0); }
+        float sh(vec2 p, float t, float amp) {
+          float s = swellF(amp), c = amp * (1.0 - 0.45 * s);
+          return c * (
+              0.055 * sin(p.x * 0.11 + t * 1.35) +
+              0.045 * sin(p.y * 0.13 - t * 1.02 + p.x * 0.04) +
+              0.032 * sin((p.x + p.y) * 0.061 + t * 0.71)
+            ) + s * (
+              0.95 * sin(p.y * 0.031822 - p.x * 0.011852 - t * 0.57717) +
+              0.55 * sin(p.y * 0.023320 - p.x * 0.047865 - t * 0.72272)
+            );
+        }
         float wh(vec2 p, float t, float amp) {
-          return amp * (
-            0.055 * sin(p.x * 0.11 + t * 1.35) +
-            0.045 * sin(p.y * 0.13 - t * 1.02 + p.x * 0.04) +
-            0.032 * sin((p.x + p.y) * 0.061 + t * 0.71) +
-            0.022 * sin(p.x * 0.23 - p.y * 0.17 + t * 2.1));
+          float s = swellF(amp);
+          return sh(p, t, amp) + amp * (1.0 - 0.45 * s) * 0.022 * sin(p.x * 0.23 - p.y * 0.17 + t * 2.1);
+        }
+        float crestScale(float amp) {
+          float s = swellF(amp);
+          return amp * (1.0 - 0.45 * s) * 0.154 + s * 1.50;
         }
         void main() {
           vec4 wp = modelMatrix * vec4(position, 1.0);
           float hh = wh(wp.xz, uTime, aAmp);
           wp.y += hh;
-          vH = hh;
+          vH = hh / max(0.05, crestScale(aAmp));   // -1..1 crest factor, same meaning river or lake
           vWorld = wp.xyz;
           vShore = aShore;
           vLake = aLake;
@@ -108,8 +123,18 @@
           float n4 = 0.5;
           if (uFineDetail > 0.5) n4 = texture2D(uNoise, vWorld.xz * 0.62 + vec2(uTime * 0.13, -uTime * 0.11)).r;
           float bump = (n1 + n2 - 1.0) + ((n3 - 0.5) * 0.40 + (n4 - 0.5) * 0.26) * nearF;
-          float sx = cos(vWorld.x * 0.11 + uTime * 1.35) * 0.0061 * vAmp + bump * 0.10;
-          float sz = cos(vWorld.z * 0.13 - uTime * 1.02) * 0.0059 * vAmp + (n2 - 0.5) * 0.12 + (n3 - 0.5) * 0.05;
+          float sAmp = clamp((vAmp - 1.0) / 2.3, 0.0, 1.0);
+          float cAmp = vAmp * (1.0 - 0.45 * sAmp);
+          // Analytic slope of the swell trains, with a 2.6x SHADING gain (geometry is untouched —
+          // the hulls still sit on wh()). A real 3.5 m sea on a 185 m wavelength is a four-degree
+          // face; four degrees of a mirror lake is invisible, and the ripple noise below would
+          // otherwise out-shout it. This is what actually draws the crest.
+          float g1 = cos(vWorld.z * 0.031822 - vWorld.x * 0.011852 - uTime * 0.57717) * sAmp * 2.6;
+          float g2 = cos(vWorld.z * 0.023320 - vWorld.x * 0.047865 - uTime * 0.72272) * sAmp * 2.6;
+          float sx = cos(vWorld.x * 0.11 + uTime * 1.35) * 0.0061 * cAmp
+                     - 0.011259 * g1 - 0.026326 * g2 + bump * 0.10;
+          float sz = cos(vWorld.z * 0.13 - uTime * 1.02) * 0.0059 * cAmp
+                     + 0.030231 * g1 + 0.012826 * g2 + (n2 - 0.5) * 0.12 + (n3 - 0.5) * 0.05;
           vec3 N = normalize(vec3(-sx * 2.4, 1.0, -sz * 2.4));
 
           vec3 V = normalize(uCamPos - vWorld);
@@ -121,8 +146,9 @@
           vec3 base = mix(deep, shallow, clamp(0.35 + bump * 0.5, 0.0, 1.0));
           // shallower, lighter, greener water near the banks
           base = mix(base, base * 1.12 + vec3(0.03, 0.06, 0.04), smoothstep(0.55, 1.0, vShore) * 0.5 * (1.0 - vLake));
-          // brighten swell crests a touch, darken body at glancing angles (glossier read)
-          base *= (1.0 + max(vH, 0.0) * 0.45) * (1.0 - grazing * 0.22);
+          // light the crests and sink the troughs — signed, because on open water the dark trough
+          // is half of what tells you a swell is passing. Twice the swing out on the lake.
+          base *= (1.0 + vH * (0.10 + 0.14 * vLake)) * (1.0 - grazing * 0.22);
           // The river meets vertical sheet pile and limestone, not a beach. The contact shadow
           // in the last half-metre is what makes the water look like it is IN a channel.
           float wallShade = smoothstep(0.84, 1.0, vShore);
@@ -160,6 +186,12 @@
 
           // foam grain: break flat white up with the mid noise octave
           float foamGrain = 0.6 + 0.8 * n2;
+
+          // Whitecaps. Past about force 4 the crests of a Lake Michigan swell curl and break, and
+          // a scatter of white is the single strongest cue that a sea is RUNNING rather than
+          // sitting. Gated on the swell ramp, so the sheltered harbour never grows any.
+          float cap = smoothstep(0.58, 0.96, vH) * sAmp * smoothstep(0.54, 0.82, n2);
+          col = mix(col, uFoamTint, clamp(cap * foamGrain, 0.0, 1.0) * 0.50);
 
           // bank foam: a thin scum line against the wall, not a surf break
           float foamBand = smoothstep(0.905, 1.0, vShore + bump * 0.10 + 0.035 * sin(uTime * 1.9 + vWorld.x * 0.55 + vWorld.z * 0.42));

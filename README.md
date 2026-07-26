@@ -32,9 +32,9 @@ Along the banks, modeled from their actual footprints and heights:
 | Mode | What it is |
 |---|---|
 | **Race** | Six boats, one course, ROOKIE / SKIPPER / LEGEND rivals |
-| **The Chicago Cup** | Four rounds across all four courses, points after each, standings carried between them |
+| **The Chicago Cup** | Four rounds across all four courses, with a full bracket and season table after every round |
 | **Time Trial** | You against your own best line — a translucent **ghost** of your record run drives it alongside you, with a live delta |
-| **Architecture Tour** | No clock, no rivals. Idle down the river while the docent panel names what you are passing |
+| **Architecture Tour** | No clock, no rivals. You ride the *Wacker Belle*, a 30 m river tour boat, while the docent names what you are passing. She keeps a secret |
 | **Multiplayer** | Real cross-machine P2P rooms — share a link, everyone brings their own boat |
 
 ## Courses
