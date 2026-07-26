@@ -827,38 +827,51 @@
   // --------------------------------------------------------------------------
   // Chicago hooks (C8)
   // --------------------------------------------------------------------------
+  // A real horn is a strong fundamental with a few harmonics over it. A sawtooth carries every
+  // harmonic to Nyquist, and driving that through a hard tanh added more — held for five seconds
+  // it stopped reading as a horn and became a buzz sitting on top of the music. The fundamental
+  // is now a triangle (odd harmonics, steep rolloff), the partials are voiced by hand, the shaper
+  // is barely more than glue, and the lowpass opens over the attack the way a real bell does.
   function hornBlast(t, f, dur, peak) {
     var mix = gain(0);
-    var ws = makeShaper(2.2);
-    var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400; lp.Q.value = 0.6;
+    var ws = makeShaper(1.15);
+    var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.5;
+    lp.frequency.setValueAtTime(420, t);
+    lp.frequency.linearRampToValueAtTime(900, t + 0.22);
     mix.connect(ws); ws.connect(lp); lp.connect(fxBus);
     var nodes = [mix, ws, lp], anchor = null;
+    var VOICE = [0.42, 0.20, 0.11, 0.05];        // fundamental-dominant, not a saw spectrum
     for (var h = 1; h <= 4; h++) {
       var o = ctx.createOscillator();
-      o.type = h === 1 ? 'sawtooth' : 'sine';
+      o.type = h === 1 ? 'triangle' : 'sine';
       o.frequency.value = f * h;
       o.detune.value = (h % 2 ? -7 : 7);
-      var og = gain(h === 1 ? 0.5 : 0.28 / h);
+      var og = gain(VOICE[h - 1]);
       o.connect(og); og.connect(mix);
       o.start(t); o.stop(t + dur + 0.06);
       nodes.push(o, og); anchor = o;
     }
     mix.gain.setValueAtTime(EPS, t);
-    mix.gain.linearRampToValueAtTime(peak, t + 0.09);
-    mix.gain.setValueAtTime(peak, t + dur - 0.25);
+    mix.gain.linearRampToValueAtTime(peak, t + 0.14);
+    mix.gain.setValueAtTime(peak, t + dur - 0.35);
     mix.gain.exponentialRampToValueAtTime(EPS, t + dur);
     if (anchor) cleanupOnEnd(anchor, nodes);
   }
 
   // The actual Inland Rules signal for a bridge opening: one prolonged blast plus one short.
   // The bridge answers 1.5 s later an octave down from the tender house. Not a generic klaxon.
+  // Twenty-eight bridges on their own cycles used to be able to start a 13-second sequence each,
+  // and overlapping sequences fused into one continuous drone. One bridge at a time, and the
+  // whole exchange now fits in 7 s instead of 13.3.
+  var hornUntil = 0;
   function doBridgeHorn() {
     if (!ready()) return;
     var t = now();
-    hornBlast(t, 180, 5.0, 0.22);
-    hornBlast(t + 5.4, 180, 1.0, 0.20);
-    hornBlast(t + 6.9, 90, 5.0, 0.17);
-    hornBlast(t + 12.3, 90, 1.0, 0.15);
+    if (t < hornUntil) return;
+    hornUntil = t + 8.5;
+    hornBlast(t, 180, 3.4, 0.17);              // prolonged blast: I am asking for the bridge
+    hornBlast(t + 3.8, 180, 0.8, 0.15);        // one short
+    hornBlast(t + 5.0, 90, 1.9, 0.12);         // the tender house answers, an octave down
   }
 
   // Egg #37: six seconds of the title groove bleeding out of a warehouse door.

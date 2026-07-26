@@ -523,7 +523,11 @@
           const warn = cyc > 0.26 && cyc < 0.65;   // gates drop ~3s before the leaves move
           // Inland Rules: one prolonged blast plus one short asks for the bridge, and the
           // bridge answers with the same. W7 owns audio.js — stay silent if it is not there yet.
-          if (warn && !o.warn && RR.Audio && RR.Audio.bridgeHorn && RR.Engine.camera) {
+          // Only while a race or the tour is actually running. The menu's attract flythrough
+          // sails the whole river past every bridge, so this was firing horn after horn
+          // underneath the title music — which is what it sounded like: a buzz over the music.
+          const live = RR.Race && RR.Race.state && RR.Race.state();
+          if (live && warn && !o.warn && RR.Audio && RR.Audio.bridgeHorn && RR.Engine.camera) {
             _cam.copy(RR.Engine.camera.position);
             if (U().dist2(_cam.x, _cam.z, o.x, o.z) < 330 * 330) RR.Audio.bridgeHorn(o.x, o.z);
           }
