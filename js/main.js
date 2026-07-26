@@ -119,8 +119,83 @@
     return liv == null ? base : Object.assign({}, base, { hull: liv });
   }
 
+  // The Architecture Tour is not a race and it is not a free camera: it is a ride. You board the
+  // WACKER BELLE as a passenger, she runs the river herself, and five taps of F buy you the wheel.
+  let docent = null;                 // the skipper's autopilot (an AI pilot with the racing filed off)
+  let tourDriving = false, tourCam = 0;
+  // look[] is an offset from the eye, in the boat's own frame: +z is forward, +y is up.
+  const TOUR_VIEWS = [
+    { key: 'seat', name: 'PASSENGER SEAT', look: [1.4, 2.0, 32], fov: 62 },
+    { key: 'foredeck', name: 'FOREDECK', look: [-0.9, 5.0, 26], fov: 64 },
+    { key: 'stern', name: 'AFT DECK', look: [0, -1.4, 26], fov: 60 },
+    { key: 'wheel', name: 'WHEELHOUSE', look: [0.55, 0.35, 30], fov: 60 },
+    { key: 'helm', name: 'HELM', look: [0, -6.5, 44], fov: 56, contain: 3 },
+    { name: 'CHASE', stock: 0 },
+  ];
+  const tcEye = new THREE.Vector3(), tcLook = new THREE.Vector3();
+  const tcQuat = new THREE.Quaternion(), tcEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+  const tourPt = {};
+  function tourSpec() {
+    const c = RR.Boats.CATALOG;
+    return c.find((v) => v.id === 'tourboat') || c[0];
+  }
+  // A point in the boat's own frame, in world space. Same basis physics.applyVisual gives the mesh
+  // (rotateY -> rotateX -> rotateZ = Euler order YXZ), so a seat pose really is bolted to the deck:
+  // when her bow lifts, so does the view, and the bulwark stays put in the frame.
+  function boatLocal(out, b, l) {
+    tcEuler.set(b.visPitch || 0, b.heading, -(b.visRoll || 0));
+    tcQuat.setFromEuler(tcEuler);
+    return out.set(l[0], l[1], l[2]).applyQuaternion(tcQuat).add(b.pos);
+  }
+  function setTourView(i) {
+    tourCam = ((i % TOUR_VIEWS.length) + TOUR_VIEWS.length) % TOUR_VIEWS.length;
+    const v = TOUR_VIEWS[tourCam];
+    if (v.stock != null) { RR.Camera.setMode(v.stock); if (player) RR.Camera.snapTo(player); }
+    if (RR.HUD.flash) RR.HUD.flash(v.name);
+  }
+  // The seats are bolted to the boat, so these poses are rigid — no spring, no lag. The vessel
+  // itself is 200 tonnes of slow, which is all the smoothing a shot from her deck needs.
+  function tourCamera(b) {
+    const v = TOUR_VIEWS[tourCam];
+    const seats = (b.mesh.userData && b.mesh.userData.seatCams) || null;
+    if (v.stock != null || !seats || !seats[v.key]) return false;
+    const cam = RR.Engine.camera;
+    const eye = seats[v.key];
+    boatLocal(tcEye, b, eye);
+    boatLocal(tcLook, b, [eye[0] + v.look[0], eye[1] + v.look[1], eye[2] + v.look[2]]);
+    // the seats ride the boat and cannot land in a wall; a lens hung 30 m astern can, so that one
+    // gets the same keep-out the chase rig uses
+    if (v.contain && RR.River && RR.River.waterQuery) {
+      const q = RR.River.waterQuery(tcEye.x, tcEye.z, null);
+      if (q && q.clear < v.contain) { tcEye.x += q.nx * (v.contain - q.clear); tcEye.z += q.nz * (v.contain - q.clear); }
+      // and duck it under the bridge decks, or every crossing on the Main Stem is a black frame
+      if (RR.Bridges && RR.Bridges.duckY) {
+        const deckY = Math.min(RR.Bridges.duckY(tcEye.x, tcEye.z),
+          RR.Bridges.duckY((tcEye.x + b.pos.x) * 0.5, (tcEye.z + b.pos.z) * 0.5),
+          RR.Bridges.duckY(b.pos.x, b.pos.z));
+        if (isFinite(deckY)) tcEye.y = Math.min(tcEye.y, deckY - 1.3);
+      }
+    }
+    cam.position.copy(tcEye);
+    cam.up.set(0, 1, 0);
+    cam.lookAt(tcLook);
+    if (cam.fov !== v.fov) { cam.fov = v.fov; cam.updateProjectionMatrix(); }
+    return true;
+  }
+  function setTourDriving(on) {
+    if (!raceState || !raceState.tour || tourDriving === on) return;
+    tourDriving = on;
+    const crew = player.mesh.userData.crew;
+    if (crew && crew.skipper) crew.skipper.visible = !on;
+    if (RR.HUD.flash) RR.HUD.flash(on ? 'YOU HAVE THE WHEEL' : 'THE SKIPPER HAS THE WHEEL');
+    if (RR.HUD.chip) RR.HUD.chip('near', on ? 'ALL THIRTY METRES OF HER — W/S/A/D' : 'DOCENT TOUR RESUMED', 3000);
+    RR.Audio.airhorn();
+    RR.Camera.kick(0.3);
+    setTourView(on ? 4 : 0);              // hand her over from the HELM shot: you need to see her length
+  }
+
   // roster (multiplayer) = [{id, name, boatIdx, isSelf}] sorted identically on every client
-  function startRace(courseIdx, vehicleIdx, timeTrial, roster, tourMode) {
+  function startRace(courseIdx, vehicleIdx, timeTrial, roster, tourMode, cupRound) {
     clearBoats();
     if (RR.HUD.resetSession) RR.HUD.resetSession();
     RR.Engine.timeScale = 1;                          // clear any pause/photo slo-mo from a prior race
@@ -147,8 +222,10 @@
       // each in its own livery so you can tell the field apart at speed
       const LIVERY = [0xd8dce0, 0x2f8f4f, 0x8a2fb0, 0xe07820, 0x16303f];
       for (let i = 0; i < N; i++) {
-        const base = catalog[vehicleIdx];
-        const spec = i === 0 ? liverySpec(base) : Object.assign({}, base, { hull: LIVERY[(i - 1) % LIVERY.length] });
+        const base = tourMode ? tourSpec() : catalog[vehicleIdx];
+        // the tour boat is a working vessel with a name on her bow — no livery paint
+        const spec = tourMode ? base
+          : i === 0 ? liverySpec(base) : Object.assign({}, base, { hull: LIVERY[(i - 1) % LIVERY.length] });
         const mesh = RR.Boats.build(spec);
         RR.Engine.scene.add(mesh);
         const b = RR.Physics.createBoat(spec, mesh);
@@ -163,10 +240,41 @@
     raceState.mp = mp;
 
     pilots = [];
-    if (!mp && !tourMode) {
-      const diff = RR.Menus && RR.Menus.difficulty ? RR.Menus.difficulty() : 1;
+    docent = null;
+    tourDriving = false;
+    RR.Input.onFTap = null; RR.Input.onFiveF = null;
+    if (tourMode) {
+      // The skipper is an AI pilot with the racing filed off her: she reads the river four times
+      // further ahead than a jet ski does (a 30 m hull that turns in 34 m has to), never cuts an
+      // apex, never touches the boost, and never makes a mistake with forty passengers aboard.
+      docent = RR.AI.createPilot(player, { path: raceState.route }, 0, 1.2);
+      const k = docent.k;
+      k.look = 3.6; k.apex = 0.30; k.wobble = 0.02; k.mistake = 0; k.boostArm = 9;
+      k.liftBend = 0.45; k.liftFloor = 0.72; k.liftSpan = 0.80; k.react = 8; k.steerGain = 2.2;
+      docent.lane = 0; docent.aggression = 0;
+      // 0.75 throttle settles this hull at 9 m/s — 18 knots, about what the real boats run. (Not
+      // sqrt(0.75) x top: at part throttle the friction term physics.js adds below full throttle
+      // dominates a hull with an acceleration this low.)
+      docent.skill = 0.75;
+      // F five times in a row hands over the wheel. The window between taps is short enough that
+      // nobody trips it by leaning on a key, and every tap says how far along you are.
+      RR.Input.onFTap = (n, need) => {
+        if (n < need && RR.HUD.chip) RR.HUD.chip('near', 'F ' + n + '/' + need + ' — TAKE THE WHEEL?', 1100);
+      };
+      RR.Input.onFiveF = () => setTourDriving(!tourDriving);
+    } else if (!mp) {
+      // A championship is a season, so the field has to be the same six boats every round, under
+      // the same names, at the difficulty the cup began at. race.js stores that roster; without it
+      // the standings table can only say "RIVAL 3".
+      const board = RR.Race.cup ? RR.Race.cup() : null;
+      const isCupRound = !!(board && !board.done &&
+        (cupRound === true || (cupRound == null && RR.Race.cupCourseIdx && RR.Race.cupCourseIdx() === courseIdx)));
+      const names = isCupRound && RR.Race.cupFieldNames ? RR.Race.cupFieldNames() : null;
+      const cupDiff = isCupRound && RR.Race.cupDifficulty ? RR.Race.cupDifficulty() : null;
+      const diff = cupDiff != null ? cupDiff : (RR.Menus && RR.Menus.difficulty ? RR.Menus.difficulty() : 1);
       for (let i = 1; i < boats.length; i++) {
         const p = RR.AI.createPilot(boats[i], { path: raceState.route }, i - 1, diff);
+        if (names && names[i]) p.name = names[i];
         boats[i].pilotName = p.name;
         pilots.push(p);
       }
@@ -231,17 +339,23 @@
     };
 
     RR.Audio.init();
-    RR.Audio.startEngine(player.spec.kind);
+    RR.Audio.startEngine(player.spec.engine || player.spec.kind);   // the tour boat runs a diesel
     if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(true);
     RR.HUD.show(true);
     RR.Camera.setMode(0);
     RR.Camera.snapTo(player);
+    if (tourMode) {
+      tourCam = 0;
+      if (RR.HUD.chip) RR.HUD.chip('near', 'C: CHANGE SEAT · SPACE: DOCENT · F ×5: TAKE THE WHEEL', 7000);
+    }
     mode = 'race';
   }
 
   function quitToTitle() {
     mode = 'menu';
     RR.Engine.timeScale = 1;
+    docent = null; tourDriving = false;
+    RR.Input.onFTap = null; RR.Input.onFiveF = null;
     RR.HUD.show(false);
     RR.Audio.stopEngine();
     if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(false);
@@ -265,7 +379,12 @@
 
   // ---------- global keys ----------
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'KeyC' && mode === 'race') RR.Camera.cycle();
+    // Aboard the tour boat C walks the boat: four places to stand or sit, the helm shot, then the
+    // stock chase rig — so the free look you have in a race is still there on the ride.
+    if (e.code === 'KeyC' && mode === 'race') {
+      if (raceState && raceState.tour) setTourView(tourCam + 1);
+      else RR.Camera.cycle();
+    }
     if (e.code === 'KeyR' && mode === 'race') resetToCourse();
     if (e.code === 'KeyN' && RR.Theme) { const m = RR.Theme.toggle(); if (RR.HUD && RR.HUD.flash) RR.HUD.flash(m.toUpperCase()); }
     if (e.code === 'KeyG' && RR.Theme && RR.Theme.toggleGreenRiver) {
@@ -349,9 +468,28 @@
 
     const racing = raceState.phase !== 'countdown';
 
-    // player
-    const pc = racing && !player.finished ? RR.Input : { throttle: player.finished ? 0.25 : 0, brake: 0, steer: RR.Input.steer * 0.4, boost: false };
+    // player — or, on the Architecture Tour until you have taken the wheel, the skipper
+    let pc;
+    if (raceState.tour && !tourDriving && docent) {
+      RR.AI.update(docent, dt, t, player.routeD);
+      docent.ctl.boost = false;                       // she does not have a boost button
+      pc = docent.ctl;
+    } else {
+      pc = racing && !player.finished ? RR.Input : { throttle: player.finished ? 0.25 : 0, brake: 0, steer: RR.Input.steer * 0.4, boost: false };
+    }
     RR.Physics.update(player, dt, pc, t);
+    // The tour is a loop, not a one-way trip: at the far end of the route the run starts over at
+    // the head of the river rather than steaming off into open lake for ten minutes.
+    if (raceState.tour && !tourDriving && raceState.route && !raceState.route.loop &&
+        player.routeD > raceState.route.len - 70) {
+      RR.U.pathAt(raceState.route, 14, tourPt);
+      player.pos.set(tourPt.x, 0.2, tourPt.z);
+      player.heading = Math.atan2(tourPt.tx, tourPt.tz);
+      player.vel.x = Math.sin(player.heading) * 6; player.vel.z = Math.cos(player.heading) * 6;
+      player.routeD = 14; player._inLap = 14; player.routeHint = null; player.hint = {};
+      RR.Audio.airhorn();
+      if (RR.HUD.chip) RR.HUD.chip('near', 'NEXT TOUR DEPARTING', 3000);
+    }
 
     // AI (single-player only)
     for (const p of pilots) {
@@ -412,19 +550,27 @@
 
     RR.Race.animateGates(t);
     RR.FX.update(boats, dt, t);
+    let seated = false;
     if (mode === 'photo') {
       // rawDt so the rig keeps swinging at a natural rate while the world runs at 0.25x
       RR.Camera.cinematic(player, dt, RR.Engine.rawDt || dt);   // [ and ] cycle the five shots
       if (RR.HUD.cine) RR.HUD.cine(true, RR.Camera.shotLabel ? RR.Camera.shotLabel() : '');
     } else if (!(window.RRTest && window.RRTest._freecam)) {
-      RR.Camera.follow(player, dt);
+      seated = raceState.tour && tourCamera(player);
+      if (!seated) RR.Camera.follow(player, dt);
     }
     RR.Engine.trackShadow(player.pos.x, player.pos.z);
 
     RR.HUD.update(dt, player, raceState);
     RR.Minimap.draw(raceState, player, boats);
 
-    const duck = RR.Camera.duck ? RR.Camera.duck() : 0;
+    // the chase rig computes its own bridge duck; a seat bolted to the deck has to ask directly,
+    // and passing under a bascule leaf on the open deck is exactly when the reverb should slam shut
+    let duck = RR.Camera.duck ? RR.Camera.duck() : 0;
+    if (seated) {
+      const deckY = RR.Bridges && RR.Bridges.duckY ? RR.Bridges.duckY(player.pos.x, player.pos.z) : Infinity;
+      duck = isFinite(deckY) ? 1 : 0;
+    }
     const lock = window.CHICAGO && CHICAGO.lake && CHICAGO.lake.lock;
     const inLock = !!lock && RR.U.dist2(player.pos.x, player.pos.z, lock.x, lock.z) < 90 * 90;
     RR.Audio.update(dt, {
@@ -486,6 +632,15 @@
   window.RRTest = {
     ready: false,
     startRace: (c, v) => { RR.Menus.hide(); RR.Audio.setMusic(false); startRace(c || 0, v || 0, false); },
+    // Architecture Tour hooks: board her, change seats, take the wheel
+    startTour: (c) => { RR.Menus.hide(); RR.Audio.setMusic(false); startRace(c || 0, 0, false, null, true); },
+    tourView: (i) => setTourView(i | 0),
+    tourWheel: (on) => setTourDriving(on !== false),
+    tourState: () => (raceState && raceState.tour ? {
+      driving: tourDriving, view: TOUR_VIEWS[tourCam].name,
+      speed: Math.hypot(player.vel.x, player.vel.z), routeD: Math.round(player.routeD),
+    } : null),
+    cupBoard: () => (RR.Race.cupBoard ? RR.Race.cupBoard() : null),
     // multiplayer test hooks (mock transport = same-browser tabs talk over BroadcastChannel)
     netJoin: (room, name, boatIdx) => RR.Net.join({ room, name, boatIdx: boatIdx || 0, transport: RR.Transports.mock() }),
     netStart: (c) => RR.Net.startAsHost(c || 0),

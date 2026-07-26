@@ -5,6 +5,9 @@
   const P = {};
   const U = () => RR.U;
   const wn = { pitch: 0, roll: 0, h: 0 };
+  // One slap = one clean thwack. SLAP_W is pi/SLAP_LIFE so the shudder is a single half-cycle that
+  // starts and ends at zero; the old 48 rad/s ran a whole cycle inside 130 ms, which is a wobble.
+  const SLAP_LIFE = 0.13, SLAP_W = Math.PI / SLAP_LIFE;
   // while resetLock is running the throttle is dead — hoisted so the sim never allocates per frame
   const lockCtl = { throttle: 0, brake: 0, steer: 0, boost: false };
 
@@ -19,6 +22,7 @@
       rpm: 0,
       visRoll: 0, visPitch: 0,
       radius: (mesh.userData.size ? mesh.userData.size.r : 2) * 0.7,
+      hullLen: (mesh.userData.size && mesh.userData.size.len) || 5,   // waterline the hull averages
       mass: spec.mass || 1,
       bumpRecover: 0,
       hint: {},
@@ -31,7 +35,7 @@
       planeF: 0, hump: 0,
       slapPhase: 0, slapT: 0,
       prevThrottle: 0, diveT: 0,
-      drifting: false, driftTime: 0,
+      drifting: false, driftTime: 0, launchArmed: true,
       draft: 0, _draftHit: 0,
       rubber: 1,
       scrapeT: 0, resetLock: 0,
@@ -164,28 +168,35 @@
 
     // ---- vertical: ride the analytic wave field ----
     const amp = RR.River.waveAmp(boat.pos.x, boat.pos.z);
-    U().waterNormalPitchRoll(boat.pos.x, boat.pos.z, t, amp, wn);
+    U().waterNormalPitchRoll(boat.pos.x, boat.pos.z, t, amp, wn, boat.hullLen);
     const rideY = wn.h + 0.10 + planeF * (spec.lift == null ? 0.28 : spec.lift) + (spec.hover || 0);
 
-    // hull slap: a planing hull crossing chop slams at a rate set by speed over wave period.
-    // This is the texture that stops the ride feeling like ice.
+    // hull slap: a planing hull crossing chop slams once per wave it meets, so the rate is the
+    // ENCOUNTER frequency — speed over crest spacing — and crest spacing grows with fetch. The
+    // river's boat-wake slop is metres apart; Lake Michigan's rollers are tens of metres apart, so
+    // out there the hull pounds about once a second, hard, instead of buzzing at 7 Hz.
     const slapAmp = (spec.slap || 0) * planeF * amp * U().clamp(speed / topSpeed, 0.15, 1);
     if (!boat.airborne && slapAmp > 0.06) {
-      boat.slapPhase += dt * (1.7 + speed * 0.15);
+      const chopLen = 7.5 + (amp - 1) * 20;                  // 7.5 m in the canyon, ~53 m on open lake
+      boat.slapPhase += dt * (0.8 + speed / chopLen);
       if (boat.slapPhase >= 1) {
         boat.slapPhase -= 1;
-        boat.slapT = 0.13;                                   // 130 ms of visible shudder
+        boat.slapT = SLAP_LIFE;                              // 130 ms of visible shudder
         if (boat.onSlap) boat.onSlap(U().clamp(slapAmp * 0.9, 0, 1));
       }
     }
     boat.slapT = Math.max(0, boat.slapT - dt);
 
     if (!boat.airborne) {
-      // launch off steep lake swells at speed
+      // launch off steep lake swells at speed. One launch per face: re-arm only after the hull is
+      // back on level water, or it re-triggers the instant it lands and chatters up a long swell
+      // in a string of 20 cm hops.
       const relSlope = -(wn.pitch * fz + wn.roll * fx);
-      if (speed > topSpeed * 0.7 && relSlope > 0.028 && amp > 2 && boat.pos.y <= rideY + 0.05) {
+      if (relSlope < 0.010) boat.launchArmed = true;
+      if (boat.launchArmed && speed > topSpeed * 0.7 && relSlope > 0.024 && amp > 2 && boat.pos.y <= rideY + 0.05) {
         boat.airborne = true;
-        boat.vy = speed * relSlope * 2.1 + 1.2;
+        boat.launchArmed = false;
+        boat.vy = speed * relSlope * 3.6 + 1.2;              // rarer crests, so each one throws harder
         if (boat.onLaunch) boat.onLaunch(speed);
       } else {
         boat.pos.y = U().damp(boat.pos.y, rideY, 14, dt);
@@ -262,18 +273,20 @@
     // sat at 10 deg nose-up all the way to the top end. A planing hull runs flat, so fade it out
     // as the hull comes up and the hump becomes the only place the bow really rears.
     let targetPitch = boat.airborne ? -0.12
-      : (-accelPitch - wn.pitch * 1.4 * fz - wn.roll * 1.4 * fx) * 0.5
+      : (-accelPitch - wn.pitch * 1.7 * fz - wn.roll * 1.7 * fx) * 0.5
         - Math.min(0.14, speed * 0.004) * (1 - planeF * 0.75) + trim + dive;
     if (boat._ramp) targetPitch = -boat._ramp.slope * 1.15;   // nose-up climbing the wedge
 
     // prop torque reaction: a right-hand prop rolls the hull to port under load. It vanishes on
     // plane, where the boat rides its own lift instead of hanging off the shaft.
     const torque = -(spec.torque || 0) * ctl.throttle * (1 - planeF * 0.6);
+    // 1.7 / 1.5 on a swell-only slope lands on the same peak-to-peak attitude the old 1.4 / 1.2
+    // reached against the full field — same size of motion, none of the ripple frequency in it.
     const targetRoll = ctl.steer * spec.lean * U().clamp(speed / 14, 0, 1)
-                     + (wn.roll * fz - wn.pitch * fx) * 1.2 + torque;
+                     + (wn.roll * fz - wn.pitch * fx) * 1.5 + torque;
 
     boat.visPitch = U().damp(boat.visPitch, targetPitch, 5, dt) +
-                    boat.slapT * 0.26 * Math.sin(boat.slapT * 48);
+                    boat.slapT * 0.26 * Math.sin(boat.slapT * SLAP_W);
     boat.visRoll = U().damp(boat.visRoll, targetRoll, 5, dt);
 
     // ---- engine rpm for audio ----

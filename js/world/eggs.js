@@ -455,7 +455,26 @@
 
     // ---------- RIVERWALK MURAL: a painted city-flag mural on the south quay wall ----------
     {
-      const q = U().pathAt(main, main.len * 0.31, {});
+      // 24 m of dead-flat plane cuts the corner on a bending bank: at the original anchor the
+      // downstream end stood 3.4 m out over the Main Stem. Slide along the reach until the
+      // centre and BOTH ends are on dry ground.
+      const MW = 24;
+      let q = null;
+      for (let k = 0; k <= 16 && !q; k++) {
+        for (const sg of (k ? [-1, 1] : [1])) {
+          const d = main.len * 0.31 + sg * k * 9;
+          if (d < 24 || d > main.len - 24) continue;
+          const c = U().pathAt(main, d, {});
+          const o = c.w + 8.7;
+          let ok = true;
+          for (const e of [-MW / 2, 0, MW / 2]) {
+            const w = RR.River.waterQuery(c.x + c.tz * o + c.tx * e, c.z - c.tx * o + c.tz * e);
+            if (!w || w.clear > -1.5) { ok = false; break; }
+          }
+          if (ok) { q = c; break; }
+        }
+      }
+      if (q) {
       const off = q.w + 8.7;
       const mx = q.x + q.tz * off, mz = q.z - q.tx * off;            // south bank retaining wall
       const muralTex = U().canvasTexture(512, 96, (c, w, h) => {
@@ -474,14 +493,17 @@
         c.fillStyle = '#0b1e2d'; c.font = 'bold 26px Arial, sans-serif';
         c.textAlign = 'center'; c.fillText('SWEET HOME CHICAGO', w / 2, h - 6);
       });
-      const mural = new THREE.Mesh(new THREE.PlaneGeometry(24, 3.6),
+      const mural = new THREE.Mesh(new THREE.PlaneGeometry(MW, 3.6),
         new THREE.MeshLambertMaterial({ map: muralTex }));
       mural.position.set(mx, 3.4, mz);
-      mural.rotation.y = Math.atan2(-q.tz, q.tx) + Math.PI / 2;      // face the water
+      // +π/2 turned the mural broadside to the bank: 24 m of plane running ACROSS the channel,
+      // twelve of them out over open water. The wall's normal already faces the river.
+      mural.rotation.y = Math.atan2(-q.tz, q.tx);
       mural.layers.set(1);
       scene.add(mural);
       E.tags.push({ name: 'SWEET HOME CHICAGO MURAL', sub: 'FOUR STARS · TWO STRIPES · THE FLAG IS A MAP OF THIS RIVER',
         x: mx, z: mz, r2: 70 * 70 });
+      }
     }
 
     // ---------- #2 NICHOLAS J. MELAS CENTENNIAL FOUNTAIN — the best three seconds in the game --
@@ -781,6 +803,11 @@
         const gx = a.x + nx * (a.w + 0.5), gz = a.z + nz * (a.w + 0.5);
         if (gx > C.lake.openWaterX - 20) continue;
         if (RR.City.landClearance(a.x + nx * (a.w + 7), a.z + nz * (a.w + 7)) < 1) continue;
+        // riverwalk.js drops a promenade segment wherever the offset bank curls back into the
+        // channel, so test the deck the same way — a gull perched on a railing that was never
+        // built is just a bird standing on the river
+        const dq = RR.River.waterQuery(a.x + nx * (a.w + 4.65), a.z + nz * (a.w + 4.65));
+        if (!dq || dq.clear > -1) continue;
         gull(gx, PYd + 1.10, gz, rng() * 6.28);                      // perched on the cable rail
       }
       // one peregrine: they genuinely nest on these bridges, and stoop at 390 km/h

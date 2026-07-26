@@ -85,22 +85,51 @@
       return false;
     }
 
+    // A walker's patrol is a fixed offset off one centreline, and that offset folds back over
+    // the channel wherever the river bends hard — at Wolf Point it walked strollers sixteen
+    // metres out into the South Branch. So bake the answer once: for each bank and side, sample
+    // which stretches of promenade are genuinely dry, and clip every walker's patrol to the dry
+    // run it starts in. One boolean array per bank replaces a per-frame nearest-point test on
+    // ~900 figures, and the test it replaces could not see a neighbouring channel at all.
+    const SEG = 6;
+    function dryMask(p, s) {
+      const n = Math.ceil(p.len / SEG) + 1;
+      const ok = new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        const a = U().pathAt(p, Math.min(i * SEG, p.len), {});
+        let good = 1;
+        for (const o of [2.2, 5.5, 8.4]) {                        // the width the walkers use
+          const x = a.x + (-a.tz) * (a.w + o) * s, z = a.z + a.tx * (a.w + o) * s;
+          if (x > openX - 8 || overWater(x, z)) { good = 0; break; }
+        }
+        ok[i] = good;
+      }
+      return ok;
+    }
+
     // ---------- distribute walkers + cyclists along the promenades ----------
     const walkers = [], statics = [], cyclists = [];
     for (const key in RR.River.paths) {
       if (key.startsWith('lake')) continue;
       const p = RR.River.paths[key];
+      const masks = [dryMask(p, -1), dryMask(p, 1)];
       const density = key === 'main' ? 3.0 : 1.4;                 // people per ~40m of bank
       const count = Math.floor((p.len / 40) * density);
       for (let i = 0; i < count; i++) {
         for (const s of [-1, 1]) {
-          const d = rng() * p.len;
+          let d = rng() * p.len;
           const off = 2 + rng() * 6.2;                            // across the promenade
-          const a = U().pathAt(p, d, {});
-          const x = a.x + (-a.tz) * (a.w + off) * s, z = a.z + a.tx * (a.w + off) * s;
-          if (x > openX - 8 || overWater(x, z)) continue;
+          const mask = masks[s > 0 ? 1 : 0];
+          const mi = Math.min(mask.length - 1, Math.round(d / SEG));
+          if (!mask[mi]) continue;
+          let lo = mi, hi = mi;                                   // the dry run this walker is in
+          while (lo > 0 && mask[lo - 1]) lo--;
+          while (hi < mask.length - 1 && mask[hi + 1]) hi++;
+          const d0 = lo * SEG + 4, d1 = Math.min(p.len, hi * SEG) - 4;
+          if (d1 - d0 < 10) continue;
+          d = U().clamp(d, d0, d1);
           const isBike = rng() < 0.14;
-          const w = { p, key, s, d, off, dir: rng() < 0.5 ? 1 : -1, spd: isBike ? 5 + rng() * 3 : 1.1 + rng() * 0.8,
+          const w = { p, key, s, d, d0, d1, off, dir: rng() < 0.5 ? 1 : -1, spd: isBike ? 5 + rng() * 3 : 1.1 + rng() * 0.8,
                       col: SHIRTS[(rng() * SHIRTS.length) | 0], skin: SKINS[(rng() * SKINS.length) | 0],
                       acc: rng() < 0.5 ? ACCENT[(rng() * ACCENT.length) | 0] : 0,
                       sc: 0.93 + rng() * 0.14, ph: rng() * 9, bike: isBike };
@@ -332,21 +361,12 @@
     for (let i = 0; i < peopleData.length; i++) {
       const w = peopleData[i];
       w.d += w.spd * w.dir * dt;
-      if (w.d > w.p.len) { w.d = w.p.len; w.dir = -1; }
-      else if (w.d < 0) { w.d = 0; w.dir = 1; }
-      let a = U().pathAt(w.p, w.d, bp);
-      let nx = -a.tz, nz = a.tx;
-      let x = a.x + nx * (a.w + w.off) * w.s, z = a.z + nz * (a.w + w.off) * w.s;
-      // guard against curling into the channel at a bend: if this step would put the walker
-      // on the water, turn around and re-place on the stretch just behind them (cheap windowed check)
-      const hint = (w.d / w.p.len * (w.p.n - 1)) | 0;
-      const q = U().pathNearest(w.p, x, z, hint, 5);
-      if (q.dist < q.w + 0.3) {
-        w.dir = -w.dir;
-        w.d = U().clamp(w.d + w.spd * w.dir * dt * 2, 0, w.p.len);
-        a = U().pathAt(w.p, w.d, bp); nx = -a.tz; nz = a.tx;
-        x = a.x + nx * (a.w + w.off) * w.s; z = a.z + nz * (a.w + w.off) * w.s;
-      }
+      // patrol bounds were baked at init to the dry run of promenade this walker started in
+      if (w.d > w.d1) { w.d = w.d1; w.dir = -1; }
+      else if (w.d < w.d0) { w.d = w.d0; w.dir = 1; }
+      const a = U().pathAt(w.p, w.d, bp);
+      const nx = -a.tz, nz = a.tx;
+      const x = a.x + nx * (a.w + w.off) * w.s, z = a.z + nz * (a.w + w.off) * w.s;
       const yaw = Math.atan2(a.tx * w.dir, a.tz * w.dir);
       const bob = w.bike ? 0 : Math.abs(Math.sin(t * 6 + w.ph)) * 0.06;
       _q.setFromAxisAngle(_up, yaw); _p.set(x, PY() + bob, z); _s.setScalar(w.sc);

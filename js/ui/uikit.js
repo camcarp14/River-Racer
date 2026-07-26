@@ -81,8 +81,11 @@
 #delta.on{opacity:1} #delta.up{color:#EF3340} #delta.dn{color:#3ED17E}
 /* NB: on any element that sets its own font-size, an em offset resolves against THAT size, not
    the HUD's. Every such offset below is pre-divided so it still lands where §4.3's layout says. */
+/* The gap row is the one HUD element with no plate behind it, and it sits over open sky at the
+   top of the frame. Dim text there is unreadable on the water — it needs its own contrast. */
 #gaps{position:absolute;left:50%;top:7.56em;transform:translateX(-50%);display:flex;gap:1.1em;
-  font:700 .78em/1 var(--f-ui);letter-spacing:.14em;color:var(--text-dim);opacity:0;
+  font:700 .78em/1 var(--f-ui);letter-spacing:.14em;color:var(--text);opacity:0;
+  text-shadow:0 1px 3px rgba(0,0,0,.95),0 0 .7em rgba(0,0,0,.75);
   transition:opacity var(--t-std) var(--e-out);white-space:nowrap}
 #gaps.on{opacity:1}
 #gaps b{color:#fff;font-family:var(--f-num);font-variant-numeric:tabular-nums;margin-left:.35em}
@@ -241,8 +244,12 @@
 /* the two light-blue bars at the flag's TRUE proportions — the flag is a map of this course */
 /* z-index:-1 keeps the pseudo-element BEHIND #menu's in-flow children. Without it an absolutely
    positioned ::before paints above them and the blur eats the menu's own text. */
+/* Layer one darkens the top and bottom of the flythrough: the star captions and the key line
+   land over a sunlit skyline and an orange jump ramp, and neither survived at full brightness. */
 #menu.title-screen::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:-1;
-  background:linear-gradient(180deg,transparent 0 16.6%,rgba(126,200,227,.13) 16.6% 33.3%,
+  background:linear-gradient(180deg,rgba(4,18,27,.66) 0,rgba(4,18,27,.24) 24%,rgba(4,18,27,0) 44%,
+      rgba(4,18,27,0) 60%,rgba(4,18,27,.34) 80%,rgba(4,18,27,.66) 100%),
+    linear-gradient(180deg,transparent 0 16.6%,rgba(126,200,227,.13) 16.6% 33.3%,
     transparent 33.3% 66.6%,rgba(126,200,227,.13) 66.6% 83.3%,transparent 83.3%)}
 #menu.title-screen{padding:2.2vh 0}
 #title{font:400 clamp(44px,7.2vw,104px)/.90 var(--f-display);letter-spacing:.005em;
@@ -254,18 +261,23 @@
 /* star + its caption in one column, so the caption really does sit under its own star */
 .stars{display:flex;gap:2.6vw;justify-content:center;align-items:flex-start;margin-bottom:1.2vh;
   letter-spacing:0;color:inherit;font-size:inherit;text-shadow:none}
-.starcol{display:flex;flex-direction:column;align-items:center;gap:.75em;width:clamp(74px,7.8vw,116px)}
+/* wide enough for GREAT FIRE 1871 / FORT DEARBORN on one line at the new caption size */
+.starcol{display:flex;flex-direction:column;align-items:center;gap:.75em;width:clamp(86px,9.4vw,140px)}
 .starcol .star6{width:clamp(18px,2.0vw,28px);height:clamp(18px,2.0vw,28px);
   animation:starbeat 3.2s ease-in-out infinite}
 .starcol:nth-child(2) .star6{animation-delay:.12s} .starcol:nth-child(3) .star6{animation-delay:.24s}
 .starcol:nth-child(4) .star6{animation-delay:.36s}
-.starcol span{font:700 9px/1.25 var(--f-ui);letter-spacing:.14em;color:rgba(239,51,64,.85);
-  text-align:center;text-shadow:0 1px 3px rgba(0,0,0,.85)}
+/* 9px fixed was sub-legible at any resolution, and translucent red over a sunlit skyline read as
+   noise. Solid flag red on a hard shadow, sized like the rest of the kit. */
+.starcol span{font:700 clamp(10px,.88vw,14px)/1.25 var(--f-ui);letter-spacing:.12em;color:var(--chi-red);
+  text-align:center;text-shadow:0 1px 2px #000,0 0 .6em rgba(0,0,0,.95)}
 @keyframes starbeat{0%,100%{transform:scale(1);filter:none}
   50%{transform:scale(1.09);filter:drop-shadow(0 0 .5em rgba(239,51,64,.75))}}
 
-.menu-list{margin-top:2.2vh;gap:.5em;min-width:21em}
-.menu-item{font:700 1.05em/1 var(--f-ui);letter-spacing:.24em;padding:.76em 2em;border-radius:2px;
+/* max-content, so a long label ("CHAMPIONSHIP · ROUND 2/4") widens the plate instead of
+   overflowing it — every item in a list stays the same width as the longest */
+.menu-list{margin-top:2.2vh;gap:.5em;min-width:21em;width:max-content;max-width:92vw}
+.menu-item{white-space:nowrap;font:700 1.05em/1 var(--f-ui);letter-spacing:.24em;padding:.76em 2em;border-radius:2px;
   background:var(--panel);border:0;box-shadow:inset 0 0 0 2px var(--rule-soft);
   color:var(--text);transition:all var(--t-micro) var(--e-out);text-align:center;cursor:pointer}
 .menu-item.sel,.menu-item:hover{background:var(--sign-green);color:#fff;
@@ -330,6 +342,134 @@
   font:700 .95em/1 var(--f-ui);letter-spacing:.28em;text-align:center;border-radius:2px;
   animation:recordin 620ms var(--e-pop) both}
 @keyframes recordin{from{transform:scale(.6) rotate(-3deg);opacity:0}to{transform:none;opacity:1}}
+
+/* ------------------------------------------------------ THE CHICAGO CUP ----*/
+/* A championship is a SEASON TABLE, not a leaderboard: one column per round, so the whole story —
+   who won what, who is climbing, what is still to play for — reads in one glance. Sized off both
+   viewport axes so the four-round board never runs off the bottom of a 1280x720 window. */
+/* Every post-race screen sits over a still-rendering city, and light stonework behind 8pt tracking
+   is unreadable. One blurred scrim buys back the whole contrast budget. */
+#menu.scrim::before{content:"";position:absolute;inset:0;z-index:-1;
+  backdrop-filter:blur(7px) saturate(.6);
+  background:linear-gradient(180deg,rgba(4,18,27,.86),rgba(4,18,27,.66) 42%,rgba(4,18,27,.88))}
+#cup-board{width:min(75em,95vw);display:flex;flex-direction:column;gap:.85em;
+  font:400 clamp(11px,min(1.02vw,1.80vh),16px)/1 var(--f-ui)}
+.cup-head{text-align:center}
+.cup-crest{display:flex;justify-content:center;gap:1.05em;margin-bottom:.5em}
+.cup-crest .star6{width:.7em;height:.7em;animation:starbeat 3.2s ease-in-out infinite}
+.cup-crest .star6:nth-child(2){animation-delay:.12s}
+.cup-crest .star6:nth-child(3){animation-delay:.24s}
+.cup-crest .star6:nth-child(4){animation-delay:.36s}
+.cup-title{font:400 3.1em/.92 var(--f-display);letter-spacing:.035em;color:#fff;
+  text-shadow:0 .045em 0 var(--chi-blue-ink),0 .09em .3em rgba(0,0,0,.65)}
+.cup-kicker{margin-top:.85em;font:700 .8em/1.5 var(--f-ui);letter-spacing:.26em;color:var(--chi-blue)}
+.cup-kicker b{color:#fff}
+.cup-kicker .nx{color:var(--gold)}
+
+/* the bracket: four plates, left to right, with the run of play arrowed between them */
+.cup-bracket{display:grid;grid-template-columns:repeat(4,1fr);gap:1.55em}
+.cup-round{position:relative;min-width:0;padding:.6em .8em .7em;border-radius:2px;
+  background:var(--panel);box-shadow:inset 0 0 0 2px var(--rule-soft)}
+.cup-round::after{content:"";position:absolute;right:-1.08em;top:50%;width:0;height:0;
+  border:.4em solid transparent;border-left-color:rgba(126,200,227,.5);transform:translateY(-50%)}
+.cup-round:last-child::after{display:none}
+.cup-round .rn{font:700 .66em/1 var(--f-ui);letter-spacing:.28em;color:var(--text-mute)}
+/* two lines, always: LAKE MICHIGAN CIRCUIT will not fit on one at a quarter of the board */
+.cup-round .rname{margin-top:.3em;font:400 1.24em/1.02 var(--f-display);letter-spacing:.02em;
+  color:var(--text-dim);min-height:2.04em}
+.cup-round .rline{margin-top:.42em;display:flex;align-items:center;gap:.42em;
+  font:700 .68em/1.3 var(--f-ui);letter-spacing:.12em;color:var(--text-mute);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cup-round .rline .star6{width:.6em;height:.6em;flex:0 0 auto}
+.cup-round .rline b{color:#fff;overflow:hidden;text-overflow:ellipsis}
+.cup-round .rline.me{color:var(--gold)}
+.cup-round.done{box-shadow:inset 0 0 0 2px var(--rule-soft),inset .26em 0 0 var(--sign-green)}
+.cup-round.done .rn{color:var(--text-dim)}
+.cup-round.done .rname{color:#fff}
+.cup-round.next{background:var(--panel-hi);box-shadow:inset 0 0 0 2px var(--gold)}
+.cup-round.next .rn,.cup-round.next .rline{color:var(--gold)}
+.cup-round.next .rname{color:#fff}
+.cup-round.next .rline b{color:var(--gold)}
+.cup-round.later{opacity:.5}
+/* the round you have just come off flashes gold once, then settles into the finished state */
+.cup-round.fresh{animation:cupfresh 1.25s var(--e-out) both}
+@keyframes cupfresh{
+  0%{box-shadow:inset 0 0 0 2px var(--gold),0 0 1.6em rgba(255,200,87,.55)}
+  100%{box-shadow:inset 0 0 0 2px var(--rule-soft),inset .26em 0 0 var(--sign-green)}}
+
+/* the season table */
+.cup-table{border-top:2px solid var(--chi-blue)}
+.cup-row{display:grid;grid-template-columns:2.8em minmax(7em,1fr) repeat(4,5.6em) 3.4em 4.8em 3.4em;
+  align-items:center;gap:.6em;padding:.28em .95em}
+.cup-row.head{padding:.7em .95em .62em;font:700 .7em/1 var(--f-ui);letter-spacing:.2em;
+  color:var(--chi-blue);text-align:center;border-bottom:1px solid var(--rule-soft)}
+.cup-row.head .n{text-align:left}
+.cup-row.head .rh i{display:block;margin-top:.42em;font:700 .84em/1 var(--f-ui);
+  letter-spacing:.06em;color:var(--text-mute)}
+.cup-row.head .rh.now,.cup-row.head .rh.now i{color:var(--gold)}
+.cup-row.line{background:var(--panel);border-bottom:1px solid rgba(255,255,255,.05);
+  font:700 .9em/1 var(--f-ui);letter-spacing:.08em;color:var(--text-dim);
+  animation:rowin 320ms var(--e-out) both}
+.cup-row.line:nth-child(3){animation-delay:55ms}  .cup-row.line:nth-child(4){animation-delay:110ms}
+.cup-row.line:nth-child(5){animation-delay:165ms} .cup-row.line:nth-child(6){animation-delay:220ms}
+.cup-row.line:nth-child(7){animation-delay:275ms} .cup-row.line:nth-child(8){animation-delay:330ms}
+.cup-row .ps{font:400 1.6em/1 var(--f-display);color:#fff;text-align:right}
+.cup-row.p1 .ps{color:var(--gold)} .cup-row.p2 .ps{color:#DDE3E8} .cup-row.p3 .ps{color:#C97B3C}
+.cup-row .n{position:relative;display:flex;align-items:center;gap:.5em;min-width:0;color:#fff}
+.cup-row .n b,.cup-row .n .star6{position:relative;z-index:1}
+.cup-row .n b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cup-row .n .star6{width:.62em;height:.62em;flex:0 0 auto}
+/* points as a bar behind the name: the shape of the championship, read without doing arithmetic */
+.cup-row .n .bar{position:absolute;left:-.45em;top:50%;height:1.85em;margin-top:-.925em;
+  background:rgba(126,200,227,.15);border-left:2px solid rgba(126,200,227,.45);border-radius:0 2px 2px 0}
+.cup-row.you .n .bar{background:rgba(255,200,87,.18);border-left-color:var(--gold)}
+.cup-cell{text-align:center;padding:.22em 0;border-radius:2px;background:rgba(255,255,255,.035)}
+.cup-cell .pp{display:block;font:400 1.45em/1 var(--f-display);color:#fff}
+.cup-cell .pv{display:block;margin-top:.2em;font:700 .68em/1 var(--f-ui);letter-spacing:.08em;color:var(--gold)}
+.cup-cell.p1 .pp{color:var(--gold)} .cup-cell.p2 .pp{color:#DDE3E8} .cup-cell.p3 .pp{color:#C97B3C}
+.cup-cell.none{font:700 1.1em/1.55 var(--f-ui);color:var(--text-mute)}
+.cup-cell.now{background:rgba(255,200,87,.09)}
+.cup-wins{text-align:center;font:700 .9em/1 var(--f-num);font-variant-numeric:tabular-nums;color:var(--text-dim)}
+.cup-wins.has{color:var(--gold)}
+.cup-tot{text-align:right}
+.cup-tot b{font:400 1.85em/1 var(--f-num);font-variant-numeric:tabular-nums;color:#fff}
+.cup-tot i{display:block;margin-top:.18em;font:700 .64em/1 var(--f-ui);letter-spacing:.1em;color:var(--text-mute)}
+.cup-row.p1 .cup-tot b{color:var(--gold)}
+.cup-row.p1 .cup-tot i{color:var(--chi-blue)}
+.cup-mv{text-align:center;font:700 .84em/1 var(--f-num);font-variant-numeric:tabular-nums;color:var(--text-mute)}
+.cup-mv.up{color:#3ED17E} .cup-mv.dn{color:var(--chi-red)}
+.cup-row.you{background:rgba(255,200,87,.11);box-shadow:inset .3em 0 0 var(--gold);color:#fff}
+
+/* champion */
+.cup-champ{width:min(100%,34em);align-self:center;text-align:center;padding:.85em 1.4em .95em;border-radius:2px;
+  background:linear-gradient(180deg,rgba(255,200,87,.20),rgba(255,200,87,.05)),var(--panel-hi);
+  box-shadow:inset 0 0 0 2px var(--gold);animation:champin 700ms var(--e-pop) both}
+@keyframes champin{from{transform:scale(.88);opacity:0}to{transform:none;opacity:1}}
+.cup-champ .band{display:flex;align-items:center;justify-content:center;gap:1em;
+  font:700 .76em/1 var(--f-ui);letter-spacing:.42em;color:var(--gold);text-indent:.42em}
+.cup-champ .band .star6{width:.8em;height:.8em;background:var(--gold)}
+.cup-champ .who{margin-top:.3em;font:400 3.3em/1 var(--f-display);letter-spacing:.03em;color:#fff;
+  text-shadow:0 .04em .3em rgba(0,0,0,.6)}
+.cup-champ .sub{margin-top:.35em;font:700 .72em/1 var(--f-ui);letter-spacing:.2em;color:var(--text-dim)}
+.cup-champ .run{margin-top:.65em;display:flex;justify-content:center;gap:.5em}
+.cup-champ .run span{font:700 .66em/1 var(--f-ui);letter-spacing:.14em;color:var(--text-dim);
+  background:rgba(4,18,27,.5);padding:.55em .85em;border-radius:2px;box-shadow:inset 0 0 0 1px var(--rule-soft)}
+.cup-champ .run b{color:#fff;margin-left:.35em}
+.cup-champ .run span.w{color:var(--gold);box-shadow:inset 0 0 0 1px rgba(255,200,87,.55)}
+.cup-champ .run span.w b{color:var(--gold)}
+.cup-champ .sub2{margin-top:.5em;font:700 .72em/1 var(--f-ui);letter-spacing:.2em;color:var(--chi-blue)}
+.cup-champ.mine{box-shadow:inset 0 0 0 2px var(--gold),0 0 2.4em rgba(255,200,87,.30)}
+
+/* call to action */
+.cup-cta{display:flex;flex-direction:column;align-items:center;gap:.4em;margin-top:.1em}
+.cup-cta .menu-item{min-width:26em;box-sizing:border-box;font:700 .98em/1 var(--f-ui);
+  letter-spacing:.22em;padding:.62em 2.2em}
+.cup-cta .menu-item.primary{font:700 1.42em/1 var(--f-ui);letter-spacing:.18em;padding:.58em 2.2em;
+  box-shadow:inset 0 0 0 2px var(--gold)}
+.cup-cta .menu-item.primary.sel,.cup-cta .menu-item.primary:hover{
+  box-shadow:inset 0 0 0 2px #fff,0 .3em 1.2em rgba(0,105,62,.45)}
+.cup-note{margin-top:.4em;text-align:center;font:700 .7em/1.7 var(--f-ui);letter-spacing:.18em;
+  color:var(--text-dim)}
 
 /* ----------------------------------------------------------------- pause ---*/
 #menu.paused::before{content:"";position:absolute;inset:0;z-index:-1;backdrop-filter:blur(6px) saturate(.55);

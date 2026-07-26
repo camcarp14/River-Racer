@@ -138,6 +138,43 @@
     { name: 'NAVY PIER HEADLAND', x: 2520, z: -300, side: -1 },    // the wide outside line, biggest chop
   ];
 
+  // BOOST across the bar, with chevrons at both ends funnelling the eye into the gap.
+  function boostSignTex() {
+    return RR.U.canvasTexture(512, 96, (c, w, h) => {
+      c.fillStyle = '#07301b'; c.fillRect(0, 0, w, h);
+      c.fillStyle = '#25ff7a'; c.fillRect(0, 0, w, 7); c.fillRect(0, h - 7, w, 7);
+      c.fillStyle = '#eafff2';
+      c.font = 'bold 56px "Arial Black", Arial, sans-serif';
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText('BOOST', w / 2, h / 2 + 3);
+      c.strokeStyle = '#25ff7a'; c.lineWidth = 8; c.lineCap = 'round';
+      for (let k = 0; k < 3; k++) for (const s of [-1, 1]) {
+        const x = w / 2 + s * (140 + k * 26);
+        c.beginPath();
+        c.moveTo(x + s * 15, h * 0.22); c.lineTo(x, h / 2); c.lineTo(x + s * 15, h * 0.78);
+        c.stroke();
+      }
+    });
+  }
+  // Chevrons painted on the water, apex toward +v (CanvasTexture flips Y) = the way through.
+  // Drawn twice, dark under bright: the Chicago River is GREEN, and a green arrow on green water
+  // is an arrow nobody sees.
+  function boostMatTex() {
+    return RR.U.canvasTexture(128, 128, (c, w, h) => {
+      c.clearRect(0, 0, w, h);
+      c.lineCap = 'round'; c.lineJoin = 'round';
+      // a deep V, not a shallow one: seen from a boat's eye the mat is almost edge-on, and a
+      // shallow chevron foreshortens into a plain stripe
+      for (const pass of [['#06251a', 28], ['#b6ffd9', 15]]) {
+        c.strokeStyle = pass[0]; c.lineWidth = pass[1];
+        for (let k = 0; k < 3; k++) {
+          const y = 38 + k * 42;
+          c.beginPath(); c.moveTo(12, y); c.lineTo(w / 2, y - 34); c.lineTo(w - 12, y); c.stroke();
+        }
+      }
+    });
+  }
+
   function placeGate(route, x, z, side, out) {
     const q = U().pathNearest(route, x, z);
     if (q.dist > 70) return null;
@@ -179,38 +216,85 @@
     state.boostGates = gates;
     if (!gates.length) return;
 
-    // one merged mesh for the posts, one for the glows: +2 draw calls for all six gates
-    const GOLD = new THREE.Color(0xffc857).convertSRGBToLinear();
-    const postGeos = [], glowGeos = [];
+    // A gate has to read as SPEED from 200 m out, not as a channel marker. Green (the only colour
+    // that means go), chevrons painted on the water pointing the way through, BOOST lettered across
+    // the bar so it reads from either direction, and a ring that pulses on the water like a start
+    // light — and goes dark the moment you have taken it.
+    const postGeos = [], glowGeos = [], signGeos = [], matGeos = [];
+    const HALF = 4.0;
     for (const g of gates) {
       const q = U().pathNearest(route, g.x, g.z);
+      const across = Math.atan2(q.tx, q.tz);            // rotateY(across) sends +x to (tz, -tx)
       for (const s of [-1, 1]) {
-        const px = g.x + q.tz * 3.4 * s, pz = g.z - q.tx * 3.4 * s;
-        const post = new THREE.CylinderGeometry(0.26, 0.42, 9, 6);
+        const px = g.x + q.tz * HALF * s, pz = g.z - q.tx * HALF * s;
+        const post = new THREE.CylinderGeometry(0.24, 0.44, 9, 6);
         post.translate(px, 4.5, pz);
         postGeos.push(post);
-        const glow = new THREE.SphereGeometry(0.7, 8, 6);
-        glow.translate(px, 9.4, pz);
+        const glow = new THREE.SphereGeometry(0.72, 8, 6);
+        glow.translate(px, 9.3, pz);
         glowGeos.push(glow);
       }
-      // rotateY(t) sends +x to (cos t, -sin t), so atan2(tx, tz) lays the bar ACROSS the channel
-      const bar = new THREE.BoxGeometry(7.6, 0.4, 0.4);
-      bar.rotateY(Math.atan2(q.tx, q.tz));
-      bar.translate(g.x, 8.6, g.z);
+      const bar = new THREE.BoxGeometry(HALF * 2 + 0.9, 0.34, 0.34);
+      bar.rotateY(across);
+      bar.translate(g.x, 8.35, g.z);
       postGeos.push(bar);
+      // one sign per side, each turned to face its own oncoming traffic, so BOOST never reads
+      // mirrored the way a single double-sided plane would
+      for (const s of [-1, 1]) {
+        const sign = new THREE.PlaneGeometry(HALF * 2 + 2.6, 2.2);
+        sign.rotateY(Math.atan2(q.tx * s, q.tz * s));   // plane normal +z -> (+/-tx, +/-tz)
+        sign.translate(g.x + q.tx * 0.26 * s, 8.4, g.z + q.tz * 0.26 * s);
+        signGeos.push(sign);
+      }
+      // chevron mat on the water. rotateX(-PI/2) puts the texture's +v on -z; the extra PI turns
+      // it back down the route, so the arrows point the way you are meant to go.
+      const pad = new THREE.PlaneGeometry(HALF * 2 + 1.0, 18);
+      pad.rotateX(-Math.PI / 2);
+      pad.rotateY(across + Math.PI);
+      pad.translate(g.x, 0.36, g.z);
+      const uv = pad.attributes.uv;                    // two tiles down the run: a chevron every 2 m
+      for (let i = 0; i < uv.count; i++) uv.setY(i, uv.getY(i) * 2);
+      matGeos.push(pad);
     }
     const merge = RR.City && RR.City.mergeGeoms;
     if (!merge) return;
+    const GO = new THREE.Color(0x25ff7a).convertSRGBToLinear();
     const posts = new THREE.Mesh(merge(postGeos), new THREE.MeshStandardMaterial({
-      color: 0x2a2419, emissive: GOLD, emissiveIntensity: 0.55, roughness: 0.45 }));
+      color: 0x16241c, emissive: GO, emissiveIntensity: 0.55, roughness: 0.42 }));
     const glows = new THREE.Mesh(merge(glowGeos), new THREE.MeshBasicMaterial({
-      color: 0xffd24a, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
-    glows.renderOrder = 2;
-    glows.layers.set(1);
+      color: 0x5cffa8, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
+    // unlit and fully opaque: the legend has to read at midnight as clearly as at noon
+    const signs = new THREE.Mesh(merge(signGeos), new THREE.MeshBasicMaterial({
+      map: boostSignTex(), side: THREE.FrontSide }));
+    const matTex = boostMatTex();
+    matTex.wrapS = matTex.wrapT = THREE.RepeatWrapping;
+    // Normal blending, not additive: green added to the river's own green clips straight to white
+    // (the same trap the lake ribbon fell into), and a white gate says nothing at all.
+    const mats = new THREE.Mesh(merge(matGeos), new THREE.MeshBasicMaterial({
+      map: matTex, transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide }));
+    glows.renderOrder = 2; mats.renderOrder = 2;
+    glows.layers.set(1); mats.layers.set(1);
     posts.frustumCulled = false; glows.frustumCulled = false;
-    gateGroup.add(posts, glows);
+    signs.frustumCulled = false; mats.frustumCulled = false;
+    gateGroup.add(posts, glows, signs, mats);
+    // The ring is the one part that may be SCALED, because each is its own mesh with untranslated
+    // geometry — the merged meshes above are baked at world coordinates and scaling them flies the
+    // Harbor Lock gate 400 m up the river.
+    const ringGeo = new THREE.RingGeometry(3.4, 4.5, 30);
+    ringGeo.rotateX(-Math.PI / 2);
+    for (const g of gates) {
+      const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
+        color: 0x25ff7a, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending,
+        depthWrite: false, side: THREE.DoubleSide }));
+      ring.position.set(g.x, 0.46, g.z);
+      ring.renderOrder = 3; ring.layers.set(1);
+      gateGroup.add(ring);
+      g.ring = ring;
+      g.hitT = 0;
+    }
     state.boostGateGlow = glows;
     state.boostGatePosts = posts;
+    state.boostGateMat = matTex;
   }
 
   // Pre-placed trackside cameras for the cinematic rig (FEEL §2.8 shot 2): sample the route every
@@ -490,14 +574,17 @@
     if (!gates || !gates.length || b !== S.player || b.finished) return;
     for (const g of gates) {
       if (g.lastLap === (b.lap || 0)) continue;
-      if (U().dist2(b.pos.x, b.pos.z, g.x, g.z) > 49) continue;   // radius 7 m
+      if (U().dist2(b.pos.x, b.pos.z, g.x, g.z) > 56.25) continue;   // radius 7.5 m: the posts stand at 4
       g.lastLap = b.lap || 0;
+      g.hitT = 0.55;                                              // the ring blows out and goes dark
       b.boostEnergy = Math.min(1, b.boostEnergy + 0.30);
       if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.18);
       if (RR.HUD && RR.HUD.chip) RR.HUD.chip('near', '+BOOST');
       else if (RR.HUD && RR.HUD.flash) RR.HUD.flash('+BOOST');
       if (RR.Audio && RR.Audio.boostGate) RR.Audio.boostGate();
       else if (RR.Audio && RR.Audio.checkpoint) RR.Audio.checkpoint();
+      // a wall of spray through the gate: you FELT it, so you should see it
+      if (RR.FX && RR.FX.spray) RR.FX.spray(g.x, 0.6, g.z, 0, 7.5, 0, 14, 6.5, 1.1);
       if (RACE.onBoostGate) RACE.onBoostGate(g);
     }
   }
@@ -576,6 +663,32 @@
       if (cps[i].pylonGlow) cps[i].pylonGlow.scale.setScalar(1 + Math.sin(t * 6) * (active ? 0.5 : 0.15));
     }
     if (S.lakeRibbon) S.lakeRibbon.tex.offset.y = -(t * 0.4) % 1;   // chevrons scroll toward the finish
+    if (S.boostGateMat) S.boostGateMat.offset.y = -(t * 0.55) % 1;  // the water chevrons run the way through
+    // the ring is the per-gate state light: pulsing green = open, blown out = you just took it,
+    // dark = already banked this lap
+    const gates = S.boostGates;
+    if (gates) {
+      const lap = S.player ? (S.player.lap || 0) : 0;
+      const dt = Math.min(0.1, Math.max(0, t - (S._gateT == null ? t : S._gateT)));
+      S._gateT = t;
+      for (let i = 0; i < gates.length; i++) {
+        const g = gates[i], r = g.ring;
+        if (!r) continue;
+        if (g.hitT > 0) {
+          g.hitT = Math.max(0, g.hitT - dt);
+          const k = 1 - g.hitT / 0.55;
+          r.scale.setScalar(1 + k * 2.4);
+          r.material.opacity = 0.95 * (1 - k);
+        } else if (g.lastLap === lap) {
+          r.scale.setScalar(1);
+          r.material.opacity = 0.10;                                // spent until the next lap
+        } else {
+          const p = 0.5 + 0.5 * Math.sin(t * 3.6 - i * 0.7);
+          r.scale.setScalar(1 + p * 0.13);
+          r.material.opacity = 0.34 + p * 0.42;
+        }
+      }
+    }
     if (S.boostGateGlow) {
       // Emission only — NEVER scale. The twelve glow spheres are baked at world coordinates into
       // one merged geometry, so mesh.scale works about the scene origin, not about each orb: the
@@ -591,17 +704,48 @@
 
   // ---------- THE CHICAGO CUP ----------
   // Four rounds over the four courses, points 10/8/6/4/3/2, persisted so you can walk away and
-  // come back to a standings table that remembers.
+  // come back to a standings table that remembers — including WHO you were racing and what they
+  // did in each round. RACE.cupBoard() is the whole bracket in one object; the UI renders it.
   RACE.CUP_ROUNDS = ['mainstem', 'southbranch', 'riverrun', 'lakecircuit'];
   RACE.CUP_POINTS = [10, 8, 6, 4, 3, 2];
+
+  // A championship needs a FIELD, not five anonymous boats: the same rivals have to come back for
+  // round two under the same names. The roster is drawn once at cupBegin and stored with the cup,
+  // so it survives every reload. (ai.js keeps its own list for one-off races; if it ever exports
+  // one we use that instead of this copy.)
+  const CUP_RIVAL_NAMES = ['“Wacker” Wade', 'Lou Canal', 'Stella Skyline', 'Deep Dish Dre',
+    'Goose Island Gus', 'El Tracks Elena', 'Marina Mae', 'Bridgeport Bo',
+    'Pilsen Pearl', 'Bubbly Creek Benny', 'Lockport Lucia', 'Calumet Cal'];
+
+  function drawField(n, seed) {
+    const pool = ((RR.AI && RR.AI.NAMES) || CUP_RIVAL_NAMES).slice();
+    const rng = U().mulberry(seed >>> 0);                 // mulberry, never Math.random: the field
+    for (let i = pool.length - 1; i > 0; i--) {           // is game state and has to reload identically
+      const j = Math.floor(rng() * (i + 1));
+      const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+    }
+    const names = ['YOU'];
+    for (let i = 1; i < n; i++) names.push(pool[(i - 1) % pool.length]);
+    return names;
+  }
 
   function cupLoad() {
     try {
       const raw = localStorage.getItem('rr_cup');
       const c = raw ? JSON.parse(raw) : null;
-      if (c && typeof c.round === 'number' && Array.isArray(c.points)) return c;
+      if (c && typeof c.round === 'number' && Array.isArray(c.points)) return cupMigrate(c);
     } catch (e) { /* file:// storage may be unavailable — fine */ }
     return null;
+  }
+  // A cup saved by an older build has points and nothing else. Give it a roster and an empty
+  // per-round table rather than dropping the player's championship on the floor.
+  function cupMigrate(c) {
+    if (!Array.isArray(c.names) || c.names.length !== c.points.length) {
+      c.names = drawField(c.points.length, 0x9E3779B9 ^ ((c.hull | 0) * 2654435761));
+    }
+    if (!Array.isArray(c.rounds)) c.rounds = [];
+    c.rounds.length = RACE.CUP_ROUNDS.length;
+    return c;
   }
   function cupSave(c) {
     try { localStorage.setItem('rr_cup', JSON.stringify(c)); } catch (e) { /* fine */ }
@@ -611,7 +755,13 @@
   RACE.cup = () => cupState || (cupState = cupLoad());
 
   RACE.cupBegin = function (hull, diff, fieldSize) {
-    cupState = { round: 0, points: new Array(fieldSize || 6).fill(0), hull: hull | 0, diff: diff == null ? 1 : diff };
+    const n = fieldSize || 6;
+    cupState = {
+      round: 0, done: false, hull: hull | 0, diff: diff == null ? 1 : diff,
+      points: new Array(n).fill(0),
+      names: drawField(n, (Date.now() ^ ((hull | 0) * 2654435761)) >>> 0),
+      rounds: new Array(RACE.CUP_ROUNDS.length).fill(null),
+    };
     cupSave(cupState);
     return cupState;
   };
@@ -624,28 +774,101 @@
     const i = RACE.COURSES.findIndex((x) => x.id === id);
     return i < 0 ? 0 : i;
   };
+  // main.js reads these when it builds the field, so the boats on the water carry the same names
+  // the standings table shows, and the whole championship runs at the difficulty it began at.
+  RACE.cupFieldNames = function () { const c = RACE.cup(); return c && !c.done ? c.names.slice() : null; };
+  RACE.cupDifficulty = function () { const c = RACE.cup(); return c && !c.done ? c.diff : null; };
 
   // results = the array RACE.onRaceOver hands out, finishing order first. Player is index 0 of
   // the boats array, so standings are keyed by that index and survive a page reload.
   RACE.cupRecord = function (results) {
     const c = RACE.cup();
     if (!c || !S) return null;
+    cupMigrate(c);
+    const rIdx = Math.min(c.round, RACE.CUP_ROUNDS.length - 1);
+    const n = c.points.length;
+    const row = { course: RACE.CUP_ROUNDS[rIdx], pos: new Array(n).fill(0), pts: new Array(n).fill(0), time: new Array(n).fill(null) };
     for (let i = 0; i < results.length; i++) {
       const idx = S.boats.indexOf(results[i].boat);
       if (idx < 0) continue;
-      while (c.points.length <= idx) c.points.push(0);
-      c.points[idx] += RACE.CUP_POINTS[Math.min(i, RACE.CUP_POINTS.length - 1)];
+      while (c.points.length <= idx) { c.points.push(0); c.names.push('RIVAL ' + idx); }
+      const p = RACE.CUP_POINTS[Math.min(i, RACE.CUP_POINTS.length - 1)];
+      c.points[idx] += p;
+      row.pos[idx] = i + 1;
+      row.pts[idx] = p;
+      row.time[idx] = isFinite(results[i].time) ? results[i].time : null;
+      const nm = results[i].boat.isPlayer ? 'YOU' : results[i].boat.pilotName;
+      if (nm) c.names[idx] = nm;
     }
+    c.rounds[rIdx] = row;
     c.round++;
     c.done = c.round >= RACE.CUP_ROUNDS.length;
     cupSave(c);
     return c;
   };
+
+  // Ordered standings. Ties break on the better record — wins first, then best single finish —
+  // and only then on the player, because "level on points" is not a placing.
+  function standingsOf(c) {
+    const R = RACE.CUP_ROUNDS.length;
+    const rows = c.names.map((name, k) => {
+      const perRound = [], perRoundPts = [];
+      let wins = 0, best = 99, rounds = 0;
+      for (let i = 0; i < R; i++) {
+        const r = c.rounds[i];
+        const pos = r && r.pos[k] ? r.pos[k] : null;
+        perRound.push(pos);
+        perRoundPts.push(pos ? (r.pts[k] || 0) : null);   // null = did not take part, not "zero points"
+        if (pos) { rounds++; if (pos === 1) wins++; if (pos < best) best = pos; }
+      }
+      return { idx: k, name, isPlayer: k === 0, pts: c.points[k] || 0, perRound, perRoundPts, wins, rounds, best: best === 99 ? null : best };
+    });
+    rows.sort((a, b) => (b.pts - a.pts) || (b.wins - a.wins) ||
+      ((a.best || 99) - (b.best || 99)) || (a.isPlayer ? -1 : b.isPlayer ? 1 : a.idx - b.idx));
+    const top = rows.length ? rows[0].pts : 0;
+    rows.forEach((s, i) => { s.pos = i + 1; s.gap = top - s.pts; });
+    return rows;
+  }
+
   RACE.cupStandings = function () {
     const c = RACE.cup();
     if (!c) return [];
-    return c.points.map((p, i) => ({ idx: i, pts: p, isPlayer: i === 0 }))
-      .sort((a, b) => b.pts - a.pts);
+    cupMigrate(c);
+    return standingsOf(c);
+  };
+
+  // Everything a standings screen needs, in one call. See the shape in the README of this section:
+  //   { rounds[4], current, roundsDone, total, done, standings[], points[], fieldSize,
+  //     leader, player, champion, hull, diff }
+  RACE.cupBoard = function () {
+    const c = RACE.cup();
+    if (!c) return null;
+    cupMigrate(c);
+    const standings = standingsOf(c);
+    const rounds = RACE.CUP_ROUNDS.map((id, i) => {
+      const course = RACE.COURSES.find((x) => x.id === id) || null;
+      const row = c.rounds[i] || null;
+      const results = row ? c.names.map((name, k) => ({
+        idx: k, name, isPlayer: k === 0, pos: row.pos[k] || null, pts: row.pts[k] || 0, time: row.time[k],
+      })).filter((r) => r.pos).sort((a, b) => a.pos - b.pos) : [];
+      return {
+        idx: i, id, name: course ? course.name : id.toUpperCase(),
+        desc: course ? course.desc : '', laps: course ? course.laps : 1,
+        courseIdx: course ? RACE.COURSES.indexOf(course) : -1,
+        state: row ? 'done' : (i === c.round ? 'current' : 'upcoming'),
+        winner: results.length ? results[0] : null,
+        results,
+      };
+    });
+    return {
+      rounds, total: RACE.CUP_ROUNDS.length, roundsDone: Math.min(c.round, RACE.CUP_ROUNDS.length),
+      current: c.done ? -1 : c.round, done: !!c.done,
+      standings, points: RACE.CUP_POINTS.slice(), fieldSize: c.points.length,
+      leader: standings[0] || null,
+      player: standings.find((s) => s.isPlayer) || null,
+      champion: c.done ? (standings[0] || null) : null,
+      hull: c.hull, diff: c.diff,
+    };
   };
 
   RACE.isTour = () => !!(S && S.tour);

@@ -70,6 +70,32 @@
     return false;
   }
 
+  // A fixed offset from a centreline curls back INTO its own channel wherever the river bends
+  // hard — Wolf Point and the Michigan Ave reach both do — and overOther cannot see it because
+  // it skips the bank's own path. waterQuery is the authority: clear > 0 means the point is
+  // literally inside navigable water. `lim` is the clearance this spot must beat.
+  function overWater(x, z, lim) {
+    const q = RR.River.waterQuery(x, z);
+    return !!q && q.clear > (lim === undefined ? 0 : lim);
+  }
+
+  // A room's anchor is one offset off one path sample, so on a bend it lands in the river.
+  // Slide along the reach — invisible at this scale — until the footprint is really on the bank.
+  function roomAnchor(p, dMid, s, off, need, openX) {
+    for (let k = 0; k <= 10; k++) {
+      for (const sg of (k ? [-1, 1] : [1])) {
+        const d = dMid + sg * k * 6;
+        if (d < 8 || d > p.len - 8) continue;
+        const a = U().pathAt(p, d, {});
+        const x = a.x + (-a.tz) * (a.w + off) * s, z = a.z + a.tx * (a.w + off) * s;
+        if (openX != null && x > openX - 12) continue;
+        if (overWater(x, z, -need) || overOther(x, z, p.name, need)) continue;
+        return { d, x, z, ang: Math.atan2(a.tx, a.tz), a };
+      }
+    }
+    return null;
+  }
+
   // one quad (a,b,c,d in order) into an array, winding for an upward/outward face
   function quad(arr, ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, hex, jit) {
     const g = new THREE.BufferGeometry();
@@ -117,6 +143,19 @@
         const midEx = (eAx + eBx) / 2, midEz = (eAz + eBz) / 2;
         if (midOx > openX - 6 || midEx > openX - 6) continue;
         if (overOther(midOx, midOz, key, 2) || overOther(midEx, midEz, key, 2)) continue;
+        // …and against THIS channel too, at both ends, not just the midpoint. A segment tested
+        // only in the middle is how thirteen metres of deck, wall and railing came to stand out
+        // in the South Branch below Wolf Point. The quay lip legitimately sits 0.3 m past the
+        // water line, so the edge is allowed that much and no more.
+        let over = false;
+        for (const q of [[oAx, oAz], [oBx, oBz], [midOx, midOz],
+                         [(eAx + oAx) / 2, (eAz + oAz) / 2], [(eBx + oBx) / 2, (eBz + oBz) / 2]]) {
+          if (overWater(q[0], q[1], -1)) { over = true; break; }
+        }
+        if (!over) for (const q of [[eAx, eAz], [eBx, eBz], [midEx, midEz]]) {
+          if (overWater(q[0], q[1], 0.6)) { over = true; break; }
+        }
+        if (over) continue;
         const run = Math.hypot(eBx - eAx, eBz - eAz);
 
         // lower promenade deck (alternating wood / concrete bands)
@@ -168,6 +207,7 @@
   // fine, airy and yellow-green, not the dark municipal maple.
   const HONEY = [0x7d9a48, 0x6a8a3e], SERVICE = [0x557a3c, 0x486b33];
   function treeAt(x, y, z, r, pal) {
+    if (overWater(x, z, -1.5)) return;
     const trunk = new THREE.CylinderGeometry(0.22, 0.34, 3.6, 5);
     trunk.translate(x, y + 1.8, z); tint(trunk, 0x5a4632, 0.10); flat.push(trunk);
     const lower = new THREE.SphereGeometry(r, 7, 6);
@@ -182,7 +222,10 @@
     }
   }
 
+  // the chairs reach 1.2 m out from the pole, so the whole set needs that much dry bank —
+  // a table checked only at its centre is what put four chairs out on the open river
   function umbrellaTable(x, z, col) {
+    if (overWater(x, z, -1.7)) return;
     cylAt(flat, 0.09, 2.4, x, PY + 1.2, z, 0x6a6f74, 6);          // pole
     const top = new THREE.ConeGeometry(1.6, 0.7, 8);
     top.translate(x, PY + 2.5, z); tint(top, col, 0); bright.push(top);
@@ -194,6 +237,7 @@
     }
   }
   function pavilion(cx, cz, ang) {
+    if (overWater(cx, cz, -4.6)) return;                           // 7.4 × 5.2 m canopy
     const c = Math.cos(ang), s = Math.sin(ang);
     for (const [ox, oz] of [[-3, -2.2], [3, -2.2], [-3, 2.2], [3, 2.2]]) {
       const px = cx + c * ox - s * oz, pz = cz + s * ox + c * oz;
@@ -448,24 +492,29 @@
       const kind = roomKind(a.x);
       if (!kind) continue;
       const s = 1;                                   // south bank only — the north bank is private
-      const off = a.w + 4.6;
-      const cx = a.x + (-a.tz) * off * s, cz = a.z + a.tx * off * s;
-      if (cx > openX - 12 || overOther(cx, cz, 'main', 3)) continue;
-      const ang = Math.atan2(a.tx, a.tz);
+      const A = roomAnchor(main, dMid, s, 4.6, 3, openX);
+      if (!A) continue;
+      const cx = A.x, cz = A.z, ang = A.ang;
       if (kind === 'riverbank') riverbank(main, dMid, s);
       else if (kind === 'jetty') jetty(main, dMid, s);
       else if (kind === 'waterplaza') waterPlaza(main, dMid, s);
       else if (kind === 'theater') riverTheater(main, a.w, dMid, s);
-      else if (kind === 'cove') { kayakDock(cx, cz, ang); hullRack(cx + (-a.tz) * 4.2 * s, cz + a.tx * 4.2 * s, ang); }
+      else if (kind === 'cove') { kayakDock(cx, cz, ang); hullRack(cx + (-A.a.tz) * 4.2 * s, cz + A.a.tx * 4.2 * s, ang); }
       else if (kind === 'marina') marinaPlaza(main, dMid, s);
       else if (kind === 'veterans') veterans(main, dMid, s);
-      else if (kind === 'terrace') { pavilion(cx, cz, ang); umbrellaPlaza(cx - a.tx * 16, cz - a.tz * 16, ang); }
+      else if (kind === 'terrace') {
+        pavilion(cx, cz, ang);
+        // stepping 16 m along the tangent leaves the bank on a bend; take the next anchor off
+        // the path instead, or the café sits on the water rather than beside it
+        const B = roomAnchor(main, A.d - 16, s, 4.6, 3, openX);
+        if (B) umbrellaPlaza(B.x, B.z, B.ang);
+      }
       else if (kind === 'lawn') lawnRoom(main, dMid, s);
       const t = ROOM_TAGS[kind];
       if (t) RW.tags.push({ name: t[0], sub: t[1], x: cx, z: cz, r2: 70 * 70 });
       // the Chicago Architecture Center cruise dock sits at the SE Michigan Ave bridgehead
       if ((kind === 'terrace' || kind === 'cove') && boatCount < 5) {
-        const bx = a.x + (-a.tz) * (a.w - 3) * s, bz = a.z + a.tx * (a.w - 3) * s;
+        const bx = A.a.x + (-A.a.tz) * (A.a.w - 3) * s, bz = A.a.z + A.a.tx * (A.a.w - 3) * s;
         if (!overOther(bx, bz, 'main', 0)) { tourBoat(bx, bz, ang, boatCount % 2 === 1); boatCount++; }
       }
     }

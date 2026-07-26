@@ -3,12 +3,33 @@
   const I = { throttle: 0, brake: 0, steer: 0, boost: false, raw: {} };
   const keys = {};
 
+  // ---- the F chord ----------------------------------------------------------------------------
+  // Five taps of F in a row is the Architecture Tour's "hand me the wheel". A key REPEAT is not a
+  // tap (hold F down and nothing happens), and the window between taps is short enough that you
+  // have to mean it — but every tap reports its count, so the game can tell you how far along you
+  // are and the thing is findable instead of secret.
+  I.F_TAPS = 5;
+  I.F_WINDOW = 1.2;                  // seconds allowed between taps
+  I.fTaps = 0;
+  let fLastT = -99;
+
   window.addEventListener('keydown', (e) => {
+    const held = keys[e.code];
     keys[e.code] = true;
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
     // [ / ] cycle the cinematic shot rig. Guarded: camera.js may not have the rig yet.
     if ((e.code === 'BracketLeft' || e.code === 'BracketRight') && RR.Camera && RR.Camera.cycleShot) {
       RR.Camera.cycleShot(e.code === 'BracketLeft' ? -1 : 1);
+    }
+    if (e.code === 'KeyF' && !e.repeat && !held) {
+      const now = performance.now() / 1000;
+      I.fTaps = now - fLastT > I.F_WINDOW ? 1 : I.fTaps + 1;
+      fLastT = now;
+      if (I.onFTap) I.onFTap(I.fTaps, I.F_TAPS);
+      if (I.fTaps >= I.F_TAPS) {
+        I.fTaps = 0; fLastT = -99;
+        if (I.onFiveF) I.onFiveF();
+      }
     }
     if (I.onKey) I.onKey(e.code);
   });

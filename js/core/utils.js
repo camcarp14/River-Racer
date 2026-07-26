@@ -33,12 +33,25 @@ window.RR = window.RR || {};
       0.022 * Math.sin(x * 0.23 - z * 0.17 + t * 2.1)
     );
   };
-  U.waterNormalPitchRoll = function (x, z, t, amp, out) {
-    const e = 1.2;
-    const h = U.waterHeight(x, z, t, amp);
-    out.pitch = (U.waterHeight(x, z + e, t, amp) - h) / e;   // slope along +z
-    out.roll = (U.waterHeight(x + e, z, t, amp) - h) / e;    // slope along +x
-    out.h = h;
+  // The long swell only — the first three terms, 46-73 m from crest to crest. The fourth term of
+  // waterHeight is a ~27 m ripple: surface texture a hull straddles rather than a wave it can climb.
+  U.swellHeight = function (x, z, t, amp) {
+    return amp * (
+      0.055 * Math.sin(x * 0.11 + t * 1.35) +
+      0.045 * Math.sin(z * 0.13 - t * 1.02 + x * 0.04) +
+      0.032 * Math.sin((x + z) * 0.061 + t * 0.71)
+    );
+  };
+  // Attitude of a hull `len` metres long floating here. HEIGHT still comes from the full field —
+  // that is what the vertex shader draws and the boat has to sit on it — but PITCH and ROLL come
+  // from centred differences across the hull's own footprint, over the swell alone. Sampling the
+  // full field 1.2 m apart measured the slope of the ripples instead, which on the lake (amp 3.3)
+  // fed a ~1.4 Hz tremor straight into the boat's attitude.
+  U.waterNormalPitchRoll = function (x, z, t, amp, out, len) {
+    const e = (len > 0 ? len : 9) * 0.5;
+    out.pitch = (U.swellHeight(x, z + e, t, amp) - U.swellHeight(x, z - e, t, amp)) / (2 * e); // slope along +z
+    out.roll = (U.swellHeight(x + e, z, t, amp) - U.swellHeight(x - e, z, t, amp)) / (2 * e);  // slope along +x
+    out.h = U.waterHeight(x, z, t, amp);
     return out;
   };
 

@@ -7,7 +7,7 @@
   const $ = (id) => document.getElementById(id);
   let root, screen = 'title', sel = 0, vehicleIdx = 0, courseIdx = 0;
   let onStartRace = null;
-  let timeTrial = false, tourMode = false, cupMode = false;
+  let timeTrial = false, tourMode = false, cupMode = false, cupPending = false;
 
   const STAR = '<i class="star6"></i>';
   const STAR_CAPS = ['FORT DEARBORN', 'GREAT FIRE 1871', 'COLUMBIAN EXPO 1893', 'CENTURY OF PROGRESS 1933'];
@@ -27,8 +27,10 @@
     root.classList.toggle('showroom', screen === 'vehicle');
     root.classList.toggle('title-screen', screen === 'title');
     root.classList.toggle('paused', screen === 'pause');
+    // the post-race screens sit over a still-rendering city: without a scrim the tables are unreadable
+    root.classList.toggle('scrim', screen === 'cup' || screen === 'results');
   }
-  MENU.hide = function () { root.classList.add('off'); root.classList.remove('paused', 'title-screen'); screen = 'none'; };
+  MENU.hide = function () { root.classList.add('off'); root.classList.remove('paused', 'title-screen', 'scrim'); screen = 'none'; };
 
   // ---------- livery: purely cosmetic, remembered between sessions ----------
   const LIVERIES = [null, 0xD8DCE0, 0x2F8F4F, 0x8A2FB0, 0xE07820, 0x16303F];
@@ -37,9 +39,13 @@
 
   // ---------- title ----------
   function showTitle() {
-    screen = 'title'; sel = 0; timeTrial = false; tourMode = false; cupMode = false;
+    screen = 'title'; sel = 0; timeTrial = false; tourMode = false; cupMode = false; cupPending = false;
     const cup = RR.Race && RR.Race.cup ? RR.Race.cup() : null;
-    const cupLabel = cup && !cup.done ? 'CHAMPIONSHIP · ROUND ' + Math.min(4, cup.round + 1) + '/4' : 'CHAMPIONSHIP';
+    const rounds = (RR.Race && RR.Race.CUP_ROUNDS ? RR.Race.CUP_ROUNDS.length : 4);
+    // a championship in progress is a thing you RESUME, and the title screen should say where you are
+    const cupLabel = !cup ? 'CHAMPIONSHIP'
+      : cup.done ? 'CHAMPIONSHIP · FINAL'
+        : 'CHAMPIONSHIP · ROUND ' + Math.min(rounds, cup.round + 1) + '/' + rounds;
     html(`
       <div class="stars">${STAR_CAPS.map((c) => '<div class="starcol">' + STAR + '<span>' + c + '</span></div>').join('')}</div>
       <div id="title">RIVER<br>RACER</div>
@@ -56,7 +62,7 @@
     `);
     bindClicks([
       () => showVehicles({}),
-      () => { cupMode = true; showVehicles({ cup: true }); },
+      () => { cupMode = true; if (cup) showCupBoard(-1); else { cupPending = true; showVehicles({ cup: true }); } },
       () => showVehicles({ tt: true }),
       () => { tourMode = true; showVehicles({ tour: true }); },
       () => { if (RR.NetUI && RR.NetUI.openEntry) RR.NetUI.openEntry(); },
@@ -115,8 +121,9 @@
     `);
     bindCards(RR.Boats.CATALOG.length, (i) => {
       vehicleIdx = i;
-      if (cupMode) { if (RR.Race.cupBegin) RR.Race.cupBegin(i, MENU.difficulty(), 6); showDifficulty(); }
-      else if (tourMode) showCourses();
+      // the cup is created only once the difficulty is CHOSEN — creating it here stamped the
+      // championship with the previous session's difficulty and wiped a cup already in progress
+      if (cupMode) showDifficulty();
       else showCourses();
     });
     drawVehicleCards();
@@ -283,13 +290,14 @@
     const rows = DIFFS.map((d, i) => `<div class="menu-item" data-i="${i}">${d.name}</div>`).join('');
     html(`
       <div id="select-title">HOW TOUGH ARE THE RIVALS?</div>
-      <div id="select-sub">↑↓ SELECT · ENTER RACE · BKSP BACK</div>
+      <div id="select-sub">${cupMode ? 'FOUR ROUNDS AT THIS SETTING · ' : ''}↑↓ SELECT · ENTER RACE · BKSP BACK</div>
       <div class="menu-list">${rows}</div>
       <div class="menu-note" id="diff-desc" style="max-width:520px;">${DIFFS[sel].desc}</div>
     `);
     bindClicks(DIFFS.map((d) => () => {
       difficulty = d.v;
       try { localStorage.setItem('rr_diff', String(d.v)); } catch (e) { /* fine */ }
+      if (cupMode && cupPending && RR.Race.cupBegin) { RR.Race.cupBegin(vehicleIdx, difficulty, 6); cupPending = false; }
       launch();
     }));
     paintSel();
@@ -384,40 +392,189 @@
     const prevBest = bestAtStart;
     const me = results.find((r) => r.boat && r.boat.isPlayer);
     const record = !!(me && isFinite(me.time) && (!prevBest || me.time < prevBest - 1e-6));
+    // cupRecord() BANKS the round — call it exactly once, here, before anything reads the board
     const cup = cupMode && RR.Race.cupRecord ? RR.Race.cupRecord(results) : null;
+    const board = cup && RR.Race.cupBoard ? RR.Race.cupBoard() : null;
+    const fresh = board ? board.roundsDone - 1 : -1;
+    const round = board && board.rounds[fresh] ? board.rounds[fresh] : null;
     const head = `<div class="result-head${cup ? ' cup' : ''}"><span>POS</span><span>PILOT</span><span>HULL</span><span>TIME</span><span>GAP</span>${cup ? '<span>PTS</span>' : ''}</div>`;
-    const standings = cup ? cupTable(cup) : '';
-    const done = cup && cup.done;
+    const title = board ? 'ROUND ' + board.roundsDone + ' RESULT'
+      : (results[0] && results[0].boat && results[0].boat.isPlayer ? 'RIVER CHAMP' : 'RACE COMPLETE');
+    const sub = board
+      ? 'THE CHICAGO CUP · ROUND ' + board.roundsDone + ' OF ' + board.total + (round ? ' · ' + up(round.name) : '')
+      : 'BEST: ' + (prevBest ? RR.U.formatTime(prevBest) : '—');
     html(`
-      <div id="select-title">${results[0] && results[0].boat && results[0].boat.isPlayer ? 'RIVER CHAMP' : 'RACE COMPLETE'}</div>
-      <div id="select-sub">BEST: ${prevBest ? RR.U.formatTime(prevBest) : '—'}</div>
+      <div id="select-title">${title}</div>
+      <div id="select-sub">${sub}</div>
       ${record ? '<div id="record-banner">★ NEW COURSE RECORD ★</div>' : ''}
       <div id="results-list">${head}${resultRows(results, !!cup)}</div>
-      ${standings}
       <div class="menu-list" style="margin-top:1.4em;">
-        <div class="menu-item" data-i="0">${cup && !done ? 'NEXT ROUND' : 'RACE AGAIN'}</div>
+        ${board ? `<div class="menu-item" data-i="0">${board.done ? 'FINAL STANDINGS' : 'CHAMPIONSHIP STANDINGS'} ▸</div>
+        <div class="menu-item" data-i="1">TITLE SCREEN</div>`
+        : `<div class="menu-item" data-i="0">RACE AGAIN</div>
         <div class="menu-item" data-i="1">CHANGE COURSE</div>
-        <div class="menu-item" data-i="2">TITLE SCREEN</div>
+        <div class="menu-item" data-i="2">TITLE SCREEN</div>`}
       </div>
     `);
-    bindClicks([
-      () => { if (done) cupMode = false; launch(); },
-      () => { cupMode = false; showCourses(); },
-      () => { cupMode = false; showTitle(); },
-    ]);
+    bindClicks(board
+      ? [() => showCupBoard(fresh), () => { cupMode = false; showTitle(); }]
+      : [() => launch(), () => { cupMode = false; showCourses(); }, () => { cupMode = false; showTitle(); }]);
     paintSel();
   };
 
-  function cupTable(cup) {
-    if (!RR.Race.cupStandings) return '';
-    const st = RR.Race.cupStandings();
-    if (!st || !st.length) return '';
-    const rows = st.map((s, i) => `
-      <div class="result-row ${s.isPlayer ? 'you ' : ''}p${i + 1}"><span class="p">${i + 1}</span>
-      <span class="n">${s.isPlayer ? 'YOU' : 'RIVAL ' + s.idx}</span>
-      <span class="h">ROUND ${Math.min(4, cup.round)}/4</span><span class="t">—</span><span class="gap">${s.pts} PTS</span></div>`).join('');
-    return `<div id="select-sub" style="margin-top:1.2em">CHICAGO CUP STANDINGS</div><div id="results-list">${rows}</div>`;
+  // ---------- the championship board ----------
+  // Everything the owner asked for on one screen: which round just went, which is next, every
+  // racer by name with their finish and points in each round, the running total, and the move
+  // since last time. RR.Race.cupBoard() hands over the whole bracket; this only draws it.
+  const CUP_TAGS = { mainstem: 'MAIN STEM', southbranch: 'S BRANCH', riverrun: 'RIVER RUN', lakecircuit: 'LAKE' };
+  const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
+  function up(s) { return String(s == null ? '' : s).toUpperCase().replace(/[&<>"]/g, (c) => ESC[c]); }
+  function ord(n) { return n + RR.U.ordinal(n); }
+  function tagOf(r) { return CUP_TAGS[r.id] || String(r.name || '').split(' ')[0]; }
+
+  // Standings as they stood BEFORE the last round, so the table can show who climbed and who fell.
+  // Same tie-break as race.js (points, then wins, then best single finish, then the player).
+  function movementMap(board) {
+    const cut = board.roundsDone - 1;
+    if (cut < 1) return null;                       // before round two everyone is level: no movement
+    const prev = board.standings.map((r) => {
+      let pts = 0, wins = 0, best = 99;
+      for (let i = 0; i < cut; i++) {
+        const p = r.perRound[i];
+        if (!p) continue;
+        pts += r.perRoundPts[i] || 0;
+        if (p === 1) wins++;
+        if (p < best) best = p;
+      }
+      return { idx: r.idx, isPlayer: r.isPlayer, pts, wins, best };
+    });
+    prev.sort((a, b) => (b.pts - a.pts) || (b.wins - a.wins) || (a.best - b.best) ||
+      (a.isPlayer ? -1 : b.isPlayer ? 1 : a.idx - b.idx));
+    const m = new Map();
+    prev.forEach((r, i) => m.set(r.idx, i + 1));
+    return m;
   }
+
+  function cupBracket(board, fresh) {
+    return '<div class="cup-bracket">' + board.rounds.map((r, i) => {
+      const done = r.state === 'done', next = r.state === 'current';
+      const mine = done ? r.results.find((x) => x.isPlayer) : null;
+      const laps = r.laps > 1 ? r.laps + ' LAPS' : 'SPRINT';
+      let l1, l2;
+      if (done) {
+        l1 = `<i class="star6"></i><b>${up(r.winner ? r.winner.name : '—')}</b>`;
+        l2 = mine ? `YOU ${ord(mine.pos)} · ${mine.pts} PTS` : 'DID NOT RACE';
+      } else if (next) {
+        l1 = '<b>UP NEXT</b>';
+        l2 = laps + ' · ' + board.points[0] + ' PTS TO WIN';
+      } else {
+        l1 = 'TO COME';
+        l2 = laps;
+      }
+      const cls = done ? (i === fresh ? 'done fresh' : 'done') : next ? 'next' : 'later';
+      return `<div class="cup-round ${cls}">
+        <div class="rn">ROUND ${i + 1}</div>
+        <div class="rname">${up(r.name)}</div>
+        <div class="rline">${l1}</div>
+        <div class="rline${done && mine ? ' me' : ''}">${l2}</div>
+      </div>`;
+    }).join('') + '</div>';
+  }
+
+  function cupSeasonTable(board) {
+    const mv = movementMap(board);
+    const head = `<div class="cup-row head">
+      <span>POS</span><span class="n">PILOT</span>
+      ${board.rounds.map((r, i) => `<span class="rh${r.state === 'current' ? ' now' : ''}">R${i + 1}<i>${up(tagOf(r))}</i></span>`).join('')}
+      <span>WINS</span><span>PTS</span><span>+/−</span></div>`;
+    const lead = Math.max(1, board.standings.length ? board.standings[0].pts : 1);
+    const rows = board.standings.map((s) => {
+      const cells = board.rounds.map((r, i) => {
+        const pos = s.perRound[i];
+        if (!pos) return `<span class="cup-cell none${r.state === 'current' ? ' now' : ''}">–</span>`;
+        return `<span class="cup-cell p${pos}"><b class="pp">${pos}</b><i class="pv">+${s.perRoundPts[i] || 0}</i></span>`;
+      }).join('');
+      const d = mv ? (mv.get(s.idx) || s.pos) - s.pos : 0;
+      const move = !mv ? '<span class="cup-mv">–</span>'
+        : d > 0 ? `<span class="cup-mv up">▲${d}</span>`
+          : d < 0 ? `<span class="cup-mv dn">▼${-d}</span>` : '<span class="cup-mv">–</span>';
+      return `<div class="cup-row line p${s.pos}${s.isPlayer ? ' you' : ''}">
+        <span class="ps">${s.pos}</span>
+        <span class="n"><i class="bar" style="width:${(6 + 94 * s.pts / lead).toFixed(1)}%"></i>${s.isPlayer ? '<i class="star6"></i>' : ''}<b>${up(s.name)}</b></span>
+        ${cells}
+        <span class="cup-wins${s.wins ? ' has' : ''}">${s.wins || '–'}</span>
+        <span class="cup-tot"><b>${s.pts}</b><i>${s.gap ? '−' + s.gap : 'LEADER'}</i></span>
+        ${move}
+      </div>`;
+    }).join('');
+    return `<div class="cup-table">${head}${rows}</div>`;
+  }
+
+  function cupChampionBand(board) {
+    const c = board.champion;
+    if (!c) return '';
+    const p = board.player;
+    const wins = c.wins + (c.wins === 1 ? ' WIN' : ' WINS');
+    const tail = (!c.isPlayer && p) ? `<div class="sub2">YOU FINISHED ${ord(p.pos)} ON ${p.pts} POINTS</div>` : '';
+    // the champion's own season, round by round — the bracket makes way for this screen, so the
+    // run that won it has to survive somewhere
+    const run = board.rounds.map((r, i) => {
+      const pos = c.perRound[i];
+      return `<span class="${pos === 1 ? 'w' : ''}">${up(tagOf(r))} <b>${pos ? ord(pos) : '—'}</b></span>`;
+    }).join('');
+    return `<div class="cup-champ${c.isPlayer ? ' mine' : ''}">
+      <div class="band"><i class="star6"></i>CHICAGO CUP CHAMPION<i class="star6"></i></div>
+      <div class="who">${c.isPlayer ? 'YOU' : up(c.name)}</div>
+      <div class="sub">${c.pts} POINTS · ${wins} FROM ${board.total} ROUNDS</div>
+      <div class="run">${run}</div>
+      ${tail}
+    </div>`;
+  }
+
+  // fresh = index of the round that has just been raced, or -1 when opened from the title screen
+  function showCupBoard(fresh) {
+    const board = RR.Race.cupBoard ? RR.Race.cupBoard() : null;
+    if (!board) { showTitle(); return; }
+    screen = 'cup'; sel = 0; cupMode = true; cupPending = false;
+    timeTrial = false; tourMode = false;
+    // resuming a season from the title screen must put you back in the hull you started it in
+    if (RR.Boats.CATALOG[board.hull]) vehicleIdx = board.hull;
+    const nextRound = board.current >= 0 ? board.rounds[board.current] : null;
+    const justRan = fresh >= 0 ? board.rounds[fresh] : null;
+    const kicker = board.done
+      ? 'FOUR ROUNDS · ONE RIVER · THE CHAMPIONSHIP IS DECIDED'
+      : justRan
+        ? `ROUND ${fresh + 1} OF ${board.total} COMPLETE · <b>${up(justRan.name)}</b>` +
+          (nextRound ? ` &nbsp;·&nbsp; <span class="nx">NEXT: ${up(nextRound.name)}</span>` : '')
+        : board.roundsDone
+          ? `${board.roundsDone} OF ${board.total} ROUNDS RUN &nbsp;·&nbsp; <span class="nx">NEXT: ${up(nextRound ? nextRound.name : '')}</span>`
+          : `<span class="nx">ROUND 1 OF ${board.total} · ${up(nextRound ? nextRound.name : '')}</span>`;
+    const cta = board.done
+      ? `<div class="menu-item primary" data-i="0">NEW CHAMPIONSHIP</div>
+         <div class="menu-item" data-i="1">TITLE SCREEN</div>`
+      : `<div class="menu-item primary" data-i="0">RACE ROUND ${board.current + 1} · ${up(nextRound ? nextRound.name : '')}</div>
+         <div class="menu-item" data-i="1">TITLE SCREEN</div>
+         <div class="menu-item dim" data-i="2">ABANDON · START A NEW CHAMPIONSHIP</div>`;
+    html(`
+      <div id="cup-board">
+        <div class="cup-head">
+          <div class="cup-crest">${STAR}${STAR}${STAR}${STAR}</div>
+          <div class="cup-title">THE CHICAGO CUP</div>
+          <div class="cup-kicker">${kicker}</div>
+        </div>
+        ${board.done ? cupChampionBand(board) : cupBracket(board, fresh)}
+        ${cupSeasonTable(board)}
+        <div class="cup-cta">${cta}</div>
+        <div class="cup-note">↑↓ SELECT · ENTER CONFIRM${board.done ? '' : ' · POINTS ' + board.points.join('/')}</div>
+      </div>
+    `);
+    const newCup = () => { if (RR.Race.cupAbandon) RR.Race.cupAbandon(); cupMode = true; cupPending = true; showVehicles({ cup: true }); };
+    bindClicks(board.done
+      ? [newCup, () => { cupMode = false; showTitle(); }]
+      : [() => launch(), () => { cupMode = false; showTitle(); }, newCup]);
+    paintSel();
+  }
+  MENU.showCupBoard = showCupBoard;
 
   // multiplayer results come from the net roster, not from boat objects
   MENU.showNetResults = function (results, courseId) {
@@ -522,14 +679,15 @@
   window.addEventListener('keydown', (e) => {
     if (screen === 'none') return;
     RR.Audio.init();
-    const vertical = screen === 'title' || screen === 'results' || screen === 'pause' || screen === 'help' || screen === 'difficulty';
+    const vertical = screen === 'title' || screen === 'results' || screen === 'pause' || screen === 'help' ||
+      screen === 'difficulty' || screen === 'cup';
     if ((vertical && e.code === 'ArrowUp') || (!vertical && e.code === 'ArrowLeft')) { sel = (sel - 1 + actions.length) % actions.length; RR.Audio.uiMove(); paintSel(); }
     else if ((vertical && e.code === 'ArrowDown') || (!vertical && e.code === 'ArrowRight')) { sel = (sel + 1) % actions.length; RR.Audio.uiMove(); paintSel(); }
     else if (e.code === 'Enter' || e.code === 'Space') { RR.Audio.uiSelect(); if (actions[sel]) actions[sel](); }
     else if (e.code === 'Backspace' || e.code === 'Escape') {
-      if (screen === 'vehicle' || screen === 'help') showTitle();
+      if (screen === 'vehicle' || screen === 'help' || screen === 'cup') showTitle();
       else if (screen === 'course') showVehicles({ tt: timeTrial, tour: tourMode, cup: cupMode });
-      else if (screen === 'difficulty') showCourses();
+      else if (screen === 'difficulty') { if (cupMode) showVehicles({ cup: true }); else showCourses(); }
       else if (screen === 'pause') { MENU.hide(); if (MENU.onResume) MENU.onResume(); }
       e.preventDefault();
     }

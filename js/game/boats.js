@@ -51,6 +51,18 @@
       hull: 0xd42a1e, deck: 0x1f242b, accent: 0xf5f6f7, seat: 0x14161c,
     },
     {
+      // The Architecture Tour boat. Not a racer: 30 m and a couple of hundred tonnes of open-deck
+      // river cruiser, so `plane` sits above her top end (a displacement hull never climbs onto a
+      // plane), accel is a seventh of the FORMULA's, and `turn` buys a ~34 m circle at full chat in
+      // a channel 60 m wide. hidden: she is crewed for the tour, not offered in the ride picker.
+      id: 'tourboat', name: 'WACKER BELLE', kind: 'tourboat', hidden: true,
+      desc: 'Open-deck architecture cruiser. Thirty metres, no brakes, and a turning circle that eats most of the Main Stem. Somehow this is fun.',
+      top: 13.5, accel: 2.6, turn: 0.60, grip: 4.4, lean: 0.10, boost: 1.12, mass: 4.6,
+      plane: 30, hump: 0.0, lift: 0.0, slap: 0.15, torque: 0.020, dive: 0.03, drift: 0.06, boostKick: 3.5,
+      engine: 'runabout',                                   // slow-turning diesel, not a V8
+      hull: 0xeef1f4, deck: 0x8a6a44, accent: 0xc0392b, seat: 0x1f5f8b,
+    },
+    {
       id: 'podracer', name: 'ANAKIN’S PODRACER', kind: 'podracer',
       desc: 'Twin radial turbines on a plasma tether, skimming the river on a cushion of thrust. Untouchable top end — if you can steer the thing.',
       top: 61, accel: 21.0, turn: 1.55, grip: 1.7, lean: 0.42, boost: 1.18, mass: 0.85,
@@ -189,6 +201,42 @@
   function cleat(g, x, z, y) {
     const c = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.1, 0.4), chrome());
     c.position.set(x, y, z); g.add(c);
+  }
+
+  // driverFigure is for the one person you look AT. This is for the forty you look past: three
+  // prims a head, colour written into the vertex buffer, so a whole boatload merges into one mesh.
+  // o: { stand, lean, rotY, coat, skin }
+  function personGeoms(out, x, y, z, o) {
+    const lean = o.lean || 0, rotY = o.rotY || 0;
+    const push = (geo, hex) => {
+      if (rotY) geo.rotateY(rotY);
+      geo.translate(x, y, z);
+      RR.City.tintGeom(geo, hex);
+      out.push(geo);
+    };
+    if (o.stand) {
+      const torso = new THREE.CapsuleGeometry(0.19, 0.52, 2, 6);
+      torso.rotateX(lean); torso.translate(0, 1.12, 0);
+      push(torso, o.coat);
+      for (const s of [-1, 1]) {
+        const leg = new THREE.CapsuleGeometry(0.095, 0.62, 2, 5);
+        leg.translate(s * 0.15, 0.42, 0);
+        push(leg, o.legs == null ? o.coat : o.legs);
+      }
+      const head = new THREE.SphereGeometry(0.135, 8, 6);
+      head.translate(0, 1.62, lean * 0.5);
+      push(head, o.skin);
+      return;
+    }
+    const torso = new THREE.CapsuleGeometry(0.17, 0.40, 2, 6);
+    torso.rotateX(lean); torso.translate(0, 0.44, 0);
+    push(torso, o.coat);
+    const head = new THREE.SphereGeometry(0.125, 8, 6);
+    head.translate(0, 0.86, lean * 0.45);
+    push(head, o.skin);
+    const lap = new THREE.BoxGeometry(0.36, 0.17, 0.52);
+    lap.translate(0, 0.09, 0.26);
+    push(lap, o.coat);
   }
 
   const builders = {
@@ -343,6 +391,225 @@
       return g;
     },
 
+    // The Chicago architecture cruise boat: long, low, open on top, canopy on posts, rows of
+    // benches, a wheelhouse forward and a docent at the mic amidships. Real ones run the Main Stem
+    // all day at about 8 knots. Everything repeated — seats, posts, passengers — is merged, so all
+    // thirty metres of her cost about what the speedboat costs.
+    tourboat(spec) {
+      const g = new THREE.Group();
+      const LOA = 30, BEAM = 7.0, DEP = 2.1, SHEER = 0.30;
+      const HY = 0.30;              // hull mesh offset: geometry-local y + HY = metres above the waterline
+      const DECK = 1.42;            // open deck surface
+      const rng = RR.U.mulberry(30301);
+      // shape() follows the hull: taper to the stem, V-bottom, sheer rise. flat() only tapers, for
+      // the bands that live at the waterline — a boot top is level, it does not sweep up at the bow.
+      const shape = (geo) => { shapeHull(geo, LOA, BEAM, DEP, SHEER); return geo; };
+      const flat = (geo) => { shapeHull(geo, LOA, BEAM, 0, 0); return geo; };
+      const white = mat(spec.hull, { roughness: 0.5, metalness: 0.08 });
+      const navy = mat(0x152c46, { roughness: 0.5, metalness: 0.1 });
+
+      // ---- hull: white topsides, red boot top ON the waterline, navy sheer stripe under the deck
+      const hull = new THREE.Mesh(shape(new THREE.BoxGeometry(BEAM, DEP, LOA, 4, 2, 18)), white);
+      hull.position.y = HY; g.add(hull);
+      const boot = new THREE.Mesh(flat(new THREE.BoxGeometry(BEAM + 0.08, 0.30, LOA - 0.6, 4, 1, 16)),
+        mat(spec.accent, { roughness: 0.55 }));
+      boot.position.y = 0.02; g.add(boot);                       // y = 0 is the water surface
+      const sheerStripe = new THREE.BoxGeometry(BEAM + 0.08, 0.22, LOA - 0.5, 4, 1, 16);
+      sheerStripe.translate(0, 0.82, 0); shape(sheerStripe);
+      const sheerM = new THREE.Mesh(sheerStripe, navy); sheerM.position.y = HY; g.add(sheerM);
+      // the enclosed lower saloon, read as one long strip of tinted glass down each side
+      const winBand = new THREE.BoxGeometry(BEAM + 0.06, 0.46, LOA - 8, 4, 1, 14);
+      winBand.translate(0, 0.30, -0.6); shape(winBand);
+      const winM = new THREE.Mesh(winBand, glassMat()); winM.position.y = HY; g.add(winM);
+
+      // ---- deck, bulwark boards and cap rail (all merged into two meshes) ----
+      const teak = RR.U.canvasTexture(64, 256, (c, w, h) => {
+        c.fillStyle = '#8a6a44'; c.fillRect(0, 0, w, h);
+        for (let i = 0; i < 8; i++) {
+          c.fillStyle = i % 2 ? 'rgba(60,38,18,.35)' : 'rgba(210,180,140,.18)';
+          c.fillRect(i * (w / 8), 0, 2, h);
+        }
+      });
+      teak.wrapS = teak.wrapT = THREE.RepeatWrapping; teak.repeat.set(2, 8);
+      const deckGeo = new THREE.BoxGeometry(BEAM - 0.6, 0.14, LOA - 1.6, 4, 1, 16);
+      deckGeo.translate(0, DECK - HY, 0); shape(deckGeo);
+      const deckM = new THREE.Mesh(deckGeo, new THREE.MeshStandardMaterial({ map: teak, color: spec.deck, roughness: 0.7 }));
+      deckM.position.y = HY; g.add(deckM);
+      const trimGeos = [];
+      for (const s of [-1, 1]) {                                  // bulwark board, converging at the stem
+        const b = new THREE.BoxGeometry(0.16, 0.62, LOA - 2.4, 1, 1, 16);
+        b.translate(s * (BEAM / 2 - 0.05), DECK - HY + 0.24, 0);
+        trimGeos.push(b);
+        const cap = new THREE.BoxGeometry(0.30, 0.10, LOA - 2.4, 1, 1, 16);
+        cap.translate(s * (BEAM / 2 - 0.05), DECK - HY + 0.58, 0);
+        trimGeos.push(cap);
+      }
+      const bowCap = new THREE.BoxGeometry(BEAM, 0.62, 1.2, 3, 1, 1);
+      bowCap.translate(0, DECK - HY + 0.24, LOA / 2 - 0.9); trimGeos.push(bowCap);
+      const transom = new THREE.BoxGeometry(BEAM, 0.62, 0.5, 3, 1, 1);
+      transom.translate(0, DECK - HY + 0.24, -LOA / 2 + 0.6); trimGeos.push(transom);
+      for (const geo of trimGeos) shape(geo);
+      const trim = new THREE.Mesh(RR.City.mergeGeoms(trimGeos), white);
+      trim.position.y = HY; g.add(trim);
+
+      // ---- rows of benches down both sides of a centre aisle ----
+      const padGeos = [], frameGeos = [];
+      const rows = [];
+      for (let z = -12.2; z <= 6.2; z += 1.55) rows.push(z);
+      for (const z of rows) {
+        for (const s of [-1, 1]) {
+          const pad = new THREE.BoxGeometry(2.3, 0.14, 0.54); pad.translate(s * 1.75, DECK + 0.42, z);
+          const back = new THREE.BoxGeometry(2.3, 0.52, 0.12); back.translate(s * 1.75, DECK + 0.70, z - 0.27);
+          padGeos.push(pad, back);
+          const rail = new THREE.BoxGeometry(2.2, 0.28, 0.10); rail.translate(s * 1.75, DECK + 0.22, z);
+          frameGeos.push(rail);
+        }
+      }
+      const seats = new THREE.Mesh(RR.City.mergeGeoms(padGeos), mat(spec.seat, { roughness: 0.85, metalness: 0 }));
+      g.add(seats);
+      g.add(new THREE.Mesh(RR.City.mergeGeoms(frameGeos), mat(0x2a2f36, { roughness: 0.7, metalness: 0.3 })));
+
+      // ---- the passengers: two to a bench on about half the rows, a few turned to look up ----
+      const COATS = [0xb03a2e, 0x27496d, 0x3d6b45, 0xd9c17a, 0x6c4675, 0x2f3640, 0xc98a3a];
+      const SKINS = [0xc9946a, 0x8d5a3b, 0xe0b189, 0x6b4229];
+      const people = [];
+      for (let i = 0; i < rows.length; i++) {
+        if (i % 2 === 1 && i !== 3) continue;                     // a real tour is never full
+        for (const s of [-1, 1]) {
+          for (const o of [-0.55, 0.55]) {
+            if (rng() < 0.22) continue;
+            const look = (rng() - 0.5) * 1.5;                     // heads turned toward the skyline
+            personGeoms(people, s * 1.75 + o, DECK + 0.48, rows[i] + 0.05, {
+              rotY: look, lean: 0.10 + rng() * 0.12,
+              coat: COATS[(i * 3 + (s > 0 ? 1 : 0) + (o > 0 ? 2 : 0)) % COATS.length],
+              skin: SKINS[Math.floor(rng() * SKINS.length)],
+            });
+          }
+        }
+      }
+      const crowdMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 });
+      g.add(new THREE.Mesh(RR.City.mergeGeoms(people), crowdMat));
+
+      // ---- canopy: striped awning on twelve posts over the seating ----
+      const awn = RR.U.canvasTexture(128, 128, (c, w, h) => {
+        c.fillStyle = '#f2ece0'; c.fillRect(0, 0, w, h);
+        c.fillStyle = '#b8362b';
+        for (let i = 0; i < 4; i++) c.fillRect(0, i * (h / 4), w, h / 8);
+      });
+      awn.wrapS = awn.wrapT = THREE.RepeatWrapping; awn.repeat.set(1, 6);
+      // stops short of the forward rows: on the real boats the best seats are the open ones,
+      // because the whole point is looking straight up at the buildings
+      const CY = DECK + 2.40, CZ0 = -12.8, CZ1 = 3.4;
+      const canopyGeos = [];
+      const roof = new THREE.BoxGeometry(BEAM - 0.7, 0.13, CZ1 - CZ0);
+      roof.translate(0, CY, (CZ0 + CZ1) / 2); canopyGeos.push(roof);
+      for (const s of [-1, 1]) {                                  // valance along both edges
+        const v = new THREE.BoxGeometry(0.10, 0.26, CZ1 - CZ0);
+        v.translate(s * (BEAM / 2 - 0.35), CY - 0.18, (CZ0 + CZ1) / 2); canopyGeos.push(v);
+      }
+      g.add(new THREE.Mesh(RR.City.mergeGeoms(canopyGeos), new THREE.MeshStandardMaterial({ map: awn, roughness: 0.9, side: THREE.DoubleSide })));
+      const postGeos = [];
+      for (let z = CZ0 + 1.2; z < CZ1; z += 3.2) {
+        for (const s of [-1, 1]) {
+          const p = new THREE.CylinderGeometry(0.07, 0.07, 2.40, 6);
+          p.translate(s * (BEAM / 2 - 0.42), DECK + 1.20, z); postGeos.push(p);
+        }
+      }
+      g.add(new THREE.Mesh(RR.City.mergeGeoms(postGeos), chrome()));
+
+      // ---- wheelhouse, forward, where the skipper can see the piers ----
+      const WZ = 9.6;
+      const house = new THREE.Mesh(new THREE.BoxGeometry(3.4, 2.3, 3.0), white);
+      house.position.set(0, DECK + 1.15, WZ); g.add(house);
+      const houseGlass = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.9, 3.1), glassMat());
+      houseGlass.position.set(0, DECK + 1.62, WZ); g.add(houseGlass);
+      const houseRoof = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.14, 3.4), navy);
+      houseRoof.position.set(0, DECK + 2.37, WZ); g.add(houseRoof);
+      const mastGeos = [];
+      const mast = new THREE.CylinderGeometry(0.06, 0.08, 1.5, 6); mast.translate(0, DECK + 3.15, WZ - 0.4);
+      const radar = new THREE.BoxGeometry(1.5, 0.10, 0.22); radar.translate(0, DECK + 3.85, WZ - 0.4);
+      mastGeos.push(mast, radar);
+      g.add(new THREE.Mesh(RR.City.mergeGeoms(mastGeos), chrome()));
+      // the skipper at the wheel — kept as her own mesh so main.js can stand her down when the
+      // passenger with five taps of F takes over
+      const skipperGeos = [];
+      personGeoms(skipperGeos, -0.55, DECK + 0.02, WZ - 0.5, { stand: true, lean: 0.12, coat: 0x1d3a5c, legs: 0x20252c, skin: 0xc9946a });
+      const skipper = new THREE.Mesh(RR.City.mergeGeoms(skipperGeos), crowdMat);
+      g.add(skipper);
+      const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.03, 6, 14), mat(0x3a2415, { metalness: 0.3 }));
+      wheel.position.set(-0.55, DECK + 1.05, WZ + 0.55); wheel.rotation.x = -0.35; g.add(wheel);
+
+      // ---- the docent, amidships at the mic, facing the passengers ----
+      const docent = driverFigure({
+        pose: 'stand', lean: 0.05, suit: 0x1c2a3a, vest: spec.accent, cap: 0x14203a,
+        handR: [0.16, 1.05, 0.22],
+      });
+      docent.position.set(0.9, DECK, 6.4); docent.rotation.y = Math.PI; g.add(docent);
+      const mic = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.9, 6), mat(0x14161c));
+      mic.position.set(0.72, DECK + 0.6, 6.2); g.add(mic);
+      const speaker = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.42, 0.24), mat(0x20252c, { roughness: 0.8 }));
+      speaker.position.set(0, DECK + 1.9, 5.6); g.add(speaker);
+
+      // ---- name boards, both sides, on the flat of the topsides ----
+      const nameTex = RR.U.canvasTexture(512, 64, (c, w, h) => {
+        c.clearRect(0, 0, w, h);
+        c.fillStyle = '#152c46'; c.font = 'bold 44px Georgia, "Times New Roman", serif';
+        c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText('WACKER BELLE', w / 2, h / 2 + 2);
+      });
+      const nameMat = new THREE.MeshStandardMaterial({ map: nameTex, transparent: true, roughness: 0.6 });
+      for (const s of [-1, 1]) {
+        const n = new THREE.Mesh(new THREE.PlaneGeometry(6.0, 0.55), nameMat);
+        n.position.set(s * (BEAM / 2 + 0.04), 1.02, -1.5);
+        n.rotation.y = s * Math.PI / 2; g.add(n);
+      }
+
+      // ---- the Chicago flag on the stern staff: two bars, four six-pointed stars ----
+      const flagTex = RR.U.canvasTexture(96, 64, (c, w, h) => {
+        c.fillStyle = '#ffffff'; c.fillRect(0, 0, w, h);
+        c.fillStyle = '#b3ddf2'; c.fillRect(0, h * 0.17, w, h * 0.16); c.fillRect(0, h * 0.67, w, h * 0.16);
+        c.fillStyle = '#ff0000';
+        for (let i = 0; i < 4; i++) {
+          const cx = w * (0.2 + i * 0.2), cy = h / 2, r = h * 0.13;
+          c.beginPath();
+          for (let k = 0; k < 12; k++) {
+            const a = -Math.PI / 2 + k * Math.PI / 6, rr = k % 2 ? r * 0.45 : r;
+            const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr;
+            k ? c.lineTo(x, y) : c.moveTo(x, y);
+          }
+          c.closePath(); c.fill();
+        }
+      });
+      const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.8, 6), chrome());
+      staff.position.set(1.9, DECK + 0.9, -14.3); g.add(staff);     // to starboard: the aisle is a view
+      const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.35, 0.9),
+        new THREE.MeshStandardMaterial({ map: flagTex, side: THREE.DoubleSide, roughness: 0.9 }));
+      flag.position.set(2.6, DECK + 1.35, -14.3); g.add(flag);
+
+      const ringGeos = [];
+      for (const s of [-1, 1]) {
+        const r = new THREE.TorusGeometry(0.34, 0.09, 6, 14);
+        r.rotateY(Math.PI / 2); r.translate(s * (BEAM / 2 - 0.16), DECK + 0.30, -8.5);
+        ringGeos.push(r);
+      }
+      g.add(new THREE.Mesh(RR.City.mergeGeoms(ringGeos), mat(0xff7a1a, { roughness: 0.7 })));
+
+      cleat(g, 3.0, 12.4, DECK + 0.5); cleat(g, -3.0, 12.4, DECK + 0.5);
+      navLights(g, 3.1, 12.0, -14.6, DECK + 0.55);
+      g.userData.size = { r: 5.4, len: LOA };
+      // Where a passenger's eyes actually are. main.js parks the tour cameras on these, in the
+      // hull's own frame, so the views ride the boat exactly like the seats do.
+      g.userData.seatCams = {
+        seat: [-1.75, DECK + 1.50, -2.9],        // port bench amidships, rows receding forward under the awning
+        foredeck: [0.9, DECK + 1.75, 12.9],      // right up in the bow, where you crane your neck
+        stern: [0, DECK + 3.4, -18.0],           // astern of the transom: the whole boat in frame
+        wheel: [-0.55, DECK + 1.95, WZ + 1.72],  // over the front of the pilot house, clear of its glass
+        helm: [0, DECK + 6.4, -28.0],            // the driving shot: 30 m of boat between you and the river
+      };
+      g.userData.crew = { skipper, docent };
+      return g;
+    },
+
     // Anakin's Podracer, matched to the film reference: each engine is a LONG SILVER
     // machinery cylinder (ribbed, chrome-banded, maroon belly) with a pointed silver
     // intake + spinner at the FRONT. The only gold is (a) the pair of rounded nacelle
@@ -480,8 +747,10 @@
         bolt.rotation.z = Math.sin(i * 3.7) * 0.45;
         bolt.renderOrder = 3; sparks.push(bolt); g.add(bolt);
       }
-      const haze = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 0.9, 0.9, 0.6), plasmaMat());
-      haze.material.opacity = 0.16; haze.position.set(0, EY, EZ - 1.7); haze.renderOrder = 3;
+      // The glow AROUND the arc. It has to stay faint: an additive box at any real opacity paints
+      // its top face as a flat magenta panel from above, which read as an untextured face.
+      const haze = new THREE.Mesh(new THREE.BoxGeometry(2 * EX - 1.3, 0.44, 0.30), plasmaMat());
+      haze.position.set(0, EY, EZ - 1.7); haze.renderOrder = 3;
       plasma.push(haze); g.add(haze);
 
       // ---- the tiny cockpit sled, towed FAR behind across open air (film signature:
@@ -525,7 +794,7 @@
         const rev = t * (10 + sp * 0.5);
         for (const r of rings) r.rotation.z = rev;
         const fl = 0.55 + 0.3 * Math.sin(t * 30) + 0.16 * Math.sin(t * 63 + 1.3);
-        for (const pl of plasma) pl.material.opacity = Math.max(0.28, Math.min(1, fl));
+        for (const pl of plasma) pl.material.opacity = 0.09 + 0.06 * fl;   // the haze only breathes
         for (let i = 0; i < sparks.length; i++) sparks[i].visible = Math.sin(t * 42 + i * 7.3) > 0.2;   // crackle
         const boost = boat ? (boat.boostHeat || 0) : 0.2;
         for (const gl of glows) {

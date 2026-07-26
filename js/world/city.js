@@ -110,11 +110,18 @@
   // and is LIGHTER than its frame; on masonry the punched opening is a hole and is DARKER than the
   // wall. Getting that backwards is what makes a city read as perforated black cardboard.
   // One tile = one bay (3.0 m) × one floor (3.6 m) — the constants baked into towerGeom.
+  //
+  // nightMul has a HARD CEILING of ~0.86. A lit pane in nightTile tops out at k = 0.86 of a
+  // near-white hex, the night preset multiplies by 1.35, and the product is what lands in linear
+  // light: anything over 1.0 clips to white BEFORE tone mapping, then trips the 0.50 bloom
+  // threshold, and the building stops being a building and becomes a lantern. MIES (black frame,
+  // cool glass) and RETAIL (an unbroken shopfront band at eye level the whole length of the
+  // Riverwalk) were the two that blew out, so they sit furthest below the ceiling.
   const FAM = [
     { key: 'CURTAIN', seed: 1101, frame: '#7d868c', spandrel: '#98a1a7', glassHi: '#dce9f0', glassLo: '#a9bfd0',
       lites: 2, margin: 4, mullion: 5, glassTop: 10, glassBot: 150, sill: '#b6bec4', revealA: 0.10, grain: 0,
       tints: [0xb9c0c6, 0xa6b0b8, 0xc8cdd0, 0x94a0a8],
-      nightDensity: 0.42, warm: '#ffcf85', cool: '#cfe0ff', warmFrac: 0.70, nightMul: 1.00 },
+      nightDensity: 0.42, warm: '#ffcf85', cool: '#cfe0ff', warmFrac: 0.70, nightMul: 0.85 },
 
     // ART's spec hexes were tuned before the night preset landed at exposure 1.45 + bloom 1.45;
     // at full strength a moonlit east face becomes one white slab. Halved, the highlight still
@@ -123,7 +130,7 @@
       lites: 2, margin: 3, mullion: 8, glassTop: 8, glassBot: 168, sill: '#24282c', revealA: 0.06, grain: 0,
       centreRib: '#2a2e33',                                  // the applied I-beam mullion — the whole building
       tints: [0x2a2e33, 0x232629, 0x33383d], shininess: 70, specular: 0x252a30,
-      nightDensity: 0.30, warm: '#ffcf85', cool: '#dfe8ff', warmFrac: 0.45, nightMul: 1.15 },
+      nightDensity: 0.30, warm: '#ffcf85', cool: '#dfe8ff', warmFrac: 0.45, nightMul: 0.68 },
 
     { key: 'LIMESTONE', seed: 1303, frame: '#d9d2c1', spandrel: '#cdc5b3', glassHi: '#8fa3b0', glassLo: '#5c7183',
       lites: 1, margin: 62, mullion: 6, glassTop: 26, glassBot: 196, sill: '#efe9db', revealA: 0.30, grain: 0.06,
@@ -171,12 +178,12 @@
     { key: 'GREENGLASS', seed: 1707, frame: '#4b5854', spandrel: '#38443f', glassHi: '#9ab5ab', glassLo: '#55716a',
       lites: 2, margin: 3, mullion: 6, glassTop: 6, glassBot: 176, sill: '#53625d', revealA: 0.05, grain: 0,
       tints: [0x74928a, 0x64837b, 0x88a49b, 0x577671], shininess: 66, specular: 0x2b3b37,
-      nightDensity: 0.34, warm: '#ffcf85', cool: '#cfe6df', warmFrac: 0.40, nightMul: 1.05 },
+      nightDensity: 0.34, warm: '#ffcf85', cool: '#cfe6df', warmFrac: 0.40, nightMul: 0.80 },
 
     { key: 'BLUEGLASS', seed: 1808, frame: '#4a6070', spandrel: '#35505f', glassHi: '#a7cfe2', glassLo: '#4a7f9e',
       lites: 2, margin: 3, mullion: 5, glassTop: 6, glassBot: 182, sill: '#56728a', revealA: 0.05, grain: 0,
       tints: [0x7fa8c0, 0x6d99b4, 0x93bcd2, 0x5d88a4], shininess: 72, specular: 0x2e4049,
-      nightDensity: 0.40, warm: '#ffcf85', cool: '#d6e9ff', warmFrac: 0.35, nightMul: 1.20 },
+      nightDensity: 0.40, warm: '#ffcf85', cool: '#d6e9ff', warmFrac: 0.35, nightMul: 0.72 },
 
     { key: 'CONCRETE', seed: 1909, frame: '#b7b1a4', spandrel: '#a8a294', glassHi: '#7d8b93', glassLo: '#4e5c66',
       lites: 1, margin: 40, mullion: 7, glassTop: 22, glassBot: 184, sill: '#c6c0b2', revealA: 0.24, grain: 0.07,
@@ -192,7 +199,7 @@
       awning: { y: 4, h: 22, palette: ['#a8503f', '#c0883e', '#3d6a99', '#3f7a54', '#2b5c50'] },
       fascia: { y: 226, h: 10, col: '#1a1d21' },
       tints: [0xc0bdb6, 0xadaaa3, 0xb6b3ac],   // RETAIL's famNorm is ~1.9: above ~0xc0 they all clip to one grey
-      nightDensity: 0.85, warm: '#ffdca8', cool: '#cfe0ff', warmFrac: 0.90, nightMul: 1.60 },
+      nightDensity: 0.85, warm: '#ffdca8', cool: '#cfe0ff', warmFrac: 0.90, nightMul: 0.62 },
   ];
   for (const f of FAM) Object.freeze(f);
   Object.freeze(FAM);
