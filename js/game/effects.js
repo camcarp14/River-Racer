@@ -193,11 +193,17 @@
         varying float vStretch;
         varying float vSeed;
         void main() {
-          // A NEGATIVE seed marks grit struck off a bascule's lattice rather than thrown water.
-          // Costs no attribute and no second draw call, and it inherits the smear-along-travel
-          // that makes a spark a streak instead of a dot. Over 1.0 so it crosses the bloom
-          // threshold the way something genuinely incandescent should.
-          vec3 col = vSeed < 0.0 ? vec3(1.70, 0.66, 0.20) : uCol;
+          // The seed carries the MATERIAL as well as the grain, in bands of 10. A negative seed is
+          // grit struck off a bascule's lattice; 0-8 is thrown water; 10+ are the power-up
+          // materials. Costs no attribute and no second draw call, and every band inherits the
+          // smear-along-travel that makes a spark a streak instead of a dot. The spark is over 1.0
+          // so it crosses the bloom threshold the way something incandescent should.
+          vec3 col;
+          if (vSeed < 0.0)       col = vec3(1.70, 0.66, 0.20);   // hot grit
+          else if (vSeed < 8.0)  col = uCol;                     // water
+          else if (vSeed < 18.0) col = vec3(0.10, 0.86, 0.36);   // the St Patrick's dye
+          else if (vSeed < 28.0) col = vec3(0.05, 0.08, 0.11);   // a slick: it DARKENS the river
+          else                   col = vec3(0.80, 0.91, 1.00);   // spindrift off the lake gale
           vec2 d = gl_PointCoord - 0.5;
           float ca = cos(vRot), sa = sin(vRot);
           vec2 q = vec2(d.x * ca + d.y * sa, d.y * ca - d.x * sa);
@@ -229,7 +235,11 @@
 
   // FROZEN signature — other modules call it. size is a multiplier, not a diameter.
   // The mist/drop mix is deliberate: fine mist alone reads as fog, drops alone read as buckshot.
-  FX.spray = function (x, y, z, vx, vy, vz, count, spread, size) {
+  // `tint` is optional and defaults to water (0 water · 1 river dye · 2 slick · 3 gale spindrift);
+  // it only shifts the colour band the fragment shader reads out of the seed.
+  const TINT_BASE = [0, 10, 20, 30];
+  FX.spray = function (x, y, z, vx, vy, vz, count, spread, size, tint) {
+    const tb = TINT_BASE[tint | 0] || 0;
     // sized for the chase camera, which rides ~20 m astern: a droplet has to be ~0.2-0.6 m across
     // to project to the handful of pixels that reads as a droplet from back there. Sub-linear in
     // size so the big callers (geysers pass 3.4) get chunkier water without getting blobs.
@@ -246,7 +256,7 @@
       p.vy = vy * (heavy ? 1 : 0.8) + Math.random() * sp * 0.7;
       p.vz = vz + (Math.random() - 0.5) * sp;
       p.age = 0;
-      p.seed = Math.random() * 6.283;
+      p.seed = tb + Math.random() * 6.283;
       // Lives are short on purpose: the boat outruns its own spray at 30 m/s, so anything that
       // survives half a second is no longer spray — it is a blob loitering in front of the lens.
       if (heavy) {
@@ -287,6 +297,55 @@
       p.core = 0.55;
       p.seed = -(0.05 + Math.random() * 6.2);        // negative = hot; see the fragment shader
       p.g = 1.15; p.drag = 0.8; p.fp = 1.6; p.sMin = 0.45;
+    }
+  };
+
+  // ---------- power-up materials, same Points cloud, zero new draw calls ----------
+  // RIVER DYE. Chicago dumps forty pounds of it in the Main Stem the Saturday before St Patrick's
+  // and it BLOOMS — it does not fall. So: near-zero gravity, heavy drag, long lives, fat soft
+  // droplets. That combination is what reads as a cloud rather than as a green sneeze.
+  FX.dyeBurst = function (x, y, z, n) {
+    if (!pool) return;
+    for (let i = 0; i < n; i++) {
+      const p = pool[poolIdx]; poolIdx = (poolIdx + 1) % MAXP;
+      const a = Math.random() * 6.283, sp = 1.2 + Math.random() * 4.5;
+      p.x = x + (Math.random() - 0.5) * 4;
+      p.y = y + Math.random() * 2.2;
+      p.z = z + (Math.random() - 0.5) * 4;
+      p.vx = Math.cos(a) * sp; p.vy = 0.4 + Math.random() * 1.4; p.vz = Math.sin(a) * sp;
+      p.age = 0;
+      p.life = 1.4 + Math.random() * 1.6;
+      p.s0 = 1.1 + Math.random() * 1.7;
+      p.a0 = 0.30 + Math.random() * 0.20;
+      p.core = 0.02 + Math.random() * 0.12;      // soft-edged: a hard rim reads as a bubble
+      p.seed = 10 + Math.random() * 6.283;
+      p.g = 0.05; p.drag = 1.9; p.fp = 1.5; p.sMin = 0.85;
+    }
+  };
+
+  // GALE OFF THE LAKE. Weightless spindrift torn along one direction — the shader smears each
+  // particle along its own travel, so a fast horizontal streak IS the wind.
+  FX.gust = function (x, y, z, dx, dz, n) {
+    if (!pool) return;
+    const l = Math.max(1e-3, Math.hypot(dx, dz));
+    const ux = dx / l, uz = dz / l;
+    for (let i = 0; i < n; i++) {
+      const p = pool[poolIdx]; poolIdx = (poolIdx + 1) % MAXP;
+      // seeded across a 70 m band and 44 m upwind, so the gust arrives as a FRONT crossing the
+      // channel rather than a puff at one point
+      const back = Math.random() * 44, side = (Math.random() - 0.5) * 70;
+      p.x = x - ux * back - uz * side;
+      p.y = y + (Math.random() - 0.5) * 7.5;
+      p.z = z - uz * back + ux * side;
+      const sp = 30 + Math.random() * 26;
+      p.vx = ux * sp; p.vy = (Math.random() - 0.4) * 1.5; p.vz = uz * sp;
+      p.age = 0;
+      p.life = 0.55 + Math.random() * 0.45;
+      p.s0 = 0.42 + Math.random() * 0.55;
+      p.a0 = 0.26 + Math.random() * 0.18;
+      p.core = 0.18;                    // soft: a hard-edged streak is a scratch on the lens
+      p.seed = 30 + Math.random() * 6.283;
+      p.g = 0; p.drag = 0.2; p.fp = 1.4; p.sMin = 0.6;
     }
   };
 

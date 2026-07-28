@@ -128,60 +128,71 @@
 #prime.on{opacity:1;animation:primebeat 900ms ease-in-out infinite}
 @keyframes primebeat{50%{text-shadow:0 0 .9em rgba(255,200,87,.95),0 1px 3px rgba(0,0,0,.9)}}
 
-/* ============================================================ THE SALUTE ====*/
-/* One number, and it must break loudly. The tier colours ARE the escalation table: blue to x4,
-   gold at THE WAVE (x5), white over red at THE RUN (x10). */
-#chain{position:absolute;left:50%;bottom:11.5em;transform:translateX(-50%);text-align:center;
-  white-space:nowrap;opacity:0;transition:opacity var(--t-std) var(--e-out)}
-#chain.on{opacity:1} #chain.zero{opacity:.55}
-#chain-lab{font:700 .66em/1 var(--f-ui);letter-spacing:.44em;text-indent:.44em;color:var(--chi-blue);
-  text-shadow:0 1px 3px #000,0 0 .7em rgba(0,0,0,.95)}
-#chain-num{margin-top:.10em;font:400 4.2em/.88 var(--f-display);letter-spacing:.01em;color:#EAF6FF;
-  text-shadow:0 .05em 0 rgba(4,18,27,.9),0 .09em .45em rgba(0,0,0,.8);
-  transition:color var(--t-std) linear,font-size var(--t-std) var(--e-out)}
-#chain.zero #chain-num{color:var(--text-mute)}
-#chain.t1 #chain-num{font-size:5.3em;color:var(--gold);
-  text-shadow:0 .05em 0 rgba(4,18,27,.9),0 0 .55em rgba(255,200,87,.8)}
-#chain.t2 #chain-num{font-size:6.1em;color:#fff;
-  text-shadow:0 .05em 0 rgba(4,18,27,.9),0 0 .5em rgba(239,51,64,.95),0 0 1.4em rgba(255,200,87,.6)}
-#chain-num.pop{animation:chainpop 420ms var(--e-pop) both}
-@keyframes chainpop{0%{transform:scale(1.65);opacity:.25}55%{transform:scale(1.07)}100%{transform:none}}
-/* the break is the punishment, so it is the loudest 600 ms in the HUD */
-#chain-num.dead{animation:chaindie 620ms linear both}
-@keyframes chaindie{
-  0%{color:#fff;transform:scale(1.34);opacity:1;text-shadow:0 0 1.4em rgba(239,51,64,1)}
-  14%{color:var(--chi-red);opacity:1} 28%{color:#fff;opacity:1}
-  42%{color:var(--chi-red);opacity:1} 62%{color:var(--chi-red);transform:scale(1);opacity:1}
-  100%{color:var(--chi-red);transform:scale(.84);opacity:0}}
-#chain-sub{margin-top:.34em;min-height:1.1em;font:700 .74em/1 var(--f-ui);letter-spacing:.20em;
-  color:var(--gold);text-shadow:0 1px 3px rgba(0,0,0,.95);opacity:0;
-  transition:opacity var(--t-micro) linear}
-#chain-sub.on{opacity:1} #chain-sub.bad{color:var(--chi-red)}
-/* BANK is a choice the player has to be offered, not merely told about: it gets a plate */
-#chain-sub.bank{display:inline-block;color:var(--chi-blue);padding:.42em .8em;border-radius:2px;
-  background:var(--panel-hi);box-shadow:inset 0 0 0 2px var(--rule-soft);text-shadow:none}
+/* ========================================================== THE ITEM SLOT ====*/
+/* Items are the answer to "so it's not just whoever gets out first", so what you are holding has
+   to be readable at eighty miles an hour in the corner of the eye — the same lesson the boost
+   meter taught when it was a six-pixel hairline. It takes the bottom centre, and it is built out
+   of the same municipal parts as everything else: a squared plate, a street blade under it. */
+#item-slot{position:absolute;left:50%;bottom:1.15em;transform:translateX(-50%);text-align:center;
+  white-space:nowrap;opacity:0;transition:opacity var(--t-std) var(--e-out);--item:#7EC8E3}
+#item-slot.on{opacity:1}
+#item-lab{font:700 .68em/1 var(--f-ui);letter-spacing:.40em;text-indent:.40em;color:var(--chi-blue);
+  text-shadow:0 1px 2px #000,0 0 .45em #000,0 0 1em rgba(0,0,0,.95);margin-bottom:.4em}
+#item-box{position:relative;width:6.1em;height:6.1em;margin:0 auto;border-radius:3px;
+  background:var(--panel-hi);box-shadow:inset 0 0 0 2px var(--rule-soft),0 .25em 1.5em rgba(0,0,0,.55);
+  transition:box-shadow var(--t-std) var(--e-out)}
+/* the same 6 % light band the position plate carries, so the two plates read as one system */
+#item-box::before{content:"";position:absolute;inset:0;pointer-events:none;border-radius:3px;
+  background:linear-gradient(180deg,rgba(126,200,227,.14) 0 6%,transparent 6%)}
+#item-icon{position:absolute;left:9%;top:9%;width:82%;height:82%}
+#item-slot.held #item-box{box-shadow:inset 0 0 0 2px var(--item),0 0 1.5em rgba(0,0,0,.6)}
+/* the spin: 0.85 s of a slot machine, and the plate strobes with it */
+#item-slot.roll #item-box{animation:itemroll 150ms steps(1) infinite}
+@keyframes itemroll{0%{box-shadow:inset 0 0 0 2px var(--gold),0 0 1.2em rgba(255,200,87,.55)}
+                    50%{box-shadow:inset 0 0 0 2px #fff,0 0 1.6em rgba(255,255,255,.5)}}
+#item-key{position:absolute;right:-.36em;bottom:-.36em;padding:.3em .52em;border-radius:2px;
+  background:var(--gold);color:var(--ink-900);font:700 .66em/1 var(--f-ui);letter-spacing:.14em;
+  opacity:0;transition:opacity var(--t-micro) linear}
+#item-slot.held #item-key{opacity:1;animation:itemkey 1.05s ease-in-out infinite}
+@keyframes itemkey{50%{box-shadow:0 0 .85em rgba(255,200,87,.95)}}
+/* the name rides a street blade — the same green, and the same white inset rule, as every
+   Chicago corner sign and as the lap line in the opposite corner */
+#item-name{margin-top:.44em;display:inline-block;padding:.42em .82em;border-radius:2px;
+  font:700 .74em/1 var(--f-ui);letter-spacing:.18em;color:#fff;background:var(--sign-green);
+  box-shadow:inset 0 0 0 2px #fff,0 .18em .8em rgba(0,0,0,.5)}
+#item-slot.empty #item-name{background:var(--panel);color:var(--text-mute);
+  box-shadow:inset 0 0 0 2px var(--rule-soft)}
+/* what is running on you right now, and how much of it is left */
+#item-pips{display:flex;justify-content:center;gap:.3em;margin-top:.42em;min-height:1.75em}
+.pip{display:none;padding:.32em .5em .28em;border-radius:2px;background:var(--panel-hi);
+  box-shadow:inset 0 0 0 1px currentColor;font:700 .58em/1 var(--f-ui);letter-spacing:.14em}
+.pip.on{display:block}
+.pip i{display:block;height:2px;margin-top:.36em;background:currentColor;width:100%}
+.pip[data-k=shield]{color:var(--chi-blue)} .pip[data-k=heavy]{color:#FFB03A}
+.pip[data-k=spin]{color:var(--chi-red)}    .pip[data-k=blind]{color:#2ECC71}
+.pip[data-k=gulls]{color:#F2F6F8}          .pip[data-k=gale]{color:#BFE6FF}
 
-/* The arc: the ask window made visible, and then — once the tender answers — the lift cycle with
-   YOUR arrival marked on it. If the player cannot read this, the hook does not exist. */
-#salute{position:absolute;left:50%;bottom:1.0em;transform:translateX(-50%);width:18em;height:9.6em;
-  opacity:0;transition:opacity 200ms var(--e-out)}
-#salute.on{opacity:1}
-#sal-ring{position:absolute;left:0;top:0;width:18em;height:9.6em}
-#sal-cue{position:absolute;left:0;right:0;top:22%;text-align:center;
-  font:400 1.55em/1 var(--f-display);letter-spacing:.05em;color:var(--gold);
-  text-shadow:0 .05em .28em rgba(0,0,0,.9)}
-#salute.ask #sal-cue{animation:askbeat 640ms ease-in-out infinite}
-#salute.ok  #sal-cue{color:#3ED17E}
-#salute.bad #sal-cue{color:var(--chi-red)}
-#salute.wait #sal-cue{color:var(--text-dim)}
-@keyframes askbeat{50%{opacity:.42}}
-#sal-name{position:absolute;left:0;right:0;bottom:.1em;text-align:center;white-space:nowrap;
-  font:700 .66em/1 var(--f-ui);letter-spacing:.16em;color:var(--text-dim);
-  text-shadow:0 1px 3px rgba(0,0,0,.95)}
-#sal-name b{color:#fff;margin-left:.5em}
-#sal-name i{font-style:normal;margin-left:.8em;padding:.2em .5em;border-radius:2px;
-  color:var(--gold);box-shadow:inset 0 0 0 1px currentColor}
-#sal-name i.no{color:var(--chi-red)}
+/* The callout. Three registers, because the player is asking three different questions: gold =
+   you did that, flag red = that was done to you, flag blue = the fender ate it. Solid plate and
+   ink text, never coloured text on the water — that is unreadable over sunlit limestone. */
+/* 6.7em of THIS element's 2.05em type = 13.7em of the HUD's, which clears the slot below it.
+   The em trap again: an offset on an element that sets its own font-size resolves against that. */
+#item-call{position:absolute;left:50%;bottom:6.7em;transform:translateX(-50%);opacity:0;
+  padding:.2em .64em;border-radius:2px;white-space:nowrap;
+  font:400 2.05em/1 var(--f-display);letter-spacing:.05em;
+  color:var(--ink-900);background:var(--gold);
+  box-shadow:inset 0 0 0 2px rgba(255,255,255,.85),0 .3em 1.6em rgba(0,0,0,.55)}
+/* .on IS the visible state — a plain class, no keyframe. A composited animation only advances on
+   frames that land, and this plate has to survive the one stalled frame it is most needed on.
+   The keyframe below is the pop and nothing else, and its forwards fill means a dropped one costs
+   nothing. hud.js retires the plate on wall-clock timers, never on the sim clock. */
+#item-call.on{opacity:1;animation:itempop 240ms var(--e-pop) forwards}
+#item-call.hit{color:#fff;background:var(--chi-red)}
+#item-call.save{background:var(--chi-blue)}
+#item-call.out{opacity:0;transition:opacity 250ms var(--e-out)}
+@keyframes itempop{0%{transform:translateX(-50%) scale(.72)}
+  62%{transform:translateX(-50%) scale(1.06)}
+  100%{transform:translateX(-50%) scale(1)}}
 
 /* ------------------------------------------------------------- status chips */
 #chips{position:absolute;right:1.625em;bottom:12.2em;display:flex;flex-direction:column;
@@ -192,7 +203,7 @@
 @keyframes chipin{from{opacity:0;transform:translateX(1.2em)}to{opacity:1;transform:none}}
 .chip.draft{color:var(--chi-blue)} .chip.drift{color:var(--gold)}
 .chip.near{color:#3ED17E}          .chip.reset,.chip.bad{color:var(--chi-red)}
-.chip.gold{color:var(--gold)}
+.chip.gold,.chip.item{color:var(--gold)}
 
 /* ---------------------------------------------------------------- countdown */
 #countdown{position:absolute;left:50%;top:36%;transform:translate(-50%,-50%);display:none;
@@ -318,7 +329,7 @@
 #menu.title-screen .stars{margin-bottom:1.0vh}
 #menu.title-screen .menu-list{margin-top:1.5vh;gap:.42em}
 #menu.title-screen .menu-item{padding:.62em 2em}
-#menu.title-screen .sound-row{margin-top:1.0em}
+#menu.title-screen .sound-row,#menu.title-screen #switches{margin-top:1.0em}
 #menu.title-screen .menu-note{margin-top:1.0em}
 #title{font:400 clamp(44px,7.2vw,104px)/.90 var(--f-display);letter-spacing:.005em;
   text-align:center;color:#fff;background:none;-webkit-background-clip:border-box;background-clip:border-box;
@@ -410,17 +421,16 @@
 .result-row .gap{color:var(--text-mute)}
 .result-row.you{background:rgba(255,200,87,.10);box-shadow:inset .28em 0 0 var(--gold);color:#fff;font-weight:700}
 .result-row.p1 .p{color:var(--gold)} .result-row.p2 .p{color:#DDE3E8} .result-row.p3 .p{color:#C97B3C}
-/* The banked strip. A results screen that cannot say what changed means the run changed nothing:
-   what you chained, the mark it is measured against, and the medal it moved. */
-#bank-strip{margin:.8em 0 .1em;display:flex;justify-content:center;align-items:center;gap:1.6em;
+/* The medal strip. A results screen that cannot say what changed means the run changed nothing —
+   and with the salute retired, the medal is what a run moves. It draws only when there is one. */
+#medal-strip{margin:.8em 0 .1em;display:flex;justify-content:center;align-items:center;gap:.9em;
   padding:.66em 1.6em;background:var(--panel-hi);border-radius:2px;
   box-shadow:inset 0 0 0 2px var(--rule-soft);font:700 .80em/1 var(--f-ui);letter-spacing:.20em;
-  color:var(--text-dim);animation:rowin 380ms var(--e-out) both}
-#bank-strip b{margin-left:.55em;color:#fff;font-family:var(--f-num);font-variant-numeric:tabular-nums}
-#bank-strip .hi b{color:var(--gold)}
-#bank-strip .med{color:var(--text-mute)}
-#bank-strip .med u{text-decoration:none;color:var(--gold);margin:0 .35em}
-#bank-strip .med s{text-decoration:none;color:var(--text-dim)}
+  color:var(--text-mute);animation:rowin 380ms var(--e-out) both}
+#medal-strip .star6{width:.85em;height:.85em;background:var(--gold);flex:0 0 auto}
+#medal-strip u{text-decoration:none;color:var(--gold)}
+#medal-strip s{text-decoration:none;color:var(--text-dim)}
+#medal-strip .up{color:var(--gold)}
 #record-banner{margin:.9em 0;padding:.7em 1.4em;background:var(--gold);color:var(--ink-900);
   font:700 .95em/1 var(--f-ui);letter-spacing:.28em;text-align:center;border-radius:2px;
   animation:recordin 620ms var(--e-pop) both}
@@ -572,7 +582,7 @@
 /* ------------------------------------------------------------- sound control */
 /* The game boots SILENT, so this is the one control a first-time player must not be able to miss:
    a fixed plate above every screen, flag red and breathing while it is off, quiet once it is on. */
-#sound-chip,.sound-row{display:flex;align-items:center;gap:.7em;cursor:pointer;pointer-events:auto;
+#sound-chip,.sound-row,.opt-row{display:flex;align-items:center;gap:.7em;cursor:pointer;pointer-events:auto;
   font:700 .74em/1 var(--f-ui);letter-spacing:.2em;border:0;border-radius:2px;
   padding:.62em .95em;background:var(--panel-hi);color:var(--text-dim);
   box-shadow:inset 0 0 0 2px var(--rule-soft);
@@ -581,14 +591,14 @@
 #sound-chip{position:fixed;top:1.15em;right:1.25em;z-index:30;font-size:13px}
 #sound-chip.hidden{display:none}
 .sound-row{margin-top:1.5em;justify-content:center}
-#sound-chip:hover,.sound-row:hover{transform:translateY(-.1em);box-shadow:inset 0 0 0 2px var(--rule)}
-#sound-chip b,.sound-row b{color:var(--text);font-weight:700}
-#sound-chip i,.sound-row i{font-style:normal;font-size:.85em;letter-spacing:.16em;color:var(--text-mute);
+#sound-chip:hover,.sound-row:hover,.opt-row:hover{transform:translateY(-.1em);box-shadow:inset 0 0 0 2px var(--rule)}
+#sound-chip b,.sound-row b,.opt-row b{color:var(--text);font-weight:700}
+#sound-chip i,.sound-row i,.opt-row i{font-style:normal;font-size:.85em;letter-spacing:.16em;color:var(--text-mute);
   padding:.32em .5em;border-radius:2px;box-shadow:inset 0 0 0 1px var(--rule-soft)}
-#sound-chip svg,.sound-row svg{width:1.35em;height:1.35em;flex:0 0 auto;fill:currentColor;
+#sound-chip svg,.sound-row svg,.opt-row svg{width:1.35em;height:1.35em;flex:0 0 auto;fill:currentColor;
   stroke:currentColor;stroke-width:1.7;stroke-linecap:round;color:var(--chi-blue)}
-#sound-chip svg .w,.sound-row svg .w{fill:none}
-#sound-chip svg .x,.sound-row svg .x{display:none;fill:none}
+#sound-chip svg .w,.sound-row svg .w,.opt-row svg .w{fill:none}
+#sound-chip svg .x,.sound-row svg .x,.opt-row svg .x{display:none;fill:none}
 /* muted: the whole plate goes flag red, the waves become a cross, and it breathes once a second */
 #sound-chip.off,.sound-row.off{background:var(--chi-red);color:#fff;
   box-shadow:inset 0 0 0 2px #fff,0 .25em 1.2em rgba(239,51,64,.45);animation:sndbeat 1.9s ease-in-out infinite}
@@ -600,6 +610,18 @@
 @keyframes sndbeat{0%,100%{box-shadow:inset 0 0 0 2px #fff,0 .25em 1.2em rgba(239,51,64,.40)}
                    50%{box-shadow:inset 0 0 0 2px #fff,0 .25em 1.9em rgba(239,51,64,.85)}}
 @media (prefers-reduced-motion:reduce){#sound-chip.off,.sound-row.off{animation:none}}
+
+/* ------------------------------------------------------------ option switch */
+/* The power-up switch sits BESIDE the sound plate, never instead of it: flag red on this screen
+   means one thing only — the game is silent — so a switched-off option goes quiet and grey. */
+#switches{display:flex;align-items:center;justify-content:center;gap:.6em;flex-wrap:wrap;margin-top:1.5em}
+#switches .sound-row,#switches .opt-row{margin-top:0}
+.opt-row svg{color:var(--gold)}
+.opt-row.off{color:var(--text-mute);box-shadow:inset 0 0 0 2px rgba(126,200,227,.10)}
+.opt-row.off b{color:var(--text-mute)}
+.opt-row.off svg{color:var(--text-mute)}
+.opt-row.off svg .x{display:inline}
+#vol-panel .opt-row{margin-top:.2em;justify-content:center}
 
 /* --------------------------------------------------------------- loading ---*/
 #loading{background:var(--ink-900)}

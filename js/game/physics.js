@@ -94,8 +94,8 @@
     if (boosting) boat.boostEnergy = Math.max(0, boat.boostEnergy - dt * 0.34);   // 2.9 s from full
     // Passive refill is a trickle, not an allowance. At 0.100/s the meter refilled itself every
     // ten seconds whatever you did, which made boost a cooldown; at 0.030 a full tank means you
-    // have been brave for a while. Everything else — checkpoints, gates, drift, airtime, the
-    // salute — pays for risk, and those are the only meaningful supply now.
+    // have been brave for a while. Everything else — checkpoints, gates, drift, airtime and a
+    // TURBO out of a crate — pays for risk, and those are the only meaningful supply now.
     else boat.boostEnergy = Math.min(1, boat.boostEnergy + dt * 0.030);           // 33 s refill
     boat.boostHeat = U().damp(boat.boostHeat, boosting ? 1 : 0, boosting ? 14 : 5, dt);
 
@@ -103,13 +103,24 @@
     const topSpeed = spec.top * bMul * (boat.rubber || 1) * (1 + (boat.draft || 0) * 0.04);
     const accel = spec.accel * bMul + (boat.boostKickT > 0 ? (spec.boostKick || 9) : 0);
 
-    // ---- steering: effective only with water under the hull and way on ----
+    // ---- steering: effective with water under the hull, way on, OR wash over the blade ----
+    // A rudder needs flow past it, which is why wayOn exists. But a skipper turning in her own
+    // length does not wait for way on — she works the throttle against the helm and steers on prop
+    // wash, and at a standstill that is ALL she has. Without it a three-point turn in a 60 m
+    // channel was a fight, which is exactly the note this round. wash is gone by 9 m/s, so racing
+    // feel above walking pace is untouched, measured: at 5 m/s and above wayOn still wins.
     const steerAuthority = boat.airborne ? 0.25 : 1;
-    const wayOn = U().clamp(speed / 6.5, 0.12, 1);                    // rudder needs flow past it
+    const wayOn = U().clamp(speed / 6.5, 0.12, 1);
+    const wash = (0.30 + 0.55 * U().clamp(ctl.throttle + ctl.brake, 0, 1)) *
+                 (1 - U().smoothstep(2.5, 9.0, speed));
     const highSpeed = 1 - U().clamp(speed / topSpeed, 0, 1) * 0.34;
     const planeTurn = 1 + planeF * 0.22;                              // a planing hull pivots flatter
-    const speedFactor = wayOn * highSpeed * planeTurn;
-    const targetAng = ctl.steer * spec.turn * speedFactor * steerAuthority * (speedF < -0.5 ? -1 : 1);
+    const speedFactor = Math.max(wayOn, boat.airborne ? 0 : wash) * highSpeed * planeTurn;
+    // Backing down, the ROTATION still follows the stick: push left and her head comes left. The
+    // physically faithful thing is to invert it — a hull going astern steers from her stern, the
+    // way a car does in reverse — and it was in here, and from a chase camera it read as the boat
+    // ignoring you. What actually makes her feel stern-steered is the pivot term below, not a sign.
+    const targetAng = ctl.steer * spec.turn * speedFactor * steerAuthority;
     // asymmetric: bite hard into the turn, let the wheel unwind lazily. This is where punch lives.
     const turningIn = Math.abs(targetAng) > Math.abs(boat.angVel);
     boat.angVel = U().damp(boat.angVel, targetAng, turningIn ? 11.0 : 6.5, dt);
@@ -138,7 +149,10 @@
       speedF -= 0.35 * speedF * dt * (1 - ctl.throttle);     // engine braking / water friction
       if (ctl.brake > 0) {
         if (speedF > 0.5) speedF -= ctl.brake * accel * 1.15 * dt;
-        else speedF = Math.max(-spec.top * 0.22, speedF - ctl.brake * accel * 0.45 * dt); // reverse
+        // Astern. 0.30 of her top end and a stern gear that engages in about a second: nobody is
+        // going to RACE backwards, but getting out of a dead end has to be a manoeuvre, not a
+        // sentence. (Was 0.22 and less than half this bite, which is why it felt like being towed.)
+        else speedF = Math.max(-spec.top * 0.30, speedF - ctl.brake * accel * 0.62 * dt);
       }
       // lateral grip. Planing shrinks the wetted area, so the hull genuinely holds less.
       const gripEff = spec.grip * (1 - 0.30 * planeF);
@@ -146,6 +160,14 @@
       // stern step-out: only once planing, scaled by how hard you're asking of the hull
       const slipGain = (spec.drift || 0.5) * planeF * U().clamp(speed / topSpeed, 0, 1);
       speedL += ctl.steer * speed * 0.075 * slipGain * dt;
+      // Going astern a hull pivots about her stern, not her middle: helm over and the bow sweeps
+      // the wide arc while the stern stays more or less put. That is a lateral WALK of the centre
+      // of mass, so model it as one — this, and not an inverted wheel, is what makes backing and
+      // filling read as a boat rather than a car in a car park.
+      if (speedF < -0.2) {
+        const arm = Math.min(3.0, boat.hullLen * 0.30) * U().clamp(-speedF / 3, 0, 1);
+        speedL = U().damp(speedL, boat.angVel * arm, 6, dt);
+      }
       // counter-steer: catching a slide with opposite lock recovers grip and pays boost. This is
       // the one skill expression in the game, so it is obvious and it is worth it.
       boat.drifting = Math.abs(speedL) > 2.2 &&
@@ -228,29 +250,14 @@
       }
     }
 
-    // ---- the ceiling ----
-    // A Chicago bascule carries 5.8 m of soffit over a hull with about two metres of freeboard, so
-    // a boat ON THE WATER can never be hit by one — measured, not assumed, and that is why the
-    // safe line under a closed span costs nothing. Leave the water and the arithmetic inverts:
-    // ramps.js launches at sp*0.2875*1.25 + 1.6, which at 40 m/s puts you through the span line at
-    // about 11 m, twice the deck height. The deck is the only wall in this game and you can only
-    // find it by choosing to jump. W1 owns the footprint-accurate query; until it lands, this is
-    // exactly today's behaviour.
-    boat._ceilT = Math.max(0, (boat._ceilT || 0) - dt);
-    if (boat.airborne && !boat._ramp && RR.Bridges && RR.Bridges.clearanceAt) {
-      // pass the WATERLINE datum, not the masthead: a hull whose keel line is over the parapet has
-      // genuinely cleared the whole span, and anything less is still meeting steel somewhere.
-      const ceil = RR.Bridges.clearanceAt(boat.pos.x, boat.pos.z, boat.pos.y);
-      if (isFinite(ceil) && boat.pos.y + boat.hullTop > ceil) {
-        const impactVy = boat.vy;
-        boat.pos.y = Math.max(rideY, ceil - boat.hullTop);
-        boat.vy = Math.min(boat.vy, -2.6);                 // slammed back down, not parked in mid-air
-        if (boat._ceilT <= 0) {
-          boat._ceilT = 0.7;
-          P.ceilingHit(boat, speed, impactVy, fx, fz);
-        }
-      }
-    }
+    // ---- no ceiling ----
+    // A boat ON THE WATER was never in reach of a bascule: 5.8 m of soffit over two metres of
+    // freeboard, so the safe line under a closed span has always cost nothing. Airborne off a ramp
+    // it used to clip the deck, and that was fair only while the salute existed and the player was
+    // the one who had asked for the span. With the salute retired, a leaf that happens to be down
+    // is a cycle nobody can influence, so clipping it would be punishment for the game's own
+    // timing. Ramps launch clean over — and through — the span again.
+    // (RR.Bridges.clearanceAt still exists; nothing here calls it.)
 
     // ---- jump ramps: ride up the wedge, launch off the lip (speed sets the arc) ----
     if (RR.Ramps) {
@@ -331,30 +338,6 @@
     boat.rpm = U().damp(boat.rpm, U().clamp(ctl.throttle * 0.55 + load * 0.45 + (boosting ? 0.12 : 0), 0.06, 1.15), 4, dt);
 
     boat.crashTimer = Math.max(0, boat.crashTimer - dt);
-  };
-
-  // Meeting the underside of a bascule at 90 mph. This is the only wreck in the game the player
-  // did not have to be given — they asked for the ramp with the span shut — so it has to land like
-  // one: a quarter of the speed gone, the wheel taken away for the better part of a second, sparks
-  // off the lattice and the hull dropped flat onto the water.
-  P.ceilingHit = function (boat, speed, vyUp, fx, fz) {
-    const sev = U().clamp(speed / 30 + Math.max(0, vyUp) / 14, 0.35, 1);
-    boat.vel.x *= 0.75; boat.vel.z *= 0.75;              // 25% of your way gone into the steel
-    boat.angVel *= 0.35;
-    boat.bumpRecover = Math.max(boat.bumpRecover || 0, 0.45 + sev * 0.55);
-    boat.crashTimer = Math.max(boat.crashTimer, 0.5);
-    boat.launchArmed = false;
-    if (boat.onCeiling) boat.onCeiling(sev);
-    // onCrash is already wired to the thud, the splash burst and the camera kick for the player
-    if (boat.onCrash) boat.onCrash(sev, -fx, -fz);
-    if (boat.isPlayer) {
-      if (RR.Feel && RR.Feel.dilate) RR.Feel.dilate(0.42, 300);
-      if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.45 + sev * 0.5);
-    }
-    if (RR.FX && RR.FX.sparks) {
-      RR.FX.sparks(boat.pos.x, boat.pos.y + boat.hullTop * 0.9, boat.pos.z,
-        boat.vel.x * 0.4, boat.vel.z * 0.4, Math.round(18 + sev * 30));
-    }
   };
 
   // Separate the normal and the tangent. Bounce the normal, but only SCRUB the tangent, and only

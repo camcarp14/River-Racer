@@ -124,9 +124,9 @@
   #opening { position: fixed; inset: 0; z-index: 12; pointer-events: none; display: none;
              font-family: "Arial Narrow", "Helvetica Neue", Helvetica, Arial, sans-serif; }
   #opening.on { display: block; }
-  /* The prompt lives in the TOP third. The bottom of the screen is the salute arc and the bridge
-     name, and a teaching line laid across the very widget it is teaching you to read is worse
-     than no teaching line at all. In lean mode the top strip is empty, so it is free. */
+  /* The prompt lives in the TOP third. The bottom of the screen is the speedo, the item slot and
+     the landmark name, and a teaching line laid across the very widget it is teaching you to read
+     is worse than no teaching line at all. In lean mode the top strip is empty, so it is free. */
   #open-line { position: absolute; left: 50%; top: 8.5vh; transform: translate(-50%, -14px);
                display: flex; align-items: center; gap: .8em; white-space: nowrap;
                opacity: 0; transition: opacity .28s ease, transform .28s cubic-bezier(.16,1,.3,1); }
@@ -164,12 +164,10 @@
   #open-title .tally:empty { display: none; }
 
   /* the lean HUD: the cold open has no rivals, no timer and no map, so it shows none of them.
-     What it keeps is the speedo, the salute arc and the chain — the three things it is teaching. */
+     What it keeps is the speedo. (The item slot hides itself here too — powerups.js holds the
+     items out of the cold open, so hud.js never turns the slot on.) */
   #hud.lean #race-info, #hud.lean #timer, #hud.lean #gaps, #hud.lean #minimap,
   #hud.lean #boost-hint, #hud.lean #ticker, #hud.lean #checkpoint-flash { display: none !important; }
-  /* …and the chain numeral only exists once there is a chain. A ×0 parked over the boat before
-     the player has been told what a salute is teaches nothing and hides the hull. */
-  #hud.lean:not(.chained) #chain { display: none !important; }
 </style>
 </head>
 <body>
@@ -228,6 +226,7 @@
 <script src="js/game/salute.js"></script>
 <script src="js/game/feel.js"></script>
 <script src="js/game/progress.js"></script>
+<script src="js/game/powerups.js"></script>
 <script src="js/game/race.js"></script>
 <script src="js/ui/uikit.js"></script>
 <script src="js/ui/hud.js"></script>

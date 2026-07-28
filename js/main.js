@@ -219,16 +219,17 @@
   function setTourView(i) {
     tourCam = ((i % TOUR_VIEWS.length) + TOUR_VIEWS.length) % TOUR_VIEWS.length;
     const v = TOUR_VIEWS[tourCam];
+    if (RR.Camera.lookReset) RR.Camera.lookReset(true);   // a new seat puts your eyes back on the bow
     if (v.stock != null) { RR.Camera.setMode(v.stock); if (player) RR.Camera.snapTo(player); }
     if (RR.HUD.flash) RR.HUD.flash(v.name);
   }
   // The seats are bolted to the boat, so these poses are rigid — no spring, no lag. The vessel
-  // itself is 200 tonnes of slow, which is all the smoothing a shot from her deck needs.
-  function tourCamera(b) {
+  // itself is 200 tonnes of slow, which is all the smoothing a shot from her deck needs. What does
+  // move is your head: the pose is where you are SITTING, and where you are LOOKING is yours.
+  function tourCamera(b, dt) {
     const v = TOUR_VIEWS[tourCam];
     const seats = (b.mesh.userData && b.mesh.userData.seatCams) || null;
     if (v.stock != null || !seats || !seats[v.key]) return false;
-    const cam = RR.Engine.camera;
     const eye = seats[v.key];
     boatLocal(tcEye, b, eye);
     boatLocal(tcLook, b, [eye[0] + v.look[0], eye[1] + v.look[1], eye[2] + v.look[2]]);
@@ -245,10 +246,21 @@
         if (isFinite(deckY)) tcEye.y = Math.min(tcEye.y, deckY - 1.3);
       }
     }
-    cam.position.copy(tcEye);
-    cam.up.set(0, 1, 0);
-    cam.lookAt(tcLook);
-    if (cam.fov !== v.fov) { cam.fov = v.fov; cam.updateProjectionMatrix(); }
+    // The arrows are the wheel — but only once you have the wheel. Until then they are your neck,
+    // which is the one control a passenger actually has. (The pointer drag and the right stick are
+    // read inside RR.Camera.seat and work in either case.)
+    if (!tourDriving && RR.Camera.lookNudge) {
+      const I = RR.Input, r = 1.6 * (dt > 0 ? dt : 1 / 60);
+      let dy = 0, dp = 0;
+      if (I.pressed('ArrowLeft')) dy -= r;
+      if (I.pressed('ArrowRight')) dy += r;
+      if (I.pressed('ArrowUp')) dp += r;
+      if (I.pressed('ArrowDown')) dp -= r;
+      if (dy || dp) RR.Camera.lookNudge(dy, dp);
+    }
+    // Now put the lens on the seat and let the head turn. The mount stays bolted to the deck; only
+    // the eyes move — which is the whole of the difference between riding a boat and watching one.
+    RR.Camera.seat(tcEye.x, tcEye.y, tcEye.z, tcLook.x, tcLook.y, tcLook.z, dt, { fov: v.fov });
     return true;
   }
   function setTourDriving(on) {
@@ -358,6 +370,9 @@
       const names = isCupRound && RR.Race.cupFieldNames ? RR.Race.cupFieldNames() : null;
       const cupDiff = isCupRound && RR.Race.cupDifficulty ? RR.Race.cupDifficulty() : null;
       const diff = cupDiff != null ? cupDiff : (RR.Menus && RR.Menus.difficulty ? RR.Menus.difficulty() : 1);
+      // the item brain plays at the round's difficulty too — mid-cup the menu's current setting is
+      // the wrong number, and a rival who throws a gale like a novice in the final is not a rival
+      if (RR.Powerups && RR.Powerups.setDifficulty) RR.Powerups.setDifficulty(diff);
       for (let i = 1; i < boats.length; i++) {
         const p = RR.AI.createPilot(boats[i], { path: raceState.route }, i - 1, diff);
         if (names && names[i]) p.name = names[i];
@@ -377,12 +392,6 @@
         if (b.isPlayer) { RR.Audio.splash(imp); RR.Camera.kick(imp * 0.5); }
       };
       b.onLaunch = () => { if (b.isPlayer) RR.Audio.seagull(); };
-      // the underside of a bascule at 90 mph. physics.js has already bled a quarter of the speed,
-      // dilated, thrown sparks and fired onCrash — this is the word for it. No second thud here:
-      // onCrash already played one and a double reads as a bug.
-      b.onCeiling = () => {
-        if (b.isPlayer && RR.HUD.chip) RR.HUD.chip('bad', 'CLIPPED THE SPAN', 1600);
-      };
       b.onBump = (sev, nx, nz) => {
         RR.FX.splashBurst(b.pos.x, b.pos.y, b.pos.z, sev * 0.6);
         if (b.isPlayer) { RR.Audio.thud(sev * 0.9); RR.Camera.kick(sev * 0.7); }
@@ -448,7 +457,8 @@
     RR.Camera.snapTo(player);
     if (tourMode) {
       tourCam = 0;
-      if (RR.HUD.chip) RR.HUD.chip('near', 'C: CHANGE SEAT · SPACE: DOCENT · F ×5: TAKE THE WHEEL', 7000);
+      if (RR.Camera.lookReset) RR.Camera.lookReset(true);   // never board with the last run's head angle
+      if (RR.HUD.chip) RR.HUD.chip('near', 'C: SEAT · DRAG OR ←→ TO LOOK AROUND · SPACE: DOCENT · F ×5: THE WHEEL', 7000);
     }
     mode = 'race';
   }
@@ -575,6 +585,12 @@
 
     RR.Input.update(dt);
     RR.Race.update(dt);
+    // Two workstreams, two shapes: opening.js reads the held pickup straight off the hull as
+    // `boat.item`, powerups.js keeps it in a slot of its own and hands it over through held().
+    // One assignment is the whole adapter, and gluing two files together without editing either
+    // is what this one is for. held() waits for the roll to land, which is also when the cold
+    // open should be naming the thing.
+    if (RR.Powerups && RR.Powerups.held) player.item = RR.Powerups.held();
 
     const racing = raceState.phase !== 'countdown';
 
@@ -608,6 +624,7 @@
     // AI (single-player only)
     for (const p of pilots) {
       RR.AI.update(p, dt, t, player.routeD);
+      if (RR.Powerups && RR.Powerups.aiSteer) RR.Powerups.aiSteer(p, dt);   // deviate for a crate
       const c = racing ? p.ctl : aiCtl;
       RR.Physics.update(p.boat, dt, c, t);
     }
@@ -621,15 +638,14 @@
 
     if (!raceState.mp) RR.Physics.collidePairs(boats, dt);   // MP contact handled visually; no authoritative push (avoids fighting the net)
 
-    // A bascule leaf rising just ahead scatters the gulls off the girder. The horn is the TENDER'S
-    // answer, so it only sounds for a lift you did not ask for — salute.js already plays your
-    // signal and the answer back when you did, and a third horn on top of those reads as a bug.
+    // A bascule leaf rising just ahead scatters the gulls off the girder, and the horn is the
+    // TENDER'S — every lift is his own now, since nothing in the game can ask him for one.
     if (racing && RR.Bridges && RR.Bridges.openings) {
       for (const o of RR.Bridges.openings) {
         const near = RR.U.dist2(player.pos.x, player.pos.z, o.x, o.z) < 95 * 95;
         if (near && o.rising && !o._warned) {
           o._warned = true;
-          if (o.why !== 'ask' && RR.Audio.airhorn) RR.Audio.airhorn();
+          if (RR.Audio.airhorn) RR.Audio.airhorn();
           if (RR.Audio.seagull) RR.Audio.seagull();
           for (let k = 0; k < 6; k++) RR.FX.spray(o.x + (Math.random() - 0.5) * 14, 7 + Math.random() * 3, o.z + (Math.random() - 0.5) * 14,
             (Math.random() - 0.5) * 6, 3, (Math.random() - 0.5) * 6, 1, 3, 1);
@@ -674,16 +690,16 @@
       RR.Camera.cinematic(player, dt, RR.Engine.rawDt || dt);   // [ and ] cycle the five shots
       if (RR.HUD.cine) RR.HUD.cine(true, RR.Camera.shotLabel ? RR.Camera.shotLabel() : '');
     } else if (!(window.RRTest && window.RRTest._freecam)) {
-      seated = raceState.tour && tourCamera(player);
+      seated = raceState.tour && tourCamera(player, dt);
       if (!seated) RR.Camera.follow(player, dt);
     }
     RR.Engine.trackShadow(player.pos.x, player.pos.z);
 
-    // W5's seams into the composite pass: it reads speed for the radial streaks and the salute
-    // chain for the grade. 46 is the next-best hull's top speed, so ordinary boats reach full
-    // streaks at their own ceiling and the podracer overdrives past it (post.js clamps).
+    // W5's seam into the composite pass: speed drives the radial streaks. 46 is the next-best
+    // hull's top speed, so ordinary boats reach full streaks at their own ceiling and the podracer
+    // overdrives past it (post.js clamps). The grade's other input was the salute chain; with the
+    // salute retired nothing pushes the tier off zero, so nothing calls setChainTier any more.
     if (RR.Post && RR.Post.setSpeed) RR.Post.setSpeed(Math.hypot(player.vel.x, player.vel.z) / 46);
-    if (RR.Post && RR.Post.setChainTier) RR.Post.setChainTier(RR.Salute ? (RR.Salute.chain || 0) : 0);
 
     RR.HUD.update(dt, player, raceState);
     RR.Minimap.draw(raceState, player, boats);
@@ -786,17 +802,6 @@
           RR.AI.update(p, dt, RR.Engine.time(), player.routeD);
           RR.Input.throttle = p.ctl.throttle; RR.Input.brake = p.ctl.brake;
           RR.Input.steer = p.ctl.steer; RR.Input.boost = p.ctl.boost;
-          // The autopilot asks for the bridge too, once per span, so a warped run exercises the
-          // player's own salute instead of only the rivals'. It asks on TIME to the span rather
-          // than on the raw window: the window is 170-55 m and a leaf is clear for 1.0-4.3 s
-          // after the ask, so at 28 m/s the far half of that window is a bridge already shutting.
-          const sp = Math.hypot(player.vel.x, player.vel.z);
-          if (RR.Salute && RR.Salute.arm && RR.Salute.window > 0 && !RR.Salute.armed &&
-              window.RRTest._askedSpan !== RR.Salute.target &&
-              RR.Salute.dist < Math.max(60, sp * 2.6)) {
-            window.RRTest._askedSpan = RR.Salute.target;
-            RR.Salute.arm(player);
-          }
         };
       }
       RR.Engine.warp(sec);
@@ -848,7 +853,7 @@
       const d = RR.Opening && RR.Opening.detail ? RR.Opening.detail() : null;
       return {
         active: !!(d && d.live), attract: !!(d && d.attract), ended: d ? d.ended : null,
-        routeD: player ? Math.round(player.routeD) : 0, chain: RR.Salute ? RR.Salute.chain : 0,
+        routeD: player ? Math.round(player.routeD) : 0, item: d ? d.item : null,
         beat: d ? d.beat : -1, ending: d ? d.ending : 0, age: d ? d.age : 0,
       };
     },

@@ -470,6 +470,10 @@
       buildGates(S);
     }
     buildCamPoints(S);
+    // The crates go in before the grid is set, so a boat placed on the line already knows where
+    // the first row is. powerups.js decides for itself whether this race gets them at all — a
+    // tour, a time trial, the cold open and multiplayer all run clean.
+    if (RR.Powerups && RR.Powerups.buildForRace) RR.Powerups.buildForRace(S);
     if (timeTrial) startGhost(playerBoat);
 
     // grid placement: staggered rows just past the line (loop seams stay behind everyone)
@@ -497,6 +501,7 @@
   RACE.end = function () {
     if (gateGroup) { RR.Engine.scene.remove(gateGroup); gateGroup = null; }
     clearGhost();
+    if (RR.Powerups && RR.Powerups.clear) RR.Powerups.clear();
     // quit-to-title mid-finale: the screen the beat would open no longer exists, and a stuck
     // 0.6x clock would follow the player back onto the menu flythrough.
     if (S && S.finaleRunning && RR.Feel && RR.Feel.cancelFinale) RR.Feel.cancelFinale();
@@ -546,12 +551,17 @@
   // A 130 m radius on a sixty-metre river is not a gate, it is a formality: the pair of buoys has
   // been standing there since launch and nothing ever asked you to drive between them. Now it does.
   //
-  // Passing INSIDE the pair pays 0.10-0.26, graded on how central the line was and on how many
-  // gates in a row you have taken cleanly. Passing outside still counts you through — a chain
-  // broken by something you did not choose to attempt would feel like theft, and by decree there
-  // is exactly one chain in this game and bridges own it (VISION R2) — but it pays 0.06. Sloppy
+  // Passing INSIDE the pair pays 0.12-0.30, graded on how central the line was and on how many
+  // gates in a row you have taken cleanly. Passing outside still counts you through — a run broken
+  // by something you did not choose to attempt would feel like theft — but it pays 0.07. Sloppy
   // players feel the boat get heavy; nobody gets stopped.
-  const CP_FLOOR = 0.10, CP_SPAN = 0.16, CP_SLOPPY = 0.06;
+  //
+  // These numbers came UP this round. The salute was retired, and with it a payout worth 0.25-0.46
+  // per bascule, chainable, on a river with ten of them: that was the largest single supply in the
+  // boost economy and it is now zero. Rather than hand it back on a timer — passive refill stays a
+  // 33 s trickle, because boost you did not earn is a cooldown, not a resource — the two things you
+  // steer for pay more, and POWER-UPS become the new lump sum (a TURBO fills the tank outright).
+  const CP_FLOOR = 0.12, CP_SPAN = 0.18, CP_SLOPPY = 0.07;
   const CP_STREAK_FULL = 6;          // gates in a row to saturate the consistency half of the pay
   const CP_QUALITY_M = 18;           // metres off the centreline at which the line-quality half is spent
 
@@ -614,17 +624,16 @@
     const id = S.course.id;
     const route = S.route;
     const len = route.len * (route.loop ? (S.course.laps || 1) : 1);
-    const chain = RR.Salute ? Math.max(RR.Salute.best || 0, RR.Salute.chain || 0) : 0;
-    // `best` is the alias the results strip reads; bestChain is the same number under its own name
-    const out = { course: id, time: S.time, chain, best: chain, tour: !!S.tour };
+    // The chain was the salute's, and the salute is retired. The two fields survive, permanently
+    // zero, so the results strip and everything else that reads them still reads cleanly — but no
+    // stored chain is resurrected and no new one is banked. (menus.js still prints a SALUTE row off
+    // these; deleting that row belongs to whoever owns the strip.)
+    const out = { course: id, time: S.time, chain: 0, best: 0, chainImproved: false, tour: !!S.tour };
     if (S.tour || !P) return out;
     try {
       out.prevTime = P.bestTime(id);
       out.timeImproved = P.recordTime(id, S.time, len);
       out.bestTime = P.bestTime(id);
-      out.prevChain = P.bestChain(id);
-      out.chainImproved = P.recordChain(id, chain);
-      out.bestChain = out.best = P.bestChain(id);
       const top = S.player && S.player.spec ? S.player.spec.top : null;
       const m = P.awardMedal(id, S.time, len, top);
       out.medal = m.medal; out.prevMedal = m.prev; out.medalUp = m.improved;
@@ -649,8 +658,9 @@
   };
 
   // circle test against the boost gates, once per lap. The risky thing must pay best: an off-line
-  // gate costs you a metre and pays 0.35, more than any single gate on the racing line.
-  const GATE_PAY = 0.35;
+  // gate costs you a metre and pays 0.42 — more than any single buoy gate on the racing line, and
+  // now the biggest single deliberate payout left in the game (see THE BUOY RULE above).
+  const GATE_PAY = 0.42;
   function checkBoostGates(b) {
     const gates = S.boostGates;
     if (!gates || !gates.length || b !== S.player || b.finished) return;
@@ -671,23 +681,13 @@
     }
   }
 
-  // ---------- item 14: the podracer goes back in the box ----------
-  // The fastest hull in the game — 61 m/s against a next-best 46 — and its funniest secret were a
-  // menu entry on run one. Ten bridges in a row is what buys it, and it is announced the instant
-  // the tenth lands rather than on a results screen, because that is when you earned it.
-  function checkPodracer() {
-    if (S._pod || !RR.Salute || !RR.Boats || !RR.Boats.unlock) return;
-    if ((RR.Salute.chain || 0) < 10) return;
-    S._pod = 1;
-    const isNew = RR.Boats.unlock('podracer');            // true only on the transition
-    if (RR.Progress && RR.Progress.unlock) RR.Progress.unlock('podracer');
-    if (!isNew) return;
-    if (RR.HUD && RR.HUD.chip) RR.HUD.chip('gold', 'CHAIN ×10 · ANAKIN’S PODRACER UNLOCKED', 8000);
-    if (RACE.onUnlock) RACE.onUnlock('podracer');
-  }
+  // The podracer used to be locked behind a chain of ten salutes, and the salute is retired: that
+  // gate could never be met again, which is why the owner could no longer find her. Nothing in
+  // this file gates her now — boats.js owns whether she is pickable.
 
   RACE.update = function (dt) {
     if (!S) return;
+    if (RR.Powerups && RR.Powerups.update) RR.Powerups.update(dt, S);
     if (S.tour) {
       // free-roam: keep progress tracking alive for the camera look-ahead, nothing else
       S.time += dt;
@@ -731,8 +731,6 @@
 
     // player wrong-way indicator
     S.wrongWay = (S.player._backT || 0) > 1.2;
-
-    checkPodracer();
 
     if (S.phase === 'finished') {
       S.finishTimeout -= dt;

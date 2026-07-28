@@ -104,12 +104,13 @@
       <div class="menu-list">
         ${rows.map((r, i) => `<div class="menu-item" data-i="${i}">${r}</div>`).join('')}
       </div>
-      <div id="snd-row" class="sound-row"></div>
+      <div id="switches"><div id="snd-row" class="sound-row"></div>${puRowHTML()}</div>
       <div class="menu-note">↑↓ SELECT · ENTER CONFIRM · <b>M</b> SOUND<br>BUILT ON THE REAL CHICAGO RIVER</div>
     `);
     bindClicks(acts);
     const row = $('snd-row');
     if (row) row.addEventListener('click', () => MENU.toggleSound());
+    bindPowerupRow();
     buildSoundChip();
     paintSound();
     paintSel();
@@ -127,18 +128,18 @@
         <b>SHIFT</b> — boost. The meter is the outer ring of the dial; the two
         <span style="color:#EF3340">red</span> segments at the bottom are the reserve, and the engine
         will not light below them. Above <span style="color:#FFC857">PRIME</span> it pays 15% more.<br>
-        <b>SPACE</b> — <span style="color:#FFC857">ASK FOR THE BRIDGE</span>. One prolonged blast and
-        one short is how a vessel asks a Chicago bascule for passage, and the tender answers. Press it
-        while the amber arc is closing and the leaves lift: cross under them open and that is a
-        <b>CLEAN SALUTE</b> — the chain climbs and pays boost. Miss the window and nothing hits you,
-        but the chain goes back to zero.<br>
-        With no bridge in range and a chain of three or more, <b>SPACE</b> banks it for boost instead.<br>
-        <b>C</b> camera &nbsp; <b>[ ]</b> cinematic shot &nbsp; <b>P</b> photo &nbsp; <b>N</b> time of day &nbsp;
-        <b>G</b> green river &nbsp; <b>R</b> reset &nbsp; <b>ESC</b> pause<br>
+        <b>E</b> or <b>SPACE</b> — fire what you are holding. Run through one of the gold
+        <span style="color:#FFC857">CRATES</span> in the channel and the slot at the bottom of the
+        screen spins you an item. What you can draw depends on where you are running: the leader
+        gets a <b>FENDER</b> and something to hide behind, the tail of the field gets the
+        <b>GALE</b> and the <b>GULL SWARM</b>. Turn the whole thing off with
+        <b>POWER-UPS</b> on the title screen.<br>
+        <b>B</b> look astern &nbsp; <b>C</b> camera &nbsp; <b>[ ]</b> cinematic shot &nbsp; <b>P</b> photo &nbsp;
+        <b>N</b> time of day &nbsp; <b>G</b> green river &nbsp; <b>R</b> reset &nbsp; <b>ESC</b> pause<br>
         Thread the checkpoint buoys — <span style="color:#EF3340">red LEFT</span>,
         <span style="color:#3ED17E">green RIGHT</span>. Gold gates off the racing line pay boost.
-        The jump ramps are moored on the bridge approaches: take one with the span still shut and
-        you will meet the underside of it.
+        The bascule bridges lift and fall on the tender's own cycle all day, the way the real ones
+        do: if a span is coming down as you reach it, that is the river's business, not yours.
       </div>
       <div class="menu-list"><div class="menu-item sel" data-i="0">BACK</div></div>
     `);
@@ -462,37 +463,26 @@
     }).join('');
   }
 
-  // ---------- the banked strip ----------
-  // A results screen that cannot say what changed means the run changed nothing. Three facts:
-  // what you chained, the mark it is measured against, and the medal it moved.
-  // RR.Progress is W3's; every shape below is optional and the strip degrades to the chain alone.
+  // ---------- the medal strip ----------
+  // A results screen that cannot say what changed means the run changed nothing. The salute is
+  // retired, so what a run moves now is the medal — and only that, and only when it exists.
+  // RR.Progress is W3's; every shape below is optional and a missing one draws no strip at all.
   const MEDALS = ['BRONZE', 'SILVER', 'GOLD', 'AUTHOR'];
   function medalName(m) {
     if (m == null || m === '') return null;
     if (typeof m === 'number') return MEDALS[Math.max(0, Math.min(3, m))] || null;
     return String(m).toUpperCase();
   }
-  function bankStrip(courseId) {
-    let run = 0, best = 0, medal = null, prev = null;
-    if (RR.HUD && RR.HUD.runChain) run = RR.HUD.runChain() | 0;
-    if (RR.Salute) best = RR.Salute.best | 0;
+  function medalStrip(courseId) {
+    let medal = null, prev = null;
     try {
       const P = RR.Progress;
       const s = P && P.summary ? P.summary(courseId) : null;
-      if (s) {
-        if (s.chain != null) run = s.chain | 0;
-        if (s.best != null) best = s.best | 0;
-        medal = medalName(s.medal);
-        prev = medalName(s.prevMedal);
-      }
+      if (s) { medal = medalName(s.medal); prev = medalName(s.prevMedal); }
     } catch (e) { /* the strip is never worth an exception */ }
-    if (best < run) best = run;
-    let med = '';
-    if (medal && prev && medal !== prev) med = `<span class="med"><s>${prev}</s> → <u>${medal}</u></span>`;
-    else if (medal) med = `<span class="med"><u>${medal}</u></span>`;
-    const sep = med ? '<span class="sep">·</span>' : '';
-    return `<div id="bank-strip"><span class="${run && run >= best ? 'hi' : ''}">SALUTE<b>×${run}</b></span>
-      <span class="sep">·</span><span>BEST<b>×${best}</b></span>${sep}${med}</div>`;
+    if (!medal) return '';
+    const body = (prev && prev !== medal) ? `<s>${prev}</s> → <u>${medal}</u>` : `<u>${medal}</u>`;
+    return `<div id="medal-strip"><i class="star6"></i>MEDAL<span>${body}</span></div>`;
   }
 
   MENU.showResults = function (results, courseId) {
@@ -516,7 +506,7 @@
       <div id="select-sub">${sub}</div>
       ${record ? '<div id="record-banner">★ NEW COURSE RECORD ★</div>' : ''}
       <div id="results-list">${head}${resultRows(results, !!cup)}</div>
-      ${bankStrip(courseId)}
+      ${medalStrip(courseId)}
       <div class="menu-list" style="margin-top:1.0em;">
         ${board ? `<div class="menu-item" data-i="0">${board.done ? 'FINAL STANDINGS' : 'CHAMPIONSHIP STANDINGS'} ▸</div>
         <div class="menu-item" data-i="1">TITLE SCREEN</div>`
@@ -720,14 +710,15 @@
       </div>
       <div id="vol-panel">
         <div id="snd-row" class="sound-row"></div>
+        ${puRowHTML()}
         <label>MUSIC<input type="range" id="vol-music" min="0" max="100" value="${Math.round(volMusic * 100)}"></label>
         <label>SFX&nbsp;&nbsp;&nbsp;<input type="range" id="vol-sfx" min="0" max="100" value="${Math.round(volSfx * 100)}"></label>
       </div>
       <div class="menu-note" style="margin-top:1.4em;max-width:640px">
-        <b>W/↑</b> throttle · <b>A·D/←·→</b> steer · <b>S/↓</b> brake · <b>SHIFT</b> boost<br>
-        <b style="color:#FFC857">SPACE</b> ask for the bridge — or bank the chain<br>
-        <b>C</b> camera · <b>[ ]</b> shot · <b>P</b> photo · <b>N</b> time of day · <b>G</b> green river ·
-        <b>M</b> sound · <b>R</b> reset
+        <b>W/↑</b> throttle · <b>A·D/←·→</b> steer · <b>S/↓</b> brake &amp; reverse · <b>SHIFT</b> boost<br>
+        <b style="color:#FFC857">E</b> or <b style="color:#FFC857">SPACE</b> fire the item you are holding<br>
+        <b>B</b> look astern · <b>C</b> camera · <b>[ ]</b> shot · <b>P</b> photo · <b>N</b> time of day ·
+        <b>G</b> green river · <b>M</b> sound · <b>R</b> reset
       </div>
     `);
     bindClicks([() => { MENU.hide(); if (MENU.onResume) MENU.onResume(); },
@@ -738,6 +729,7 @@
     if (s) s.oninput = () => { volSfx = s.value / 100; if (RR.Audio.setSfxLevel) RR.Audio.setSfxLevel(volSfx); store(); };
     const row = $('snd-row');
     if (row) row.addEventListener('click', () => MENU.toggleSound());
+    bindPowerupRow();
     buildSoundChip();
     paintSound();
     paintSel();
@@ -805,6 +797,40 @@
     paintSound();
   };
   MENU.paintSound = paintSound;
+
+  // ---------- power-ups: on unless you say otherwise ----------
+  // Items ship ON — they are the answer to "it's not just whoever gets out first" — but a player
+  // who wants a clean race has to be able to find the switch without leaving the title screen, so
+  // it stands beside the sound plate in the same municipal metal. The module persists the value;
+  // this only paints it. No module, no row: a switch that does nothing is worse than no switch.
+  const CRATE = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+    '<path class="w" d="M4.5 6.5h15v11h-15z"/><path class="w" d="M4.5 10h15M4.5 14h15"/>' +
+    '<path class="x" d="M5.5 5.5l13 13M18.5 5.5l-13 13"/></svg>';
+  const puOn = () => !!(RR.Powerups && RR.Powerups.enabled && RR.Powerups.enabled());
+  function puRowHTML() {
+    if (!RR.Powerups || !RR.Powerups.setEnabled) return '';
+    return '<div id="pu-row" class="opt-row"></div>';
+  }
+  function paintPowerups() {
+    const row = $('pu-row');
+    if (!row) return;
+    const on = puOn();
+    row.classList.toggle('off', !on);
+    row.innerHTML = `${CRATE}<b>POWER-UPS ${on ? 'ON' : 'OFF'}</b><i>${on ? 'ITEMS' : 'CLEAN RACE'}</i>`;
+    row.title = on ? 'Race without items' : 'Put the crates back in the channel';
+  }
+  function bindPowerupRow() {
+    const row = $('pu-row');
+    if (!row) return;
+    row.addEventListener('click', () => MENU.togglePowerups());
+    paintPowerups();
+  }
+  MENU.togglePowerups = function () {
+    if (!RR.Powerups || !RR.Powerups.toggle) return;
+    RR.Powerups.toggle();
+    paintPowerups();
+    if (RR.Audio && RR.Audio.uiSelect) RR.Audio.uiSelect();
+  };
 
   let bestAtStart = null;
   function launch() {

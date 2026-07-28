@@ -1,6 +1,7 @@
 /* River Racer — RECORDS. The smallest honest progression: one versioned localStorage key,
-   `rr_save`, holding medals and best time per course, best CHAIN per course, unlocks, and
-   whether the opening has been seen.
+   `rr_save`, holding medals and best time per course, unlocks, whether the opening has been
+   seen, and whether power-ups are switched on. (It also still holds the retired salute chain,
+   read-only now — see below.)
 
    One key, because four scattered keys is how a save file rots: `rr_best_<course>` and
    `rr_unlocked` are absorbed on first load and then left alone, so a build from before this
@@ -36,8 +37,11 @@
     return f < P.PAR_HULL_MIN ? P.PAR_HULL_MIN : f > P.PAR_HULL_MAX ? P.PAR_HULL_MAX : f;
   }
 
+  // `powerups` is a PREFERENCE rather than a record, but it belongs in the same file: it is the one
+  // switch that changes what a race is, and a save carried to another machine should carry it too.
+  // ON is the default, so an old save without the field reads as ON through the migrate below.
   function blank() {
-    return { v: P.VERSION, times: {}, medals: {}, chains: {}, lens: {}, unlocks: {}, seenOpening: false, runs: 0 };
+    return { v: P.VERSION, times: {}, medals: {}, chains: {}, lens: {}, unlocks: {}, seenOpening: false, runs: 0, powerups: true };
   }
 
   function readRaw(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -108,8 +112,10 @@
     return true;
   };
 
-  // ---------- the chain ----------
-  // The one number the game keeps. Bridges own it (VISION R2); this module only remembers it.
+  // ---------- the chain (retired) ----------
+  // The salute is gone, so nothing banks a chain any more. The field and both accessors stay:
+  // race.js still asks (`RACE.bestChain`), and a save file written by an older build should keep
+  // whatever it recorded rather than have the number silently deleted out from under it.
   P.bestChain = function (course) {
     const v = load().chains[course];
     return typeof v === 'number' && isFinite(v) ? v : 0;

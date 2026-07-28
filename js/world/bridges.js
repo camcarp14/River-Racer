@@ -4,15 +4,17 @@
    counterweight housings, cream tender houses with verdigris copper roofs, balustrades carrying
    the municipal Y, and a street-name blade on every span.
    CDOT really does raise the whole Loop sequence in a west→east wave twice a year for the
-   sailboat runs; the animated leaves reproduce that wave rather than opening at random. */
+   sailboat runs; the animated leaves reproduce that wave rather than opening at random. The lift
+   is the tender's own business and always was — a boat has no say in it, and since the salute was
+   retired there is nothing left that can ask for one. */
 (function () {
   const B = { openings: [], tags: [] };
   const U = () => RR.U;
   let rng;
-  // The bascules a boat may ask to have raised. The six Loop leaves CDOT lifts in a wave are the
-  // core of it; Adams, Randolph and Grand are the three that carry a jump ramp on their approach,
-  // and a ramp aimed at a bridge that can never open is a trap, not a choice (VISION R6). All nine
-  // are real operating double-leaf bascules.
+  // The bascules whose leaves actually move. The six Loop bridges CDOT lifts in a wave are the
+  // core of it, plus Adams, Randolph and Grand — the three that carry a jump ramp on their
+  // approach, where a leaf standing open is the best thing in the game to fly at. All nine are
+  // real operating double-leaf bascules.
   const ANIMATED = {
     'LaSalle St': 1, 'Clark St': 1, 'Dearborn St': 1, 'State St': 1, 'Wabash Ave': 1, 'Columbus Dr': 1,
     'Adams St': 1, 'Randolph St': 1, 'Grand Ave': 1,
@@ -31,27 +33,21 @@
     return best;
   };
 
-  // ---- THE SALUTE: the lift machine, published as tunables ------------------------------------
-  // Every number here was tuned against measured approach speeds, not against prose: a Main Stem
-  // bascule is taken at 34-44 m/s, so the window is 2.6-3.4 s wide and the leaves have to clear
-  // in about a second or the near edge is a lie. See the report for the measured margins.
-  B.LIFT_S = 1.50;            // closed → fully open
-  B.HOLD_S = 2.80;            // held clear
-  B.FALL_S = 2.00;            // and back down
-  B.CLEAN_OPEN = 0.62;        // clean needs six more metres of air, not a right angle
-  B.WINDOW_M = 170;           // the ask window opens here
-  B.WINDOW_NEAR_M = 55;       // and shuts here
-  B.WAVE_SPEED = 28;          // m/s — CDOT's west→east wave retimed from 95 m/s to a boat's speed
-  B.AMBIENT_PHASE = 0.17;     // per-bridge phase step of the ambient wave (was 0.055 = 95 m/s)
-  // 'ambient' is the wall clock the menu flythrough, the Architecture Tour and every replay see,
-  // and it is the default: nothing player-driven may fire under the title music (VISION R4).
+  // ---- the lift cycle, published as tunables ---------------------------------------------------
+  // A real bridge lift is scheduled, not requested: the tender works down the sequence on his own
+  // clock and everything on the water waits its turn. That is now the only clock there is.
+  B.CYCLE_S = 31.25;          // one raise-hold-lower per bridge — slow, because a real leaf is slow
+  B.CLEAN_OPEN = 0.62;        // leaves this far up are clear of a hull, not merely ajar
+  B.AMBIENT_PHASE = 0.17;     // per-bridge phase step down the channel (was 0.055 = a 95 m/s wave)
+  // The wall clock the race, the menu flythrough, the Architecture Tour and every replay all see.
+  // Kept as a published field because other modules still ask whether anything can drive a leaf,
+  // and the answer is now permanently no.
   B.mode = 'ambient';
 
   const MAX_LIFT = 1.12;      // a Chicago leaf stops a little short of vertical
   // The tip gap between two rising leaves is geometrically open long before a hull fits through it,
   // so the slot is treated as this much narrower than the steel. Roughly one hull half-beam.
   const LEAF_MARGIN = 2.2;
-  let clock = 0;              // the scaled engine clock, cached for arm() calls between frames
 
   // Live soffit height over a point: how high a hull may go here before it meets steel, or
   // Infinity where nothing is overhead. This is NOT duckY — duckY is a 57 m radius blob that
@@ -91,7 +87,8 @@
   // every deck footprint, in build order. Read-only to everyone else.
   B.list = function () { return spans; };
 
-  // the deck record covering (x,z), or null — the salute needs the span line, not just a height
+  // the deck record covering (x,z), or null — for anything that needs the span line and its
+  // orientation rather than just a height
   B.spanAt = function (x, z) {
     for (let i = 0; i < spans.length; i++) {
       const s = spans[i];
@@ -124,54 +121,9 @@
     return best;
   };
 
-  // The tender answers. Accepts a span record or a raw opening; `delay` staggers the lift wave.
-  // Refuses in ambient mode — the menu flythrough must never be able to raise a bridge.
-  B.arm = function (target, delay, why) {
-    if (B.mode !== 'race' || !target) return false;
-    const o = target.opening || target;
-    if (!o || o.open == null) return false;
-    if (o.cmd != null && clock - o.cmd < B.LIFT_S + B.HOLD_S) return false;   // already up or on its way
-    o.cmd = clock + (delay > 0 ? delay : 0);
-    o.why = why || 'ask';
-    return true;
-  };
-
-  B.armed = function (target) {
-    const o = target && (target.opening || target);
-    return !!(o && o.cmd != null);
-  };
-
-  // THE WAVE (chain x5). CDOT really does lift the Loop west→east; the ambient clock implies a
-  // wave travelling at 95 m/s down a river where a boat does 30, so it has never once been aimed
-  // at the player. Armed off the chain instead, each leaf is timed to be clear a beat before this
-  // boat reaches it — which makes the wave travel at the boat's speed, and turns fifteen separate
-  // gates into one moving corridor.
-  B.armWave = function (x, z, hx, hz, speed, range, lead) {
-    if (B.mode !== 'race') return 0;
-    const spd = Math.max(12, speed || B.WAVE_SPEED);
-    const lim = range || 620, ld = lead == null ? 0.9 : lead;
-    let n = 0;
-    for (let i = 0; i < spans.length; i++) {
-      const s = spans[i];
-      if (!s.opening || s.opening.cmd != null) continue;
-      const dx = s.x - x, dz = s.z - z;
-      const d2 = dx * dx + dz * dz;
-      if (d2 > lim * lim) continue;
-      const d = Math.sqrt(d2);
-      if (d < 1e-3 || (dx * hx + dz * hz) / d < 0.55) continue;
-      const eta = d / spd;
-      const delay = eta - ld - B.LIFT_S * B.CLEAN_OPEN;
-      if (delay > B.HOLD_S * 1.6) continue;                    // too far out: it would shut again
-      B.arm(s, Math.max(0, delay), 'wave');
-      n++;
-    }
-    return n;
-  };
-
-  // every leaf back on the road, now — race teardown, restart, quit to title
-  B.allDown = function () {
-    for (const o of B.openings) { o.cmd = null; o.open = 0; o.rising = false; o.warn = false; }
-  };
+  // Retired with the salute: nothing on the water can ask for a bridge any more, so this raises
+  // nothing and says so. Kept only so a guarded caller still resolves.
+  B.arm = function () { return false; };
 
   const RED = 0x7a3428;          // Chicago bascule oxide — already correct, leave it
   const RED_DK = 0x5e2820;
@@ -525,9 +477,8 @@
     }
 
     if (anim) {
-      // polled by main.js for the drawbridge horn and by life.js for the gulls; `cmd` is the
-      // scaled-clock time the tender was asked, or -1 for a leaf that is down and idle
-      const opening = { x: cx, z: cz, open: 0, rising: false, phase: S.phase, cmd: null, why: null, name: span2.name };
+      // polled by main.js for the drawbridge horn and by life.js for the gulls
+      const opening = { x: cx, z: cz, open: 0, rising: false, warn: false, phase: S.phase, name: span2.name };
       B.openings.push(opening);
       span2.opening = opening;
       buildLeaf(1, opening); buildLeaf(-1, opening);
@@ -674,41 +625,23 @@
       RR.Engine.scene.add(m);
     }
 
-    // raise & lower the bascule leaves. Two clocks: 'ambient' is the wall clock the menu, the
-    // Architecture Tour and the replay have always seen, phase-stepped into a travelling wave
-    // down the channel; 'race' is idle steel that only moves when a boat asks for it.
+    // Raise & lower the bascule leaves, on one clock for everybody: the race, the menu flythrough,
+    // the Architecture Tour and the replay all watch the same tender work down the same sequence,
+    // phase-stepped into a wave travelling west→east down the channel.
     const _cam = new THREE.Vector3();
     RR.Engine.onUpdate((dt, t) => {
-      clock = t;
-      const race = B.mode === 'race';
-      const CYC = B.LIFT_S + B.HOLD_S + B.FALL_S;
       for (const o of B.openings) {
         const prev = o.open;
-        let warn;
-        if (race) {
-          if (o.cmd == null) { o.open = 0; warn = false; } else {
-            const el = t - o.cmd;
-            if (el < 0) o.open = 0;
-            else if (el < B.LIFT_S) o.open = el / B.LIFT_S;
-            else if (el < B.LIFT_S + B.HOLD_S) o.open = 1;
-            else if (el < CYC) o.open = 1 - (el - B.LIFT_S - B.HOLD_S) / B.FALL_S;
-            else { o.open = 0; o.cmd = null; }
-            warn = o.cmd != null && el > -1.2;   // bell, gates, amber: the answer precedes the steel
-          }
-        } else {
-          const cyc = ((t * 0.032 + o.phase) % 1 + 1) % 1;
-          o.open = (cyc > 0.35 && cyc < 0.65) ? Math.sin(((cyc - 0.35) / 0.30) * Math.PI) : 0;
-          warn = cyc > 0.26 && cyc < 0.65;        // gates drop ~3s before the leaves move
-        }
+        const cyc = ((t / B.CYCLE_S + o.phase) % 1 + 1) % 1;
+        o.open = (cyc > 0.35 && cyc < 0.65) ? Math.sin(((cyc - 0.35) / 0.30) * Math.PI) : 0;
+        const warn = cyc > 0.26 && cyc < 0.65;    // gates drop ~3s before the leaves move
         o.rising = o.open > prev + 1e-4;
-        // Inland Rules: one prolonged blast plus one short asks for the bridge, and the bridge
-        // answers with the same. In race mode salute.js owns that exchange and sounds it on the
-        // ask; here it is only the ambient tender going about its day. audio.js is frozen — every
-        // call is optional and silence is a shipping state.
+        // Inland Rules: the bridge sounds one prolonged blast and one short before the leaves
+        // move. audio.js is frozen — every call is optional and silence is a shipping state.
         // Only while a race or the tour is actually running: the menu's attract flythrough sails
         // the whole river past every bridge, so this once fired horn after horn underneath the
         // title music — which is exactly what it sounded like.
-        const live = !race && RR.Race && RR.Race.state && RR.Race.state();
+        const live = RR.Race && RR.Race.state && RR.Race.state();
         if (live && warn && !o.warn && RR.Audio && RR.Audio.bridgeHorn && RR.Engine.camera) {
           _cam.copy(RR.Engine.camera.position);
           if (U().dist2(_cam.x, _cam.z, o.x, o.z) < 330 * 330) RR.Audio.bridgeHorn(o.x, o.z);

@@ -63,10 +63,11 @@
       hull: 0xeef1f4, deck: 0x8a6a44, accent: 0xc0392b, seat: 0x1f5f8b,
     },
     {
-      // The fastest hull in the game — 61 m/s against a next-best 46 — and the biggest joke in it,
-      // and until now it was a plain menu entry on run one. hidden: you buy it with a chain of ten
-      // clean salutes, which is the only run in the game that deserves an engine this silly.
-      id: 'podracer', name: 'ANAKIN’S PODRACER', kind: 'podracer', hidden: true,
+      // The fastest hull in the game — 61 m/s against a next-best 46 — and the biggest joke in it.
+      // She was briefly locked behind a chain of ten clean salutes; that mechanic is retired, and a
+      // gate that can never be met again is just a boat nobody can find. She is in the picker from
+      // run one, where she was to begin with.
+      id: 'podracer', name: 'ANAKIN’S PODRACER', kind: 'podracer',
       desc: 'Twin radial turbines on a plasma tether, skimming the river on a cushion of thrust. Untouchable top end — if you can steer the thing.',
       top: 61, accel: 21.0, turn: 1.55, grip: 1.7, lean: 0.42, boost: 1.18, mass: 0.85,
       hover: 1.15,                                    // rides ~1.15m above the wave crests

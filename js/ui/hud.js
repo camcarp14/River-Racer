@@ -24,11 +24,12 @@
     <div id="speed-unit">MPH</div>
     <div id="boost-legend"><div id="prime">PRIME</div><div id="boost-label">BOOST</div></div>
   </div>
-  <div id="chain"><div id="chain-lab">SALUTE</div><div id="chain-num">&times;0</div><div id="chain-sub"></div></div>
-  <div id="salute">
-    <canvas id="sal-ring" width="420" height="224"></canvas>
-    <div id="sal-cue"></div>
-    <div id="sal-name"></div>
+  <div id="item-call"></div>
+  <div id="item-slot">
+    <div id="item-lab">ITEM</div>
+    <div id="item-box"><canvas id="item-icon" width="192" height="192"></canvas><b id="item-key">E</b></div>
+    <div id="item-name">RUN A CRATE</div>
+    <div id="item-pips"></div>
   </div>
   <div id="chips"></div>
   <div id="ticker"></div>
@@ -40,7 +41,7 @@
   <div id="cd-scatter"></div>
   <div id="landmark-tag"><div id="lt-blade"><i class="star6"></i><span id="lt-name"></span></div><div id="lt-sub"></div></div>
   <div id="docent"></div>
-  <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake &nbsp;<b>SHIFT</b> boost &nbsp;<b class="key">SPACE</b> ask for the bridge<br><b>C</b> camera &nbsp;<b>[ ]</b> shot &nbsp;<b>N</b> time of day &nbsp;<b>G</b> green river &nbsp;<b>P</b> photo &nbsp;<b>R</b> reset &nbsp;<b>ESC</b> pause</div>`;
+  <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake &amp; reverse &nbsp;<b>SHIFT</b> boost &nbsp;<b class="key">E</b> fire your item<br><b>B</b> look astern &nbsp;<b>C</b> camera &nbsp;<b>[ ]</b> shot &nbsp;<b>N</b> time of day &nbsp;<b>G</b> green river &nbsp;<b>P</b> photo &nbsp;<b>R</b> reset &nbsp;<b>ESC</b> pause</div>`;
 
   const CINE = `<div class="bar t"></div><div class="bar b"></div><div class="meta"></div><div class="rec">REC</div>`;
 
@@ -72,13 +73,15 @@
       count: $('countdown'), cdNum: $('cd-num'), cdStar: $('cd-star'), scatter: $('cd-scatter'),
       tag: $('landmark-tag'), ltName: $('lt-name'), ltSub: $('lt-sub'), docent: $('docent'),
       vig: $('vignette'), chips: $('chips'), ticker: $('ticker'), hint: $('boost-hint'),
-      chain: $('chain'), chainNum: $('chain-num'), chainSub: $('chain-sub'),
-      salute: $('salute'), salRing: $('sal-ring'), salCue: $('sal-cue'), salName: $('sal-name'),
+      slot: $('item-slot'), icon: $('item-icon'), itemName: $('item-name'), pips: $('item-pips'),
+      call: $('item-call'),
       cine, cineMeta: cine.querySelector('.meta'),
     };
     els.boostCtx = els.boost ? els.boost.getContext('2d') : null;
-    els.salCtx = els.salRing ? els.salRing.getContext('2d') : null;
+    els.iconCtx = els.icon ? els.icon.getContext('2d') : null;
 
+    buildPips();
+    drawIcon(null);
     drawTicks($('spd-ticks'));
     lastBoost = '';
     drawBoost(0, false);
@@ -155,6 +158,7 @@
   H.show = function (on) {
     if (!els) return;
     els.hud.classList.toggle('on', on);
+    if (!on) { clearCall(); els.slot.className = ''; slotCls = ''; }
     if (on && !hintGone) { hintT = 9; els.hint.classList.remove('gone'); }
   };
 
@@ -204,23 +208,27 @@
   };
 
   // ---------- status chips ----------
+  // 'item' is the power-up module's own kind and never a chip: what you just fired is the loudest
+  // thing that has happened in the last second and it gets the callout plate instead.
   H.chip = function (kind, text, ms) {
     if (!els) return;
+    if (kind === 'item') { itemCall(text, /FENDER TOOK/.test(text) ? 'save' : 'fire'); return; }
     let c = chips.get(kind);
     if (!c) {
       const el = document.createElement('div');
       el.className = 'chip ' + kind;
       els.chips.appendChild(el);
-      c = { el, t: 0 };
+      c = { el, t: 0, age: 0 };
       chips.set(kind, c);
     }
     if (c.el.textContent !== text) c.el.textContent = text;
     c.t = (ms == null ? 900 : ms) / 1000;
+    c.age = 0;
   };
 
   function updateChips(dt) {
     chips.forEach((c, kind) => {
-      c.t -= dt;
+      c.t -= dt; c.age += dt;
       if (c.t <= 0) { c.el.remove(); chips.delete(kind); }
     });
   }
@@ -339,254 +347,239 @@
     return String(b.displayName || b.pilotName || 'RIVAL').toUpperCase();
   }
 
-  // ================================================================= THE SALUTE
-  // RR.Salute is read here and never written: W1 owns the logic and touches no DOM, this file
-  // owns the DOM and touches no logic. Every field below degrades to "widget hidden" if the
-  // module or the bridge tunables are missing.
+  // ================================================================== THE ITEMS
+  // RR.Powerups owns the items and touches no DOM; this file owns the DOM and touches no logic.
+  // Every read below is guarded, so a build without the module simply has no slot.
 
-  // ---------- the chain numeral ----------
-  let lastChainTxt = '', lastTier = -1, lastZero = null;
-  let chainEvent = null, chainEventT = 99, deadHold = false, deadTimer = 0, subT = 0;
-  let lastSub = '', lastSubCls = '';
-  let runRace = null, runBest = 0;
-
-  // best chain of THIS run, for the results strip — RR.Salute.best is the whole session's
-  H.runChain = function () { return runBest; };
-
-  function chainCall(kind, n) {
-    if (kind === 'miss') {
-      // the break: the old number flashes red and dies, and only then does the zero appear
-      els.chainNum.textContent = '×' + n;
-      lastChainTxt = '';
-      els.chainNum.classList.remove('pop', 'dead');
-      void els.chainNum.offsetWidth;
-      els.chainNum.classList.add('dead');
-      // wall clock, not sim clock: the CSS keyframes run on wall time and a stalled frame must
-      // not skip the one animation in the HUD that has to be seen
-      deadHold = true;
-      if (deadTimer) clearTimeout(deadTimer);
-      deadTimer = setTimeout(clearDead, 640);
-      setSub('CHAIN LOST', 'bad', 1.5);
-      return;
+  // ---------- the icons ----------
+  // The eight glyphs in the item table ('»', '◌', '≈') render differently on every OS and vanish
+  // at 90 px. Drawn strokes do not. Same reason the flag star is a clip-path, never a character.
+  function iconInk(hex) {
+    let r = (hex >> 16) & 255, g = (hex >> 8) & 255, b = hex & 255;
+    // the wake slick is nearly black: unlifted it is a hole in the plate, not an icon
+    const lum = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+    if (lum < 0.55) {
+      const k = (0.55 - lum) / 0.55 * 0.82;
+      r += (255 - r) * k; g += (255 - g) * k; b += (255 - b) * k;
     }
-    if (kind === 'clean' || kind === 'threaded') {
-      els.chainNum.classList.remove('pop');
-      void els.chainNum.offsetWidth;
-      els.chainNum.classList.add('pop');
-      setSub(kind === 'threaded' ? 'THREADED ×3' : 'CLEAN SALUTE', '', 1.3);
-    } else if (kind === 'bank') setSub('BANKED ×' + n + ' → BOOST', 'bank', 1.7);
-    else if (kind === 'ask') setSub('THE BRIDGE ANSWERS', 'bank', 1.2);
+    return 'rgb(' + (r | 0) + ',' + (g | 0) + ',' + (b | 0) + ')';
   }
 
-  function clearDead() {
-    deadHold = false; deadTimer = 0; lastChainTxt = '';
-    if (els) els.chainNum.classList.remove('dead');
-  }
-
-  function setSub(text, cls, secs) {
-    subT = secs;
-    if (text !== lastSub) { els.chainSub.textContent = text; lastSub = text; }
-    const c = 'on' + (cls ? ' ' + cls : '');
-    if (c !== lastSubCls) { els.chainSub.className = c; lastSubCls = c; }
-  }
-
-  function updateChain(dt, race) {
-    const S = RR.Salute;
-    const on = !!(S && race && !race.tour);
-    els.chain.classList.toggle('on', on);
-    if (!on) { runRace = race; runBest = 0; return; }
-    if (race !== runRace) { runRace = race; runBest = 0; }
-    if (S.chain > runBest) runBest = S.chain;
-
-    // a callout restarts eventT at zero, so a repeat of the same kind is still a new event
-    if (S.event && (S.event !== chainEvent || S.eventT < chainEventT)) {
-      chainEvent = S.event;
-      chainCall(S.event, S.eventN);
-    }
-    chainEventT = S.eventT;
-
-    if (!deadHold) {
-      const txt = '×' + S.chain;
-      if (txt !== lastChainTxt) { els.chainNum.textContent = txt; lastChainTxt = txt; }
-    }
-
-    const tier = S.tier | 0;
-    const zero = S.chain === 0 && !deadHold;
-    if (tier !== lastTier || zero !== lastZero) {
-      els.chain.className = 'on' + (zero ? ' zero' : '') + (tier ? ' t' + tier : '');
-      lastTier = tier; lastZero = zero;
-    }
-
-    // BANK is offered only when a press could not possibly be meant for a bridge, so the prompt
-    // appears only when the press really would spend the chain
-    if (subT > 0) subT -= dt;
-    if (subT <= 0) {
-      if (S.bankable) setSub('BANK ×' + S.chain + ' →', 'bank', 0.2);
-      else if (lastSubCls !== '') { els.chainSub.className = ''; lastSubCls = ''; }
-    }
-  }
-
-  // ---------- the arc ----------
-  const SAL_CX = 210, SAL_CY = 172, SAL_R = 148, SAL_W = 420, SAL_H = 224;
-  let salRamp = null, salRampFor = null, lastCue = '', lastName = '', lastSalCls = '';
-
-  // the ramp moored on this span's approach, if any — five of the six sit 40-48 m upstream of a
-  // bascule, which is the whole reason the ceiling can wreck you
-  function rampFor(span) {
-    if (span === salRampFor) return salRamp;
-    salRampFor = span; salRamp = null;
-    const L = RR.Ramps && RR.Ramps.list;
-    if (L) {
-      for (let i = 0; i < L.length; i++) {
-        if (RR.U.dist2(L[i].bx, L[i].bz, span.x, span.z) < 900) { salRamp = L[i]; break; }
-      }
-    }
-    return salRamp;
-  }
-
-  function salArc(ctx, u0, u1, w, col, glow) {
-    if (u1 <= u0) return;
-    ctx.lineWidth = w;
-    ctx.strokeStyle = col;
-    ctx.shadowBlur = glow ? 13 : 0;
-    ctx.shadowColor = col;
-    ctx.beginPath();
-    ctx.arc(SAL_CX, SAL_CY, SAL_R, Math.PI * (1 + u0), Math.PI * (1 + u1));
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-  }
-
-  function salPip(ctx, u, col, big) {
-    const a = Math.PI * (1 + RR.U.clamp(u, 0, 1));
-    ctx.save();
-    ctx.translate(SAL_CX + Math.cos(a) * SAL_R, SAL_CY + Math.sin(a) * SAL_R);
-    ctx.rotate(a + Math.PI / 2);
-    ctx.fillStyle = col;
-    const h = big ? 26 : 16, w = big ? 9 : 5;
-    ctx.fillRect(-w / 2, -h / 2, w, h);
-    ctx.restore();
-  }
-
-  // The ring carries two different readouts because the player asks two different questions.
-  // Before the ask it is the WINDOW: a fuse burning from the far edge toward the near one, with a
-  // red tail where a press would no longer clear the leaves in time. After the tender answers it
-  // is the LIFT CYCLE: a green band where the slot is genuinely open and a fat pip showing where
-  // this boat, at this speed, actually arrives.
-  function drawSalute(m) {
-    const ctx = els.salCtx;
-    ctx.clearRect(0, 0, SAL_W, SAL_H);
-    ctx.lineCap = 'butt';
-    // dark casing first: this widget lives over sunlit water, where a translucent ring vanishes
-    salArc(ctx, 0, 1, 23, 'rgba(4,18,27,.55)');
-    salArc(ctx, 0, 1, 17, 'rgba(126,200,227,.22)');
-    if (m.mode === 'armed') {
-      // the band is where the slot is genuinely open; the fat pip is where THIS boat arrives
-      salArc(ctx, m.b0, m.b1, 17, m.ok ? 'rgba(62,209,126,.85)' : 'rgba(62,209,126,.40)', m.ok);
-      salArc(ctx, 0, m.uNow, 5, 'rgba(255,255,255,.45)');
-      salPip(ctx, m.uArr, m.ok ? '#3ED17E' : '#EF3340', true);
-    } else if (m.mode === 'shut') {
-      salArc(ctx, 0, 1, 17, 'rgba(239,51,64,.42)');
-    } else {
-      const wait = m.mode === 'wait';
-      salArc(ctx, m.f, 1, 17, wait ? 'rgba(126,200,227,.42)' : '#FFC857', !wait);
-      if (m.fLate < 1) salArc(ctx, Math.max(m.f, m.fLate), 1, 17, '#EF3340');
-      salPip(ctx, m.f, wait ? '#9FC3D6' : '#FFC857', true);
-    }
-
-    // the leaves themselves, hinged at their banks: the same machine the steel is running
-    const hw = SAL_R * 0.60, L = 84, th = RR.U.clamp(m.open, 0, 1) * 1.12;
-    const tx = Math.cos(th) * L, ty = Math.sin(th) * L;
-    if (m.clean) {
-      ctx.fillStyle = 'rgba(126,200,227,.20)';
-      ctx.fillRect(SAL_CX - (hw - tx), SAL_CY - ty - 3, (hw - tx) * 2, ty + 3);
-    }
-    ctx.lineWidth = 7;
-    ctx.lineCap = 'butt';
-    ctx.strokeStyle = 'rgba(126,200,227,.34)';
-    ctx.beginPath();
-    ctx.moveTo(SAL_CX - hw - 32, SAL_CY); ctx.lineTo(SAL_CX - hw, SAL_CY);
-    ctx.moveTo(SAL_CX + hw, SAL_CY); ctx.lineTo(SAL_CX + hw + 32, SAL_CY);
-    ctx.stroke();
+  function drawIcon(def) {
+    const ctx = els && els.iconCtx;
+    if (!ctx) return;
+    const S = els.icon.width, c = S / 2;
+    ctx.clearRect(0, 0, S, S);
+    ctx.strokeStyle = ctx.fillStyle = def ? iconInk(def.color) : 'rgba(159,195,214,.5)';
+    ctx.lineWidth = S * 0.09;
     ctx.lineCap = 'round';
-    for (let p = 0; p < 2; p++) {
-      ctx.lineWidth = p ? 11 : 16;
-      ctx.strokeStyle = p ? (m.clean ? '#EAF6FF' : '#8F4A3A') : 'rgba(4,18,27,.6)';
+    ctx.lineJoin = 'round';
+    const id = def ? def.id : null;
+
+    const chev = (x, w, h, lw) => {
+      ctx.lineWidth = lw;
       ctx.beginPath();
-      ctx.moveTo(SAL_CX - hw, SAL_CY); ctx.lineTo(SAL_CX - hw + tx, SAL_CY - ty);
-      ctx.moveTo(SAL_CX + hw, SAL_CY); ctx.lineTo(SAL_CX + hw - tx, SAL_CY - ty);
+      ctx.moveTo(x - w, c - h); ctx.lineTo(x, c); ctx.lineTo(x - w, c + h);
+      ctx.stroke();
+    };
+    const arcs = (cx, r0, n, a0, a1) => {
+      for (let i = 0; i < n; i++) {
+        ctx.beginPath();
+        ctx.arc(cx, c, r0 + i * S * 0.11, a0, a1);
+        ctx.stroke();
+      }
+    };
+
+    if (id === 'turbo') {
+      for (let i = 0; i < 3; i++) chev(c * 0.62 + i * S * 0.20, S * 0.14, S * 0.20, S * 0.085);
+    } else if (id === 'fender') {
+      ctx.lineWidth = S * 0.085;
+      ctx.beginPath(); ctx.arc(c, c, S * 0.30, 0.35, Math.PI * 2 - 0.35); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(c, c, S * 0.155, S * 0.31, 0, 0, Math.PI * 2); ctx.stroke();
+    } else if (id === 'slick') {
+      ctx.lineWidth = S * 0.075;
+      for (let r = 0; r < 3; r++) {
+        const y = c + (r - 1) * S * 0.19;
+        ctx.beginPath();
+        for (let i = 0; i <= 24; i++) {
+          const x = S * 0.19 + (S * 0.62) * (i / 24);
+          const yy = y + Math.sin(i / 24 * Math.PI * 2 + r) * S * 0.045;
+          if (i) ctx.lineTo(x, yy); else ctx.moveTo(x, yy);
+        }
+        ctx.stroke();
+      }
+    } else if (id === 'dye') {
+      ctx.beginPath(); ctx.arc(c, c, S * 0.145, 0, Math.PI * 2); ctx.fill();
+      ctx.lineWidth = S * 0.062;
+      arcs(c, S * 0.235, 2, 0, Math.PI * 2);
+    } else if (id === 'deepdish') {
+      ctx.lineWidth = S * 0.12;
+      ctx.beginPath(); ctx.arc(c, c, S * 0.28, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(c, c); ctx.lineTo(c + S * 0.21, c - S * 0.12); ctx.lineTo(c + S * 0.21, c + S * 0.12);
+      ctx.closePath(); ctx.fill();
+    } else if (id === 'bowwave') {
+      ctx.lineWidth = S * 0.075;
+      arcs(c - S * 0.14, S * 0.12, 3, -1.05, 1.05);
+    } else if (id === 'gulls') {
+      ctx.lineWidth = S * 0.075;
+      const g = [[0.50, 0.34, 0.15], [0.31, 0.58, 0.11], [0.70, 0.62, 0.11]];
+      for (const [gx, gy, gr] of g) {
+        const x = S * gx, y = S * gy, w = S * gr;
+        ctx.beginPath();
+        ctx.moveTo(x - w, y + w * 0.42);
+        ctx.quadraticCurveTo(x - w * 0.45, y - w * 0.5, x, y + w * 0.12);
+        ctx.quadraticCurveTo(x + w * 0.45, y - w * 0.5, x + w, y + w * 0.42);
+        ctx.stroke();
+      }
+    } else if (id === 'gale') {
+      ctx.lineWidth = S * 0.075;
+      const rows = [[0.30, 0.62], [0.50, 0.78], [0.70, 0.55]];
+      for (const [fy, fw] of rows) {
+        const y = S * fy, x1 = S * 0.16 + S * fw;
+        ctx.beginPath(); ctx.moveTo(S * 0.16, y); ctx.lineTo(x1, y); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x1 - S * 0.10, y - S * 0.075); ctx.lineTo(x1, y); ctx.lineTo(x1 - S * 0.10, y + S * 0.075);
+        ctx.stroke();
+      }
+    } else {
+      // empty: the crate itself, so the thing to go and hit is the thing in the slot
+      ctx.lineWidth = S * 0.07;
+      ctx.strokeRect(S * 0.24, S * 0.24, S * 0.52, S * 0.52);
+      ctx.beginPath();
+      ctx.moveTo(S * 0.24, S * 0.40); ctx.lineTo(S * 0.76, S * 0.40);
+      ctx.moveTo(S * 0.24, S * 0.60); ctx.lineTo(S * 0.76, S * 0.60);
       ctx.stroke();
     }
   }
 
-  const SM = { mode: 'wait', f: 0, fLate: 1, open: 0, clean: false, ok: false, b0: 0, b1: 1, uNow: 0, uArr: 0 };
+  // ---------- the live-effect pips ----------
+  // status() is seconds remaining; the bar is that over the tunable it started at, so a FENDER
+  // running out looks like a FENDER running out and not like a label.
+  const PIPS = [['shield', 'FENDER', 'SHIELD_T', 12], ['heavy', 'HEAVY', 'HEAVY_T', 7],
+    ['spin', 'SPIN', 'SPIN_T', 1], ['blind', 'BLIND', 'BLIND_T', 1],
+    ['gulls', 'GULLS', 'GULL_T', 3], ['gale', 'GALE', 'GALE_T', 1.2]];
+  const pipEls = [];
+  function buildPips() {
+    pipEls.length = 0;
+    if (!els || !els.pips) return;
+    els.pips.innerHTML = '';
+    for (const p of PIPS) {
+      const el = document.createElement('span');
+      el.className = 'pip';
+      el.dataset.k = p[0];
+      el.innerHTML = p[1] + '<i></i>';
+      els.pips.appendChild(el);
+      pipEls.push({ el, bar: el.querySelector('i'), on: false, w: -1 });
+    }
+  }
+  function updatePips(P, s) {
+    if (!pipEls.length) return;
+    const K = P.K || {};
+    for (let i = 0; i < PIPS.length; i++) {
+      const p = pipEls[i], v = s ? (s[PIPS[i][0]] || 0) : 0;
+      const on = v > 0.05;
+      if (on !== p.on) { p.el.classList.toggle('on', on); p.on = on; }
+      if (!on) continue;
+      const w = Math.round(RR.U.clamp(v / (K[PIPS[i][2]] || PIPS[i][3]), 0, 1) * 20) * 5;
+      if (w !== p.w) { p.bar.style.width = w + '%'; p.w = w; }
+    }
+  }
 
-  function updateSalute(boat, race) {
-    const S = RR.Salute, B = RR.Bridges;
-    const tgt = S && S.target;
-    const on = !!(tgt && tgt.opening && B && race && !race.tour && els.salCtx);
+  // ---------- the callout ----------
+  // fire = you did it, hit = it was done to you, save = the FENDER ate it. One line, one plate,
+  // on the axis the eye is already on — this is read at eighty miles an hour or not at all.
+  // The plate lives and dies on WALL time, on timers, and its VISIBILITY is a plain class — never a
+  // keyframe. A composited animation only advances on frames that actually land, so on a stalled
+  // frame an opacity-animated callout is simply never seen. The keyframe here is the pop and
+  // nothing else; if it is dropped the plate still reads.
+  let callTone = '', callWall = -1e9, callHold = 0, callGone = 0;
+  const nowMs = () => ((window.performance && performance.now) ? performance.now() : Date.now());
+  function clearCall() {
+    if (callHold) clearTimeout(callHold);
+    if (callGone) clearTimeout(callGone);
+    callHold = callGone = 0; callTone = '';
+    if (els && els.call) els.call.className = '';
+  }
+  function itemCall(text, tone) {
+    if (!els || !els.call) return;
+    // a hit landing in the same frame as your own FENDER eating it must not shout over the save
+    if (tone === 'hit' && callTone === 'save' && nowMs() - callWall < 70) return;
+    if (callHold) clearTimeout(callHold);
+    if (callGone) clearTimeout(callGone);
+    els.call.className = '';
+    void els.call.offsetWidth;                       // restart the pop, not just the text
+    els.call.textContent = String(text || '').toUpperCase();
+    els.call.className = 'on ' + tone;
+    callTone = tone; callWall = nowMs();
+    const hold = tone === 'hit' ? 1400 : 1150;
+    callHold = setTimeout(() => { if (els) els.call.className = 'on ' + tone + ' out'; }, hold);
+    callGone = setTimeout(clearCall, hold + 280);
+  }
+  function hitCall(text) {
+    itemCall(text, 'hit');
+    // powerups.js chipped the same event a beat earlier this frame; one voice, not two
+    const c = chips.get('bad');
+    if (c && c.age < 0.3) { c.el.remove(); chips.delete('bad'); }
+  }
+
+  // ---------- rising edges: what just landed on you ----------
+  const HITS = [['spin', 'SPUN OUT'], ['blind', 'BLINDED'], ['gulls', 'GULLS ON YOU'],
+    ['gale', 'GALE OFF THE LAKE']];
+  const wasHit = { spin: 0, blind: 0, gulls: 0, gale: 0 };
+  function watchHits(s) {
+    if (!s) return;
+    for (let i = 0; i < HITS.length; i++) {
+      const k = HITS[i][0], v = s[k] || 0;
+      if (v > wasHit[k] + 0.05) hitCall(HITS[i][1]);
+      wasHit[k] = v;
+    }
+  }
+
+  // The bow wave leaves no timer on you, only a shove, so the only honest signal is the firing
+  // itself. onUse is the module's published hook and the HUD is its natural owner.
+  let puHooked = false;
+  function hookPowerups(P) {
+    if (puHooked || !P.onUse) return;
+    puHooked = true;
+    P.onUse((boat, item) => {
+      if (!boat || boat.isPlayer || !item || item.id !== 'bowwave' || !curBoat) return;
+      const R = (P.K && P.K.WAVE_R) || 26;
+      if (RR.U.dist2(curBoat.pos.x, curBoat.pos.z, boat.pos.x, boat.pos.z) <= R * R) hitCall('BOW WAVE');
+    });
+  }
+
+  let curBoat = null, slotCls = null, lastFace = '', lastItemName = '';
+  function updateItems() {
+    const P = RR.Powerups;
+    const on = !!(P && P.active && P.active());
     if (!on) {
-      if (lastSalCls !== '') { els.salute.className = ''; lastSalCls = ''; }
+      if (slotCls !== '') { els.slot.className = ''; slotCls = ''; }
       return;
     }
-
-    const LIFT = B.LIFT_S, CL = B.CLEAN_OPEN;
-    const CYC = LIFT + B.HOLD_S + B.FALL_S;
-    const t0 = LIFT * CL;                                   // leaves reach clean here
-    const t1 = LIFT + B.HOLD_S + B.FALL_S * (1 - CL);       // and drop back through it here
-    const spd = Math.max(6, Math.hypot(boat.vel.x, boat.vel.z));
-    const eta = S.dist / spd;
-
-    SM.open = S.open;
-    SM.clean = S.open > CL;
-    SM.fLate = 1;
-    let cue, cls;
-    if (S.armed && tgt.opening.cmd != null) {
-      const el = (RR.Engine.time ? RR.Engine.time() : 0) - tgt.opening.cmd;
-      const arrive = el + eta;
-      SM.mode = 'armed';
-      SM.ok = arrive > t0 && arrive < t1;
-      SM.b0 = t0 / CYC; SM.b1 = t1 / CYC;
-      SM.uNow = RR.U.clamp(el / CYC, 0, 1);
-      SM.uArr = RR.U.clamp(arrive / CYC, 0, 1);
-      cue = SM.ok ? 'CLEAR' : arrive <= t0 ? 'EARLY' : 'LATE';
-      cls = SM.ok ? 'ok' : 'bad';
-    } else if (S.dist > B.WINDOW_M) {
-      SM.mode = 'wait'; SM.f = 0; SM.ok = false;
-      cue = ''; cls = 'wait';
-    } else if (S.dist >= B.WINDOW_NEAR_M) {
-      SM.mode = 'ask';
-      SM.f = 1 - S.window;
-      // a press only pays if the leaves can still make it: this is where that stops being true
-      SM.fLate = RR.U.clamp((B.WINDOW_M - spd * t0) / (B.WINDOW_M - B.WINDOW_NEAR_M), 0, 1);
-      SM.ok = eta > t0 && eta < t1;
-      cue = eta <= t0 ? 'TOO LATE' : eta >= t1 ? 'WAIT' : 'SPACE';
-      cls = eta <= t0 ? 'bad' : eta >= t1 ? 'wait' : 'ask';
-    } else {
-      SM.mode = 'shut'; SM.f = 1; SM.ok = false;
-      cue = SM.clean ? 'GO' : 'SHUT';
-      cls = SM.clean ? 'ok' : 'bad';
+    hookPowerups(P);
+    const roll = P.rolling ? P.rolling() : 0;
+    const face = P.rollFace ? P.rollFace() : null;
+    const held = P.held ? P.held() : null;
+    const fid = face ? face.id : '';
+    if (fid !== lastFace) {
+      drawIcon(face);
+      lastFace = fid;
+      if (face) els.slot.style.setProperty('--item', '#' + face.color.toString(16).padStart(6, '0'));
     }
-    drawSalute(SM);
-
-    if (cue !== lastCue) { els.salCue.textContent = cue; lastCue = cue; }
-    const c = 'on ' + cls;
-    if (c !== lastSalCls) { els.salute.className = c; lastSalCls = c; }
-
-    let name = String(tgt.name || 'BASCULE').toUpperCase() + '<b>' + Math.round(S.dist) + ' M</b>';
-    const rp = rampFor(tgt);
-    if (rp) {
-      const dx = rp.x - boat.pos.x, dz = rp.z - boat.pos.z;
-      const d = Math.hypot(dx, dz);
-      if (d < 135 && dx * Math.sin(boat.heading) + dz * Math.cos(boat.heading) > 2) {
-        name += '<i class="' + (SM.ok || SM.clean ? '' : 'no') + '">▲ RAMP ' + Math.round(d) + ' M</i>';
-      }
-    }
-    if (name !== lastName) { els.salName.innerHTML = name; lastName = name; }
+    const cls = 'on ' + (roll > 0 ? 'roll' : held ? 'held' : 'empty');
+    if (cls !== slotCls) { els.slot.className = cls; slotCls = cls; }
+    const nm = held ? held.name : (roll > 0 && face) ? face.name : 'RUN A CRATE';
+    if (nm !== lastItemName) { els.itemName.textContent = nm; lastItemName = nm; }
+    const status = P.status ? P.status() : null;   // one call, two readers: status() allocates
+    updatePips(P, status);
+    watchHits(status);
   }
 
   // ---------- per frame ----------
   H.update = function (dt, boat, race) {
     if (!els) return;
+    curBoat = boat;
     const speed = Math.hypot(boat.vel.x, boat.vel.z);
     const mph = Math.round(speed * 2.237);
     if (mph !== lastSpeed) { els.speed.textContent = mph; lastSpeed = mph; }
@@ -603,8 +596,7 @@
 
     drawBoost(boat.boostEnergy || 0, (boat.boostHeat || 0) > 0.35);
 
-    updateChain(dt, race);
-    updateSalute(boat, race);
+    updateItems();
 
     // chips driven straight off the physics fields
     if ((boat.draft || 0) > 0.25) H.chip('draft', 'DRAFTING', 150);
@@ -674,16 +666,14 @@
 
   H.resetSession = function () {
     tagSeen.clear(); tagName = null; lastPos = 0; hintGone = false; hintT = 0;
-    runRace = null; runBest = 0;
-    chainEvent = null; chainEventT = 99; subT = 0;
-    if (deadTimer) clearTimeout(deadTimer);
-    deadHold = false; deadTimer = 0;
-    lastChainTxt = ''; lastTier = -1; lastZero = null; lastSub = ''; lastSubCls = '';
-    lastCue = ''; lastName = ''; lastSalCls = ''; salRamp = null; salRampFor = null;
+    clearCall(); callWall = -1e9;
+    slotCls = null; lastFace = ''; lastItemName = '';
+    wasHit.spin = wasHit.blind = wasHit.gulls = wasHit.gale = 0;
     if (els) {
       els.hint.classList.remove('gone'); els.docent.classList.remove('on');
-      els.chainNum.classList.remove('pop', 'dead');
-      els.chainSub.className = ''; els.salute.className = '';
+      els.slot.className = '';
+      drawIcon(null);
+      for (const p of pipEls) { p.el.classList.remove('on'); p.on = false; p.w = -1; }
     }
   };
 
