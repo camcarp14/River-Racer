@@ -481,8 +481,42 @@
 #pause-flag .star6{position:absolute;top:50%;width:6em;height:6em;margin-top:-3em;margin-left:-3em;opacity:.05}
 #vol-panel{margin-top:1.6em;display:flex;flex-direction:column;gap:.5em;min-width:20em;
   font:700 .72em/1 var(--f-ui);letter-spacing:.2em;color:var(--text-dim)}
-#vol-panel label{display:flex;align-items:center;gap:.9em}
+#vol-panel label{display:flex;align-items:center;gap:.9em;transition:opacity var(--t-std) var(--e-out)}
 #vol-panel input[type=range]{flex:1;pointer-events:auto;accent-color:var(--chi-blue);height:2px}
+/* the faders mean nothing until sound is on — say so instead of letting them look broken */
+#vol-panel.muted label{opacity:.42}
+
+/* ------------------------------------------------------------- sound control */
+/* The game boots SILENT, so this is the one control a first-time player must not be able to miss:
+   a fixed plate above every screen, flag red and breathing while it is off, quiet once it is on. */
+#sound-chip,.sound-row{display:flex;align-items:center;gap:.7em;cursor:pointer;pointer-events:auto;
+  font:700 .74em/1 var(--f-ui);letter-spacing:.2em;border:0;border-radius:2px;
+  padding:.62em .95em;background:var(--panel-hi);color:var(--text-dim);
+  box-shadow:inset 0 0 0 2px var(--rule-soft);
+  transition:background var(--t-std) var(--e-out),box-shadow var(--t-std) var(--e-out),
+             color var(--t-std) var(--e-out),transform var(--t-micro) var(--e-out)}
+#sound-chip{position:fixed;top:1.15em;right:1.25em;z-index:30;font-size:13px}
+#sound-chip.hidden{display:none}
+.sound-row{margin-top:1.5em;justify-content:center}
+#sound-chip:hover,.sound-row:hover{transform:translateY(-.1em);box-shadow:inset 0 0 0 2px var(--rule)}
+#sound-chip b,.sound-row b{color:var(--text);font-weight:700}
+#sound-chip i,.sound-row i{font-style:normal;font-size:.85em;letter-spacing:.16em;color:var(--text-mute);
+  padding:.32em .5em;border-radius:2px;box-shadow:inset 0 0 0 1px var(--rule-soft)}
+#sound-chip svg,.sound-row svg{width:1.35em;height:1.35em;flex:0 0 auto;fill:currentColor;
+  stroke:currentColor;stroke-width:1.7;stroke-linecap:round;color:var(--chi-blue)}
+#sound-chip svg .w,.sound-row svg .w{fill:none}
+#sound-chip svg .x,.sound-row svg .x{display:none;fill:none}
+/* muted: the whole plate goes flag red, the waves become a cross, and it breathes once a second */
+#sound-chip.off,.sound-row.off{background:var(--chi-red);color:#fff;
+  box-shadow:inset 0 0 0 2px #fff,0 .25em 1.2em rgba(239,51,64,.45);animation:sndbeat 1.9s ease-in-out infinite}
+#sound-chip.off b,.sound-row.off b{color:#fff}
+#sound-chip.off i,.sound-row.off i{color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.65)}
+#sound-chip.off svg,.sound-row.off svg{color:#fff}
+#sound-chip.off svg .w,.sound-row.off svg .w{display:none}
+#sound-chip.off svg .x,.sound-row.off svg .x{display:inline}
+@keyframes sndbeat{0%,100%{box-shadow:inset 0 0 0 2px #fff,0 .25em 1.2em rgba(239,51,64,.40)}
+                   50%{box-shadow:inset 0 0 0 2px #fff,0 .25em 1.9em rgba(239,51,64,.85)}}
+@media (prefers-reduced-motion:reduce){#sound-chip.off,.sound-row.off{animation:none}}
 
 /* --------------------------------------------------------------- loading ---*/
 #loading{background:var(--ink-900)}

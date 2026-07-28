@@ -16,8 +16,10 @@
   var comp = null;           // master DynamicsCompressorNode
   var fxBus = null;          // one-shot bus
   var engineBus = null;      // engine bus
+  var ambBus = null;         // ambience bus (wash / deck / traffic / hum / train)
   var masterLevel = 0.9;     // remembered even before init
   var engine = null;         // active engine rig
+  var wantEngine = null;     // engine kind requested while muted — started on unmute
   var ambience = null;       // persistent lake/wind ambience rig
   var noiseBufs = {};        // cached noise AudioBuffers
   var music = {
@@ -54,6 +56,20 @@
   var musicLevel = 1, sfxLevel = 1;
   var musicLP = null, intensity = 0.3;
   var lastThrottle = 0;
+
+  // --------------------------------------------------------------------------
+  // Sound is OFF until the player asks for it.
+  // Nothing here half-measures it with a zero gain: while muted no AudioContext is ever
+  // constructed, so there is no graph, no scheduler and no autoplay prompt — the page is silent
+  // in the strongest sense the platform offers. The choice is remembered, and localStorage is
+  // wrapped because a file:// origin is allowed to refuse storage outright.
+  // --------------------------------------------------------------------------
+  var SOUND_KEY = 'rr_sound';
+  var muted = true;
+  try { if (localStorage.getItem(SOUND_KEY) === 'on') muted = false; } catch (e) { /* no storage */ }
+  function persistMute() {
+    try { localStorage.setItem(SOUND_KEY, muted ? 'off' : 'on'); } catch (e) { /* fine */ }
+  }
 
   // --------------------------------------------------------------------------
   // Small helpers
@@ -236,6 +252,7 @@
   // Core lifecycle
   // --------------------------------------------------------------------------
   function doInit() {
+    if (muted) return;
     if (!ctx) {
       var AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
@@ -252,13 +269,18 @@
       master.connect(comp);
       comp.connect(ctx.destination);
 
-      engineBus = gain(0.24); // engines (incl. spray) sit well under music + SFX
+      engineBus = gain(0.24 * sfxLevel); // engines (incl. spray) sit well under music + SFX
       engineBus.connect(master);
       fxBus = gain(0.9 * sfxLevel);
       fxBus.connect(master);
+      // The ambience layers used to hang straight off master, which put the water wash, the deck
+      // grating, the traffic bed, the mains hum and the L train outside the SFX fader entirely.
+      ambBus = gain(0.9 * sfxLevel);
+      ambBus.connect(master);
 
       buildSpace();
       ensureAmbience();
+      if (!idleTimer) idleTimer = setInterval(ambIdle, 200);
     }
     doResume();
     // music requested before the first user gesture (title screen at boot) starts now
@@ -270,9 +292,66 @@
   }
 
   function doResume() {
+    if (muted) return;   // a stray pointerdown must never wake a context the player muted
     if (ctx && ctx.state === 'suspended' && typeof ctx.resume === 'function') {
       var p = ctx.resume();
       if (p && typeof p.catch === 'function') p.catch(function () {});
+    }
+  }
+
+  // Every sustained voice is driven by setTargetAtTime from doUpdate, and main.js's update()
+  // returns early while paused, on the results screen and at the title. When the feed stops, an
+  // exponential target simply HOLDS its last value: pause under a bascule and the deck-grating
+  // layer, the traffic bed and three rival engines all ring on forever under the menu. Nothing
+  // outside this file can be relied on to say "stop"; the watchdog notices the feed died.
+  var lastFeed = -1, idleTimer = null, idleQuiet = false;
+  function ambIdle() {
+    if (!ctx || lastFeed < 0) return;
+    if (ctx.currentTime - lastFeed < 0.4) { idleQuiet = false; return; }
+    if (idleQuiet) return;                    // one ramp per idle period, not five a second
+    idleQuiet = true;
+    if (ambience) { setT(ambience.gain.gain, EPS, 0.30); setT(ambience.lp.frequency, 320, 0.30); }
+    if (amb) {
+      setT(amb.comb.gain.gain, EPS, 0.12);
+      setT(amb.traffic.gain.gain, EPS, 0.30);
+      setT(amb.hum.gain.gain, EPS, 0.40);
+    }
+    if (scrapeVoice) setT(scrapeVoice.gain.gain, EPS, 0.08);
+    if (engine) setT(engine.sprayGain.gain, EPS, 0.12);
+    if (rivalVoices) for (var i = 0; i < rivalVoices.length; i++) setT(rivalVoices[i].g.gain, EPS, 0.20);
+    if (sendGain) setT(sendGain.gain, EPS, 0.25);
+  }
+
+  // --------------------------------------------------------------------------
+  // Mute
+  // --------------------------------------------------------------------------
+  function doSetMuted(on) {
+    on = !!on;
+    if (on === muted) { persistMute(); return; }
+    muted = on;
+    persistMute();
+    if (muted) {
+      if (!ctx) return;
+      setT(master.gain, EPS, 0.02);
+      setTimeout(function () {
+        if (muted && ctx && typeof ctx.suspend === 'function') {
+          var p = ctx.suspend();
+          if (p && typeof p.catch === 'function') p.catch(function () {});
+        }
+      }, 120);
+      return;
+    }
+    var first = !ctx;
+    doInit();                                   // builds the graph on the very first unmute
+    if (!ctx) return;
+    var t = now();
+    master.gain.cancelScheduledValues(t);
+    master.gain.setValueAtTime(EPS, t);
+    master.gain.linearRampToValueAtTime(masterLevel, t + 0.25);
+    // a race that started while muted has no engine rig and no race loop — build them now
+    if (!first && wantEngine && !engine) doStartEngine(wantEngine);
+    if (music.wantMode && !music.playing) {
+      var wm = music.wantMode; music.wantMode = null; doSetMode(wm, true);
     }
   }
 
@@ -369,20 +448,27 @@
     var lp = ctx.createBiquadFilter();
     lp.type = 'lowpass'; lp.frequency.value = 360; lp.Q.value = 0.5;
     var g = gain(EPS);
-    src.connect(lp); lp.connect(g); g.connect(master);
+    src.connect(lp); lp.connect(g); g.connect(ambBus);
     src.start();
     ambience = { src: src, lp: lp, gain: g };
 
     amb = {};
-    // C. bridge-deck grating: a comb at 3.1 ms rings at ~322 Hz — exactly the singing hum a
-    // Chicago open-grid steel deck makes under tyres. Nobody expects it; everybody recognises it.
+    // C. bridge-deck grating. A Chicago open-grid steel deck sings ONE note (~322 Hz) under tyres.
+    // The first build got that note from a 3.1 ms feedback comb — but the Web Audio spec clamps a
+    // DelayNode inside a feedback cycle to a whole render quantum, so the loop actually ran at
+    // ~6.2 ms and rang an octave LOW, at 161 Hz, with every harmonic of it present: twelve
+    // partials marching past 1.8 kHz, +28 dB of high-frequency energy over the rest of the
+    // ambience. That is the definition of a buzz, and it was never the note that was wanted.
+    // Two resonant bandpasses give the same singing note with nothing stacked above it.
     var cs = noiseSource('white');
-    var cd = ctx.createDelay(0.02); cd.delayTime.value = 0.0031;
-    var cfb = gain(0.72);
-    var clp = ctx.createBiquadFilter(); clp.type = 'lowpass'; clp.frequency.value = 1400;
+    var cb1 = ctx.createBiquadFilter(); cb1.type = 'bandpass'; cb1.frequency.value = 322; cb1.Q.value = 16;
+    var cb2 = ctx.createBiquadFilter(); cb2.type = 'bandpass'; cb2.frequency.value = 644; cb2.Q.value = 14;
+    var cRoar = ctx.createBiquadFilter(); cRoar.type = 'lowpass'; cRoar.frequency.value = 520; cRoar.Q.value = 0.5;
     var cg = gain(EPS);
-    cs.connect(cd); cd.connect(clp); clp.connect(cfb); cfb.connect(cd);
-    clp.connect(cg); cg.connect(master);
+    cs.connect(cb1); cb1.connect(gainTo(3.6, cg));
+    cs.connect(cb2); cb2.connect(gainTo(1.2, cg));
+    cs.connect(cRoar); cRoar.connect(gainTo(0.10, cg));   // a little tyre roar under the note
+    cg.connect(ambBus);
     cs.start();
     amb.comb = { gain: cg };
 
@@ -390,15 +476,17 @@
     var ts = noiseSource('brown');
     var tlp = ctx.createBiquadFilter(); tlp.type = 'lowpass'; tlp.frequency.value = 900;
     var tg = gain(EPS);
-    ts.connect(tlp); tlp.connect(tg); tg.connect(master);
+    ts.connect(tlp); tlp.connect(tg); tg.connect(ambBus);
     ts.start();
     amb.traffic = { gain: tg };
 
-    // E. city hum: the 60 Hz mains note of a dense grid, plus its octave and a 210 Hz resonance
+    // E. city hum: the 60 Hz mains note of a dense grid, plus its octave. Two pure sines have
+    // nothing for a +7 dB resonance at 210 Hz to grip, so that filter only ever risked ringing on
+    // whatever else got routed here; +3 dB is enough to give the pair a little body.
     var hg = gain(EPS);
     var hpk = ctx.createBiquadFilter();
-    hpk.type = 'peaking'; hpk.frequency.value = 210; hpk.Q.value = 1.4; hpk.gain.value = 7;
-    hg.connect(hpk); hpk.connect(master);
+    hpk.type = 'peaking'; hpk.frequency.value = 210; hpk.Q.value = 1.4; hpk.gain.value = 3;
+    hg.connect(hpk); hpk.connect(ambBus);
     [60, 120].forEach(function (f, i) {
       var o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
       var og = gain(i ? 0.4 : 1);
@@ -407,12 +495,15 @@
     amb.hum = { gain: hg };
   }
 
+  // little helper: a fixed trim gain feeding `dest`, returned so it can be connected into
+  function gainTo(v, dest) { var g = gain(v); g.connect(dest); return g; }
+
   // B. the L train: a bandpassed swell, a wheel squeal at the peak, and the crossing bell.
   function doTrainPass(pan) {
     if (!ready()) return;
     var t = now(), dur = 6.0;
     var p = panNode(pan == null ? (Math.random() * 1.6 - 0.8) : pan);
-    p.connect(master);
+    p.connect(ambBus || master);
     var s = noiseSource('brown');
     var bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
     bp.frequency.value = 90; bp.Q.value = 0.7;
@@ -454,6 +545,7 @@
   // Engine
   // --------------------------------------------------------------------------
   function doStartEngine(kind) {
+    wantEngine = kind;          // remembered so unmuting mid-race still gets you an engine
     if (!ctx) doInit();
     if (!ctx) return;
     if (engine) doStopEngine();
@@ -586,6 +678,7 @@
   function doStopEngine() {
     var e = engine;
     engine = null;
+    wantEngine = null;
     if (!e || !ctx) return;
     var t = now();
     e.out.gain.cancelScheduledValues(t);
@@ -608,6 +701,7 @@
   // --------------------------------------------------------------------------
   function doUpdate(dt, s) {
     if (!ctx || !s) return;
+    lastFeed = ctx.currentTime;   // the watchdog above silences the sustained voices if this stops
 
     var rpm = clamp01(s.rpm);
     var throttle = clamp01(s.throttle);
@@ -630,7 +724,7 @@
       setT(amb.traffic.gain.gain, duck > 0.10 ? 0.03 : EPS, 0.25);
       // E. the Loop's own mains hum — only in the canyon, never on the lake
       var inLoop = !inLake && s.x != null && s.x > -900 && s.x < 300;
-      setT(amb.hum.gain.gain, inLoop ? 0.008 : EPS, 0.6);
+      setT(amb.hum.gain.gain, inLoop ? 0.0035 : EPS, 0.6);
       if (duck > 0.10) {
         ambClock.thump -= dt;
         if (ambClock.thump <= 0) { ambClock.thump = 0.6 + Math.random() * 1.2; tyreThump(); }
@@ -701,7 +795,7 @@
     var n = ctx.createBufferSource(); n.buffer = noiseBuffer('brown');
     var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 320;
     var g = gain(0);
-    n.connect(lp); lp.connect(g); g.connect(master);
+    n.connect(lp); lp.connect(g); g.connect(ambBus || master);
     env(g, t, 0.004, 0.035, 0.06);
     n.start(t); n.stop(t + 0.09);
     cleanupOnEnd(n, [n, lp, g]);
@@ -788,14 +882,19 @@
     for (var i = 0; i < 3; i++) {
       var o1 = ctx.createOscillator(); o1.type = 'sawtooth'; o1.frequency.value = 90;
       var o2 = ctx.createOscillator(); o2.type = 'square'; o2.frequency.value = 180;
-      var g2 = gain(0.35);
+      var g2 = gain(0.18);
+      // The player's own engine earns its tone from a shaper, a formant and two swept filters.
+      // A rival got one 12 dB/oct pole over a raw saw+square, so three of them alongside you laid
+      // a bare harmonic ladder to 3 kHz across the mix. A second pole makes it 24 dB/oct and the
+      // ladder dies where it should.
       var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400; lp.Q.value = 0.6;
+      var lp2 = ctx.createBiquadFilter(); lp2.type = 'lowpass'; lp2.frequency.value = 1400; lp2.Q.value = 0.5;
       var pan = panNode(0);
       var g = gain(EPS);
       o1.connect(lp); o2.connect(g2); g2.connect(lp);
-      lp.connect(pan); pan.connect(g); g.connect(engineBus);
+      lp.connect(lp2); lp2.connect(pan); pan.connect(g); g.connect(engineBus);
       o1.start(); o2.start();
-      rivalVoices.push({ o1: o1, o2: o2, lp: lp, pan: pan, g: g });
+      rivalVoices.push({ o1: o1, o2: o2, lp: lp, lp2: lp2, pan: pan, g: g });
     }
   }
 
@@ -818,8 +917,10 @@
       setT(v.o1.frequency, f, TAU_FAST);
       setT(v.o2.frequency, f * 2, TAU_FAST);
       var near = 1 - Math.min(1, r.d / 90);
-      setT(v.g.gain, Math.max(EPS, 0.22 * near * near), 0.10);
-      setT(v.lp.frequency, 1200 + 5000 * near, 0.12);
+      setT(v.g.gain, Math.max(EPS, 0.19 * near * near), 0.10);
+      var cut = 900 + 3100 * near;
+      setT(v.lp.frequency, cut, 0.12);
+      setT(v.lp2.frequency, cut, 0.12);
       if (v.pan.pan) setT(v.pan.pan, clamp(r.lat, -1, 1), 0.06);
     }
   }
@@ -953,9 +1054,14 @@
     var dur = 0.8;
     var freqs = [440, 587.33];
     var mix = gain(0.55);
-    var ws = makeShaper(2.5);
-    var lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
-    lp.frequency.value = 2400; lp.Q.value = 0.7;
+    // A two-tone air horn is a bright saw stack by nature, but at k=2.5 into a static 2.4 kHz pole
+    // this was the loudest event in the game by 6 dB — and it fires at the start, at the finish,
+    // and at every rising bascule, sometimes on top of the bridge horn and the gulls. Softer
+    // drive, and the pole opens over the attack the way real pressure does.
+    var ws = makeShaper(1.7);
+    var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.7;
+    lp.frequency.setValueAtTime(1100, t);
+    lp.frequency.linearRampToValueAtTime(2100, t + 0.09);
     var out = gain(0);
     mix.connect(ws); ws.connect(lp); lp.connect(out); out.connect(fxBus);
 
@@ -976,8 +1082,8 @@
       }
     }
     out.gain.setValueAtTime(EPS, t);
-    out.gain.linearRampToValueAtTime(0.5, t + 0.025);
-    out.gain.setValueAtTime(0.5, t + dur - 0.18);
+    out.gain.linearRampToValueAtTime(0.36, t + 0.025);
+    out.gain.setValueAtTime(0.36, t + dur - 0.18);
     out.gain.exponentialRampToValueAtTime(EPS, t + dur);
     if (anchor) cleanupOnEnd(anchor, nodes);
   }
@@ -1411,19 +1517,27 @@
   }
 
   // TB-303 in twelve lines: one saw, a resonant lowpass, a per-note sweep. Boost only.
+  // The original was ONE biquad at Q 9.5 — 12 dB/oct, so every harmonic of the saw above the
+  // cutoff survived while a very narrow resonant peak screamed on top of them. A real 303 filter
+  // is a multi-pole ladder: resonance on the first pole, a second pole to actually take the top
+  // off. Two biquads sharing the sweep, resonance on the first only.
   function acidNote(f, t, dur, cutoff) {
     var o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f;
-    var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 9.5;
-    lp.frequency.setValueAtTime(cutoff * 1.9, t);
-    lp.frequency.exponentialRampToValueAtTime(Math.max(80, cutoff), t + 0.09);
+    var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 4.2;
+    var lp2 = ctx.createBiquadFilter(); lp2.type = 'lowpass'; lp2.Q.value = 0.6;
+    var top = cutoff * 1.5, bot = Math.max(80, cutoff);
+    lp.frequency.setValueAtTime(top, t);
+    lp.frequency.exponentialRampToValueAtTime(bot, t + 0.09);
+    lp2.frequency.setValueAtTime(top, t);
+    lp2.frequency.exponentialRampToValueAtTime(bot, t + 0.09);
     var g = gain(0);
-    o.connect(lp); lp.connect(g); g.connect(music.bus);
+    o.connect(lp); lp.connect(lp2); lp2.connect(g); g.connect(music.bus);
     g.gain.setValueAtTime(EPS, t);
-    g.gain.linearRampToValueAtTime(0.09, t + 0.006);
+    g.gain.linearRampToValueAtTime(0.075, t + 0.006);
     g.gain.exponentialRampToValueAtTime(EPS, t + dur);
     o.start(t); o.stop(t + dur + 0.04);
     trackSource(o);
-    cleanupOnEnd(o, [o, lp, g]);
+    cleanupOnEnd(o, [o, lp, lp2, g]);
   }
 
   function scheduleRaceStep(step, t) {
@@ -1446,7 +1560,7 @@
     }
     // L3 — the acid line only exists while you are boosting
     if (mstate.boostHeat > 0.35 && R_ACID.indexOf(s) >= 0) {
-      acidNote(B.root * 2, t, 0.16, 260 + 3400 * clamp01(mstate.boostHeat));
+      acidNote(B.root * 2, t, 0.16, 240 + 2300 * clamp01(mstate.boostHeat));
     }
     // L4 — the organ swell, for the last quarter of the race or while you are on the podium
     if (s === 0 && (bar === 0 || bar === 4) && (mstate.progress > 0.78 || mstate.lead)) {
@@ -1552,6 +1666,7 @@
     sfxLevel = clamp01(v);
     if (fxBus) setT(fxBus.gain, 0.9 * sfxLevel, TAU_FAST);
     if (engineBus) setT(engineBus.gain, 0.24 * sfxLevel, TAU_FAST);
+    if (ambBus) setT(ambBus.gain, 0.9 * sfxLevel, TAU_FAST);
   }
 
   // --------------------------------------------------------------------------
@@ -1566,6 +1681,10 @@
   RR.Audio = {
     init: safe(doInit),
     resume: safe(doResume),
+    // sound gate — see doSetMuted. `muted()` is plain (never throws) so UI can read it inline.
+    muted: function () { return muted; },
+    setMuted: safe(doSetMuted),
+    toggleMuted: safe(function () { doSetMuted(!muted); return !muted; }),
     setMaster: safe(function (v) {
       masterLevel = clamp01(v);
       if (ctx && master) setT(master.gain, masterLevel, TAU_FAST);

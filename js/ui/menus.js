@@ -29,8 +29,12 @@
     root.classList.toggle('paused', screen === 'pause');
     // the post-race screens sit over a still-rendering city: without a scrim the tables are unreadable
     root.classList.toggle('scrim', screen === 'cup' || screen === 'results');
+    paintSound();
   }
-  MENU.hide = function () { root.classList.add('off'); root.classList.remove('paused', 'title-screen', 'scrim'); screen = 'none'; };
+  MENU.hide = function () {
+    root.classList.add('off'); root.classList.remove('paused', 'title-screen', 'scrim'); screen = 'none';
+    paintSound();
+  };
 
   // ---------- livery: purely cosmetic, remembered between sessions ----------
   const LIVERIES = [null, 0xD8DCE0, 0x2F8F4F, 0x8A2FB0, 0xE07820, 0x16303F];
@@ -58,7 +62,8 @@
         <div class="menu-item" data-i="4">MULTIPLAYER</div>
         <div class="menu-item" data-i="5">HOW TO PLAY</div>
       </div>
-      <div class="menu-note">↑↓ SELECT · ENTER CONFIRM · ♪ PRESS ANY KEY FOR SOUND<br>BUILT ON THE REAL CHICAGO RIVER</div>
+      <div id="snd-row" class="sound-row"></div>
+      <div class="menu-note">↑↓ SELECT · ENTER CONFIRM · <b>M</b> SOUND<br>BUILT ON THE REAL CHICAGO RIVER</div>
     `);
     bindClicks([
       () => showVehicles({}),
@@ -68,8 +73,12 @@
       () => { if (RR.NetUI && RR.NetUI.openEntry) RR.NetUI.openEntry(); },
       showHelp,
     ]);
+    const row = $('snd-row');
+    if (row) row.addEventListener('click', () => MENU.toggleSound());
+    buildSoundChip();
+    paintSound();
     paintSel();
-    RR.Audio.setMusic(true);
+    RR.Audio.setMusic(true);   // remembered while muted; it starts the moment sound is switched on
   }
   MENU.showTitle = showTitle;
   MENU.toTitle = showTitle;
@@ -634,12 +643,14 @@
         <div class="menu-item" data-i="2">QUIT TO TITLE</div>
       </div>
       <div id="vol-panel">
+        <div id="snd-row" class="sound-row"></div>
         <label>MUSIC<input type="range" id="vol-music" min="0" max="100" value="${Math.round(volMusic * 100)}"></label>
         <label>SFX&nbsp;&nbsp;&nbsp;<input type="range" id="vol-sfx" min="0" max="100" value="${Math.round(volSfx * 100)}"></label>
       </div>
       <div class="menu-note" style="margin-top:1.4em;max-width:640px">
         <b>W/↑</b> throttle · <b>A·D/←·→</b> steer · <b>S/↓</b> brake · <b>SHIFT</b> boost<br>
-        <b>C</b> camera · <b>[ ]</b> shot · <b>P</b> photo · <b>N</b> time of day · <b>G</b> green river · <b>R</b> reset
+        <b>C</b> camera · <b>[ ]</b> shot · <b>P</b> photo · <b>N</b> time of day · <b>G</b> green river ·
+        <b>M</b> sound · <b>R</b> reset
       </div>
     `);
     bindClicks([() => { MENU.hide(); if (MENU.onResume) MENU.onResume(); },
@@ -648,6 +659,10 @@
     const m = $('vol-music'), s = $('vol-sfx');
     if (m) m.oninput = () => { volMusic = m.value / 100; if (RR.Audio.setMusicLevel) RR.Audio.setMusicLevel(volMusic); store(); };
     if (s) s.oninput = () => { volSfx = s.value / 100; if (RR.Audio.setSfxLevel) RR.Audio.setSfxLevel(volSfx); store(); };
+    const row = $('snd-row');
+    if (row) row.addEventListener('click', () => MENU.toggleSound());
+    buildSoundChip();
+    paintSound();
     paintSel();
   };
 
@@ -660,7 +675,59 @@
   MENU.applyVolumes = function () {
     if (RR.Audio.setMusicLevel) RR.Audio.setMusicLevel(volMusic);
     if (RR.Audio.setSfxLevel) RR.Audio.setSfxLevel(volSfx);
+    buildSoundChip();
   };
+
+  // ---------- sound: off until asked for ----------
+  // The game boots silent, so the loudest thing on the title screen has to be the control that
+  // says so. A fixed chip rather than a menu row: it must also be reachable mid-race and from the
+  // pause screen, and it pulses while muted so nobody plays the whole game thinking there is none.
+  const SPK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/>' +
+    '<path class="w" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>' +
+    '<path class="x" d="M16.5 9.5l5 5M21.5 9.5l-5 5"/></svg>';
+  let soundChip = null;
+  const soundOff = () => !!(RR.Audio && RR.Audio.muted && RR.Audio.muted());
+
+  function buildSoundChip() {
+    if (soundChip || !document.body) return;
+    soundChip = document.createElement('button');
+    soundChip.id = 'sound-chip';
+    soundChip.type = 'button';
+    soundChip.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); MENU.toggleSound(); });
+    document.body.appendChild(soundChip);
+    paintSound();
+  }
+
+  function paintSound() {
+    const off = soundOff();
+    if (soundChip) {
+      soundChip.classList.toggle('off', off);
+      soundChip.innerHTML = `${SPK}<b>${off ? 'SOUND OFF' : 'SOUND ON'}</b><i>${off ? 'PRESS M' : 'M'}</i>`;
+      soundChip.setAttribute('aria-pressed', off ? 'false' : 'true');
+      soundChip.title = off ? 'Turn the sound on (M)' : 'Mute (M)';
+    }
+    const row = $('snd-row');
+    if (row) {
+      row.classList.toggle('off', off);
+      row.innerHTML = `${SPK}<b>${off ? 'SOUND OFF' : 'SOUND ON'}</b><i>PRESS M</i>`;
+    }
+    // One control per screen. The corner chip stands down wherever a screen hosts its own row,
+    // and during a race entirely: the top-right corner belongs to the minimap, ESC is one key
+    // away, and the pause legend carries M.
+    const menuOn = !!root && !root.classList.contains('off');
+    if (soundChip) soundChip.classList.toggle('hidden', !menuOn || !!row);
+    const panel = $('vol-panel');
+    if (panel) panel.classList.toggle('muted', off);
+  }
+
+  MENU.toggleSound = function () {
+    if (!RR.Audio || !RR.Audio.setMuted) return;
+    const wasOff = soundOff();
+    RR.Audio.setMuted(!wasOff);
+    if (wasOff) { MENU.applyVolumes(); RR.Audio.uiSelect(); }   // first sound you hear is your own click
+    paintSound();
+  };
+  MENU.paintSound = paintSound;
 
   let bestAtStart = null;
   function launch() {
@@ -699,6 +766,15 @@
     if (dd && screen === 'difficulty' && DIFFS[sel]) dd.textContent = DIFFS[sel].desc;
     if (screen === 'vehicle') { updateRidePanel(sel); drawRadar(); }
   }
+
+  // Its own listener, deliberately: the one below returns early during a race, and M has to work
+  // everywhere — title, showroom, mid-race, pause.
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'KeyM' || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    MENU.toggleSound();
+  });
 
   window.addEventListener('keydown', (e) => {
     if (screen === 'none') return;
