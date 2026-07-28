@@ -12,17 +12,33 @@
   //
   // Height at the span is y0 + 1.25*(H/LEN)*D + 1.6*D/v - 4.9*D²/v². The middle term is
   // speed-free — the launch is proportional to speed, so the two v terms very nearly cancel — but
-  // the tail term is not, and at the old 40-48 m lip it swamped everything: 2.8 m at 20 m/s (you
-  // pass harmlessly under a shut span), 9.2 m at 25 (you hit it), 15.9 m at 40 (you sail clean
-  // over the parapet and nothing happens). Three different games on one ramp.
+  // the tail term is not, and it grows as D². At the old 40-48 m lip it swamped everything: 2.8 m
+  // at 20 m/s (you pass harmlessly under a shut span), 9.2 m at 25 (you hit it), 15.9 m at 40 (you
+  // sail clean over the parapet and nothing happens). Three different games on one ramp.
   //
-  // At a 16 m lip the tail is worth half a metre across the whole speed range, so the hull crosses
-  // the span line at 6.9-7.9 m at every speed a boat can reach: dead level with a shut deck, and
-  // well inside a raised slot. H drops 4.6 → 3.4 to keep the flight (110 m at 40 m/s) shorter than
-  // the 124 m between Main Stem bascules, so a jump lands on water rather than on the next bridge.
-  // Apex is still 11.3 m over the water. Published, because these three numbers are the ramp.
+  // At a 16 m lip the tail is worth half a metre across the whole speed range. Measured over 192
+  // launches — all six ramps, both span states, 13 to 56 m/s, the 33 m/s jetski and the 61 m/s
+  // podracer — every one launches, and every one crosses the span line between 6.5 and 7.5 m:
+  // above every soffit (5.8-6.4) and far under every deck top (11.1-11.7). Shut deck or raised
+  // slot, it is the same question at every speed in the game. H is 3.4 so the flight (110 m at
+  // 40 m/s) stays shorter than the 124 m between Main Stem bascules and a jump lands on water.
+  // The launch itself reads ~0.75 m below the formula: physics damps pos.y toward the waterline on
+  // the frame the hull leaves the footprint, before it reads the lip. That is priced in above.
+  //
+  // VISION R6 asks that a shut span be visible before you commit, and answers it the other way
+  // round: a LONGER lip is not more legible, it is less. Rendered from the chase camera at the
+  // commit point — 55 m from the span, 23 m short of the ramp, 28 m/s — for all six ramps in both
+  // states (shots/dev/w1lip-<ramp>-commit-{shut,open}.png), a shut deck is a solid red band across
+  // the channel and an open one is two 30 m leaves standing over the frame. The same pair from
+  // 79 m, where a 40 m lip would put the commit point (w1lip-lasalle-far80-{shut,open}.png), shows
+  // the bridge at half the size. Moving the lip out moves the read onto the HUD, not off it.
+  // Below ~15 m/s the arc no longer reaches the soffit and the ramp is simply inert — which is a
+  // mercy for a boat still recovering, not a hole. Signed off at 16.
   RAMPS.LIP_M = 16;                                  // lip → span line
   RAMPS.LEN = 16; RAMPS.H = 3.4;
+  // low edge → span line: the distance the whole decision is made at, and what the HUD's
+  // `▲ RAMP n M` chip counts down. Derived so it cannot drift away from the two above.
+  RAMPS.FOOT_M = RAMPS.LIP_M + RAMPS.LEN;
   const PICKS = { 'LaSalle St': 1, 'State St': 1, 'Adams St': 1, 'Randolph St': 1, 'Grand Ave': 1, 'Columbus Dr': 1 };
   const LEN = RAMPS.LEN, W = 7, H = RAMPS.H;
   const ORANGE = 0xf07820, ORANGE_DK = 0xc45a14, ORANGE_MD = 0xd8681a;
@@ -36,12 +52,12 @@
       const p = RR.River.paths[b.branch];
       if (!p) continue;
       const q = U().pathNearest(p, b.x, b.z);
-      const d0 = q.d - RAMPS.LIP_M - LEN;             // leading (low) edge of the wedge
+      const d0 = q.d - RAMPS.FOOT_M;                  // leading (low) edge of the wedge
       if (d0 < 40) continue;
       const a = U().pathAt(p, d0, {});
       RAMPS.list.push({
         x: a.x, z: a.z, dirx: a.tx, dirz: a.tz, len: LEN, w: W, h: H, slope: H / LEN,
-        bridge: b.name, bx: q.x, bz: q.z, lipD: RAMPS.LIP_M,
+        bridge: b.name, bx: q.x, bz: q.z, lipD: RAMPS.LIP_M, footD: RAMPS.FOOT_M,
       });
       buildMesh(geoms, a.x, a.z, a.tx, a.tz, rng);
     }

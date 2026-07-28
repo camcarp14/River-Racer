@@ -1,6 +1,7 @@
-/* River Racer — chase camera: split-axis spring, look-ahead into the channel, trauma shake,
-   and a five-shot cinematic rig. Never writes camera.projectionMatrix, zoom or filmOffset — only
-   camera.fov + updateProjectionMatrix(), because reflect.js rebuilds its own projection from fov. */
+/* River Racer — chase camera: split-axis spring, look-ahead into the channel, trauma shake, the
+   salute beat (hull height, looking up through a raised bascule), and a five-shot cinematic rig.
+   Never writes camera.projectionMatrix, zoom or filmOffset — only camera.fov +
+   updateProjectionMatrix(), because reflect.js rebuilds its own projection from fov. */
 (function () {
   const C = {};
   const U = () => RR.U;
@@ -69,6 +70,78 @@
     return false;
   }
 
+  // ---- THE MONEY SHOT: a clean salute ---------------------------------------------------------
+  // You ask for the bridge, the tender answers, and two forty-metre leaves stand up over the
+  // channel. The one image the whole hook exists to make is that slot taken from the water —
+  // hull height, looking UP at the raised steel — so on a crossing that is going to be clean the
+  // rig drops to the waterline and pitches up as the leaves come over, then eases back.
+  //
+  // It is a BEAT, not a cutscene. The player is still driving at 70 mph in a 60 m channel, so this
+  // bends four things and nothing else: the boom, the boom height, the look pitch and the FOV.
+  // Every containment below still runs on the result — the channel push, the boom retract, the
+  // hard leash and the occlusion recovery — and a lower, closer lens is strictly easier for all
+  // four to keep honest than the pose they already handle.
+  //
+  // Driven off the SIGNED distance to the span line rather than a timer, so the shot stays welded
+  // to the steel whatever the boat does: brake under the leaves and it holds; blow through at
+  // 45 m/s and it is over in a second and a half.
+  // Measured: at 28-31 m/s the whole beat is ~2.5 s and covers ~9 % of a Main Stem run's frames.
+  const SAL_FAR = -46, SAL_NEAR = -16;   // drop and pitch ramp in across these metres short of it,
+  const SAL_OUT = 10, SAL_GONE = 34;     // hold through the span, and let go astern of it
+  // 24 deg of pitch against a hull sitting 4 deg BELOW the lens axis is 28 deg off centre, inside
+  // keepHullInFrame's 0.95 x half-FOV backstop at every FOV this rig reaches (68-80).
+  const SAL_TILT = 0.42;                 // rad of look pitch at the peak
+  const SAL_UP = 1.25;                   // metres over the hull — the wave floor below is +0.9
+  const SAL_BACK = 9.2;                  // close enough that a leaf fills the shoulder of the frame
+  let salSpan = null, salLock = 0, salW = 0, salUp = 0;
+
+  function salDrop() { salSpan = null; salLock = 0; salW = 0; salUp = 0; }
+  C.salute = function () { return salW; };   // read-only: the harness checks the shot actually fires
+
+  function saluteBeat(boat, dt) {
+    const Br = RR.Bridges;
+    let wT = 0, uT = 0;
+    // 'ambient' is the menu flythrough, the Architecture Tour and every replay: no player asked
+    // for those bridges, so there is no salute to shoot.
+    if (!Br || !Br.nextAhead || Br.mode !== 'race') { salSpan = null; salLock = 0; }
+    else {
+      const CLEAN = Br.CLEAN_OPEN == null ? 0.62 : Br.CLEAN_OPEN;
+      if (!salSpan) {
+        const hx = Math.sin(boat.heading), hz = Math.cos(boat.heading);
+        const cand = Br.nextAhead(boat.pos.x, boat.pos.z, hx, hz, 58);
+        // latch only a span that is genuinely still to come and taken the way the river runs —
+        // the same two tests salute.js credits a crossing with, so the shot cannot fire on a
+        // bridge you have already passed or one you are motoring back upstream through.
+        if (cand && cand.opening && cand.opening.open > CLEAN &&
+            hx * cand.tx + hz * cand.tz > 0.25 &&
+            (boat.pos.x - cand.x) * cand.tx + (boat.pos.z - cand.z) * cand.tz < -6) {
+          salSpan = cand; salLock = 0;
+        }
+      }
+      if (salSpan) {
+        const sp = salSpan;
+        const dx = boat.pos.x - sp.x, dz = boat.pos.z - sp.z;
+        const rel = dx * sp.tx + dz * sp.tz;              // signed along the course: < 0 is short of it
+        const open = sp.opening ? sp.opening.open : 0;
+        if (rel >= 0 && salLock === 0) salLock = open > CLEAN ? 1 : -1;
+        // salute.js is the authority on the verdict. Its miss and ours are the same test on the
+        // same number, but if it ever says the chain broke, the hero shot is not owed.
+        const S = RR.Salute;
+        if (rel > -12 && S && S.eventT < 0.30 && S.event === 'miss') salLock = -1;
+        // Short of the line the leaves have to STAY clear: a bascule that starts down while you
+        // are still on the approach is a chain reset, and a reset gets the ordinary chase.
+        if (salLock < 0 || rel > SAL_GONE + 8 || rel < SAL_FAR - 40 || (salLock === 0 && open <= CLEAN)) {
+          salSpan = null; salLock = 0;
+        } else {
+          wT = Math.min(U().smoothstep(SAL_FAR, SAL_NEAR, rel), 1 - U().smoothstep(SAL_OUT, SAL_GONE, rel));
+          uT = wT * (1 - U().smoothstep(5, 30, Math.abs(rel + 2)));   // peak pitch on the span line
+        }
+      }
+    }
+    salW = U().damp(salW, wT, wT > salW ? 5.5 : 3.0, dt);
+    salUp = U().damp(salUp, uT, uT > salUp ? 6.5 : 3.4, dt);
+  }
+
   C.snapTo = function (boat) {
     const m = MODES[mode];
     const s = Math.sin(boat.heading), c = Math.cos(boat.heading);
@@ -79,6 +152,7 @@
     if (pos.y < wh) pos.y = wh;
     C._duck = 0; C._roll = 0; C._fovB = 0;
     boom = 1; lostT = 0; recov = 0; relT = -1;   // a new race reclaims the rig from any release
+    salDrop();
     leash = Math.hypot(pos.x - boat.pos.x, pos.z - boat.pos.z) + 3;
   };
 
@@ -120,7 +194,7 @@
   // lens falls back to the far side of the boat and looks PAST it at the city, so the last thing
   // on screen is the skyline with your own wake still opening in the foreground.
   let relT = -1, relDur = 0;
-  C.release = function (sec) { relT = 0; relDur = Math.max(0.5, sec || 3.5); };
+  C.release = function (sec) { relT = 0; relDur = Math.max(0.5, sec || 3.5); salDrop(); };
   C.releasing = function () { return relT >= 0; };
 
   function releaseShot(boat, dt) {
@@ -167,10 +241,14 @@
     const spd = Math.hypot(boat.vel.x, boat.vel.z);
     const topS = (boat.spec && boat.spec.top) || 40;
     const spdN = U().clamp(spd / topS, 0, 1);
+    saluteBeat(boat, dt);
     // IN and DOWN with speed, not out. The boom used to EXTEND at 0.10 m per m/s, which pushed the
     // lens 4 m further back exactly as the FOV punch opened up — the two cancelled and 85 mph
     // looked like 40. Low and close is what makes a bascule coming at you read as a wall.
-    const back = (m.back + spd * m.backSpd) * (1 - 0.14 * spdN * m.spdK) * (1 - 0.55 * recov);
+    let back = (m.back + spd * m.backSpd) * (1 - 0.14 * spdN * m.spdK) * (1 - 0.55 * recov);
+    // Never LENGTHEN the boom for the salute — min(), so the hull cam, whose boom is negative and
+    // sits on the foredeck, is already the shot and keeps it.
+    if (salW > 0.002) back = U().lerp(back, Math.min(back, SAL_BACK), salW);
 
     // Never demand the lens sit further inside the channel than the boat itself does — a boat
     // grinding along the quay would otherwise reject every boom length and suck the camera in.
@@ -213,7 +291,10 @@
     }
     boom = U().damp(boom, bf, bf < boom ? 12 : 2.5, dt);       // retract fast, extend back slowly
     // a short boom has to come down with it or the shot turns into a plan view of your own deck
-    const up = (m.up + spd * m.upSpd) * (1 - 0.42 * spdN * m.spdK) * (0.42 + 0.58 * boom) * (1 - 0.42 * recov);
+    let up = (m.up + spd * m.upSpd) * (1 - 0.42 * spdN * m.spdK) * (0.42 + 0.58 * boom) * (1 - 0.42 * recov);
+    // hull height, and no lower: the wave floor below sits at +0.9 over the surface, so a lens that
+    // dived further would be shoved back up every frame and read as chatter, not as the water.
+    if (salW > 0.002) up = U().lerp(up, Math.min(up, SAL_UP), salW);
 
     let tx = boat.pos.x + ox * boom;
     let tz = boat.pos.z + oz * boom;
@@ -230,7 +311,9 @@
     let lookUpEff = m.lookUp;
     if (C._duck > 0.01 && isFinite(deckY)) {
       ty = U().lerp(ty, Math.min(ty, deckY - 1.45), C._duck);
-      lookUpEff = m.lookUp - 0.5 * C._duck;
+      // duckY is a 57 m blob and does not know a leaf is up, so it still asks the lens to look
+      // DOWN through a span that is standing wide open. The salute beat overrules it.
+      lookUpEff = m.lookUp - 0.5 * C._duck * (1 - salW);
     }
 
     // keep the pose the spring is chasing inside the channel too, or it drags the lens at the wall
@@ -278,12 +361,21 @@
       const ahead = boat.routeD + 46 + spd * 1.6;
       const d = rt.loop ? ((ahead % rt.len) + rt.len) % rt.len : Math.min(rt.len - 1, ahead);
       U().pathAt(rt, d, lpt);
-      const w = m.lead * (1 - recov) * (0.28 + 0.34 * spdN);
+      // pull the aim back off the route through the salute: the route point is ~90 m downstream at
+      // speed, and a lens tracking that swings the bridge out of frame exactly as it arrives.
+      const w = m.lead * (1 - recov) * (1 - 0.45 * salW) * (0.28 + 0.34 * spdN);
       lx = U().lerp(lx, lpt.x, w);
       lz = U().lerp(lz, lpt.z, w);
     }
     look.set(lx, boat.pos.y + lookUpEff, lz);
+    // Pitch up by an ANGLE rather than by metres, so the shot reads identically whatever the
+    // look-ahead reach happens to be. keepHullInFrame below is still the backstop.
+    if (salUp > 0.002) look.y += Math.tan(salUp * SAL_TILT) * Math.hypot(look.x - pos.x, look.z - pos.z);
 
+    // Unchanged by the salute, and deliberately: the beat pose measures 28 deg off axis against
+    // this 33 deg cap, so it clears without help. Tightening the fraction through the shot was
+    // tried and reverted — it clamped the pitch down by 2-4 deg (the whole point of the shot) and
+    // bought nothing measurable back in the wall-grinding stress harness.
     const gl = keepHullInFrame(cam, boat, 0.95);
 
     cam.position.copy(pos);
@@ -311,7 +403,7 @@
     const fovSpd = spdN * 9 * m.fovK;
     const bTgt = (boat.boostHeat || 0) * 14 * m.fovK;
     C._fovB = U().damp(C._fovB || 0, bTgt, bTgt > (C._fovB || 0) ? 12 : 2.5, dt);
-    const fovT = m.fov + fovSpd + C._fovB + (boat.airborne ? 3 : 0);
+    const fovT = m.fov + fovSpd + C._fovB + (boat.airborne ? 3 : 0) + salW * 6;
     if (Math.abs(cam.fov - fovT) > 0.03) { cam.fov += (fovT - cam.fov) * Math.min(1, 9 * dt); cam.updateProjectionMatrix(); }
 
     applyShake(cam, dt);

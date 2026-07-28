@@ -830,7 +830,11 @@
     skipOpening: () => {
       if (RR.Progress && RR.Progress.setSeenOpening) RR.Progress.setSeenOpening(true);
       if (RR.Opening && RR.Opening.active && RR.Opening.active()) RR.Opening.skip();
-      else { mode = 'menu'; if (RR.Menus.showTitle) RR.Menus.showTitle(); }
+      // No opening to skip (a tour or a race is up): go out the front door. Setting mode='menu'
+      // by hand leaves RR.Race.state() truthy on the title screen, which re-satisfies the `live`
+      // guard in bridges.js and puts the ambient tender's horn back under the title music — the
+      // exact bug already fixed once.
+      else { quitToTitle(); if (RR.Menus.showTitle) RR.Menus.showTitle(); }
       idleT = 0;
       return true;
     },

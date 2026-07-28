@@ -29,6 +29,7 @@
     BOOST_TANK: 0.90,       // physics.js pays 15% more for a boost lit from a tank this full
     BOOST_SPILL: 0.97,      // a tank this full is about to waste the next gate — light it
     SALUTE_RANGE: 240,      // metres at which a rival starts watching a bascule
+    SALUTE_QUEUE: 420,      // metres around a span inside which another hull is queueing for it
   };
 
   // The whole difficulty curve, as ROOKIE-value -> LEGEND-value pairs. `w` walks between them and
@@ -73,7 +74,27 @@
       // ---- THE SALUTE. Rivals ask for bridges too, and chain them: the bridge answers whoever
       // asked, so a span a rival opened is a span you can take. Difficulty governs how WELL —
       // whether they ask at all, and how close to the middle of the clear window they time it.
-      salute:     L(0.42, 1.00),      // 0.68  chance a rival asks for a given bascule
+      //
+      // 0.155 at SKIPPER is derived, not picked. Before firstToSpan() every hull in the field
+      // rolled its own dice at every bridge, so P(somebody asks) = 1 - (1 - 0.68)^5 = 99.7%: the
+      // river was pre-opened end to end and the player's horn was decorative. The queue leaves
+      // only the rivals that actually pass a span ahead of the player, in turn — an effective M
+      // askers per approach — so the pre-armed fraction is 1 - (1 - salute)^M. Measured on the
+      // Main Stem, six-boat field, player never asking (36 approaches per point except the first):
+      //     salute 0.331 -> 41.7% (M = ln 0.583 / ln 0.669 = 1.34, 24 approaches)
+      //     salute 0.226 -> 36.1% (M = ln 0.639 / ln 0.774 = 1.75)
+      //     salute 0.197 -> 38.9% (M = ln 0.611 / ln 0.803 = 2.24)
+      // Fitting the three, M ~ 2. Aiming at the middle of "a quarter to a third of the spans" —
+      // 0.29 — inverts to salute = 1 - (1 - 0.29)^(1/2) = 0.157, and the band is not exited
+      // anywhere in the measured spread of M (25.6% at M = 1.75, 31.7% at M = 2.24). The
+      // ROOKIE->LEGEND pair is that number opened out 3.2:1, which puts SKIPPER back on it:
+      // 0.07 + (0.225 - 0.07) * 0.5512 = 0.155. Verified at 15 of 54 approaches — 27.8% — over
+      // nine more races, and the difficulty ladder holds where it was asked to: a ROOKIE field
+      // pre-arms 3.0% of the spans in front of the player, a LEGEND field 22.2%. (LEGEND does not
+      // out-contest SKIPPER, because a LEGEND field runs roughly twice as tight and fewer of its
+      // boats ever reach the front of the queue. The linear pair caps LEGEND at 0.281 once
+      // SKIPPER is pinned, so opening that gap further needs a shape change, not a knob.)
+      salute:     L(0.070, 0.225),    // 0.155 chance the arriving rival asks for a given bascule
       saluteErr:  L(1.15, 0.08),      // 0.56  s of error on the ask, either side of ideal
       leadCap:    w < 0.15 ? 150 : 1e9,  // ROOKIE ONLY: a rival this far clear stops pressing it
       bandUp:     L(0.70, 1.00),      // 0.87  catch-UP band, used when the PLAYER is ahead
@@ -123,6 +144,34 @@
   //
   // The player's own salute belongs to salute.js. This never runs on the player's hull, or the
   // crossing would be paid twice.
+  //
+  // The tender answers ONE boat, and the one it answers is the boat that is actually arriving.
+  // A rival therefore only asks for a span it is plausibly first to. Distance alone is not the
+  // test — a hull 95 m out at 34 m/s beats one 88 m out at 26 — so the queue is judged in
+  // time-to-span, the same currency the ask itself is timed in. Without this every hull in the
+  // field rolled its own dice at every bridge, five trailing rivals blanket-armed the whole
+  // river, and the player's horn was decorative. With it, the boat that took your bridge is the
+  // boat you can see in front of you.
+  function firstToSpan(pilot, s, speed) {
+    const st = RR.Race && RR.Race.state && RR.Race.state();
+    if (!st || !st.boats) return true;
+    const b = pilot.boat;
+    const mine = -((b.pos.x - s.x) * s.tx + (b.pos.z - s.z) * s.tz);   // metres still to run
+    if (mine <= 0) return false;
+    const eta = mine / Math.max(6, speed);
+    const R2 = A.K.SALUTE_QUEUE * A.K.SALUTE_QUEUE;
+    for (let i = 0; i < st.boats.length; i++) {
+      const o = st.boats[i];
+      if (o === b || o.finished) continue;
+      const dx = o.pos.x - s.x, dz = o.pos.z - s.z;
+      if (dx * dx + dz * dz > R2) continue;                  // nowhere near this bridge
+      const rem = -(dx * s.tx + dz * s.tz);
+      if (rem <= 0) continue;                                // already through it
+      if (rem / Math.max(6, Math.hypot(o.vel.x, o.vel.z)) < eta) return false;
+    }
+    return true;
+  }
+
   function saluteCrossed(pilot, s) {
     const Br = RR.Bridges, o = s.opening;
     if (!o || o.open <= Br.CLEAN_OPEN) { pilot.chain = 0; return; }
@@ -169,6 +218,10 @@
     const dx = pilot.span.x - b.pos.x, dz = pilot.span.z - b.pos.z;
     const at = U().clamp(Math.max(6, speed) * pilot.spanAsk, Br.WINDOW_NEAR_M + 4, Br.WINDOW_M - 4);
     if (dx * dx + dz * dz > at * at) return;
+    // The queue is read once, at the moment the ask would go in, and a rival that is not first
+    // gives the span up rather than asking late — a leaf that starts rising as its asker passes
+    // underneath is worth nothing to anybody and hands the boat behind a randomly timed bridge.
+    if (!firstToSpan(pilot, pilot.span, speed)) { pilot.spanAsk = 0; return; }
     if (!Br.arm(pilot.span, 0, 'rival')) { pilot.spanAsk = 0; return; }
     pilot.spanAsk = 0;
     // audio.js is frozen, so both of these are optional and guarded, and they only sound when the
