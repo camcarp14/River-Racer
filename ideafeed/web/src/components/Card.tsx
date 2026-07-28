@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { FeedItem } from '../types';
+import type { CandidateItem } from '../types';
 import { Expand, Num } from './primitives';
 import { ageLabel, compact, languageColor, relative, velocityLabel } from '../lib/format';
 
@@ -12,7 +12,7 @@ const BREAKDOWN_LABELS: Record<string, string> = {
 };
 
 interface Props {
-  item: FeedItem;
+  item: CandidateItem;
   isNew: boolean;
   bookmarked: boolean;
   opened: boolean;
@@ -59,25 +59,15 @@ export function Card({
 
         <div className="card-top-right">
           {isNew && <span className="pill new">new</span>}
-          {item.novelty != null && (
-            <span
-              className={`pill novelty${item.novelty >= 70 ? ' high' : ''}`}
-              title="How novel the idea looks, 0–100"
-            >
-              {item.novelty}
+          {item.skills_extracted > 0 && (
+            <span className="pill published" title="Skills extracted from this repo">
+              {item.skills_extracted} skill{item.skills_extracted === 1 ? '' : 's'}
             </span>
           )}
         </div>
       </header>
 
       <p className="hook">{item.hook}</p>
-
-      {item.why && (
-        <p className="why">
-          <span className="why-tag">why</span>
-          {item.why}
-        </p>
-      )}
 
       <div className="meta">
         {item.language && (
@@ -96,6 +86,11 @@ export function Card({
         )}
         <span className="meta-item mono">{velocityLabel(item.star_velocity)}</span>
         <span className="meta-item">{ageLabel(item.age_days)}</span>
+        {item.doc_files.length > 0 && (
+          <span className="meta-item" title={item.doc_files.join(', ')}>
+            {item.doc_files.length} doc{item.doc_files.length === 1 ? '' : 's'} read
+          </span>
+        )}
         <span className="meta-item dim">found {relative(item.first_seen)}</span>
       </div>
 
@@ -156,9 +151,12 @@ export function Card({
             </div>
           ))}
           <p className="breakdown-note">
-            {item.enriched
-              ? 'Summary and novelty rating written by the enrichment pass.'
-              : 'Heuristic summary — this item has not been through the enrichment pass.'}
+            {item.ai_signals.length > 0
+              ? `Kept by the AI filter on: ${item.ai_signals.join(', ')}.`
+              : 'Kept by the AI filter.'}{' '}
+            {item.skills_extracted > 0
+              ? `${item.skills_extracted} skill${item.skills_extracted === 1 ? '' : 's'} extracted so far.`
+              : 'No reusable workflow extracted from its docs yet.'}
           </p>
         </div>
       </Expand>

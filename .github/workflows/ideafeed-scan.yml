@@ -1,23 +1,27 @@
 name: ideafeed scan
 
-# Scans GitHub for novel projects and commits the refreshed feed.
+# Runs the pipeline: scout -> filter -> read -> extract -> score -> generate ->
+# review -> publish. The refreshed feed is committed straight to this branch;
+# any newly approved skills go out as a pull request instead, so nothing is
+# published to the skills directory without a human merging it.
 #
 # Note: GitHub only runs `schedule` triggers on the repository's default branch.
-# Until this branch is merged, use the "Run workflow" button (workflow_dispatch)
-# and pick this branch.
+# Until this branch is merged, use the "Run workflow" button and pick it.
 
 on:
   schedule:
     - cron: '17 */2 * * *' # every two hours, off the hour to avoid the rush
   workflow_dispatch:
     inputs:
-      skip_enrichment:
-        description: 'Skip the LLM enrichment pass'
-        type: boolean
-        default: false
+      mode:
+        description: 'Pipeline mode'
+        type: choice
+        default: full
+        options: [full, no-llm, mock-llm]
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: ideafeed-scan-${{ github.ref }}
@@ -26,7 +30,7 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -41,25 +45,78 @@ jobs:
         working-directory: ideafeed/scanner
         run: npm ci
 
-      - name: Scan
+      - name: Test
+        working-directory: ideafeed/scanner
+        run: npm test
+
+      - name: Run the pipeline
         working-directory: ideafeed/scanner
         env:
           # The default token is enough: everything the scanner reads is public,
           # and it raises the API limit from 60/hr to 5000/hr.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional. Without it the scanner falls back to heuristic summaries.
+          # Optional. Without it, stages 4-8 are skipped and only candidates are
+          # collected — the run still succeeds.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: node scan.mjs ${{ inputs.skip_enrichment && '--no-llm' || '' }}
+        run: |
+          case "${{ inputs.mode || 'full' }}" in
+            no-llm)   node scan.mjs --no-llm ;;
+            mock-llm) node scan.mjs --mock-llm ;;
+            *)        node scan.mjs ;;
+          esac
 
       - name: Commit the refreshed feed
         run: |
-          if git diff --quiet -- ideafeed/web/public/feed.json; then
-            echo "No feed changes."
-            exit 0
-          fi
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ideafeed/web/public/feed.json
-          count=$(node -e "console.log(require('./ideafeed/web/public/feed.json').stats.new_this_run)")
-          git commit -m "ideafeed: refresh feed (${count} new)"
-          git push
+
+          if git diff --quiet -- ideafeed/web/public/feed.json; then
+            echo "No feed changes."
+          else
+            new=$(node -e "console.log(require('./ideafeed/web/public/feed.json').stats.new_skills_this_run)")
+            git add ideafeed/web/public/feed.json
+            git commit -m "ideafeed: refresh feed (${new} new skills)"
+            git push
+          fi
+
+      - name: Open a pull request for newly published skills
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Skills are written to ideafeed/skills/ only when the reviewer
+          # approved them AND they cleared the rule-based threshold. They still
+          # go through a PR rather than straight onto the branch.
+          if [ -z "$(git status --porcelain -- ideafeed/skills)" ]; then
+            echo "No new skills this run."
+            exit 0
+          fi
+
+          count=$(git status --porcelain -- ideafeed/skills | grep -c 'SKILL.md' || true)
+          branch="ideafeed/skills-$(date -u +%Y%m%d-%H%M)"
+
+          git checkout -b "$branch"
+          git add ideafeed/skills
+          git commit -m "ideafeed: ${count} new skill(s)"
+          git push -u origin "$branch"
+
+          names=$(git show --stat --name-only --pretty=format: HEAD \
+            | grep 'SKILL.md' | sed 's|ideafeed/skills/||; s|/SKILL.md||' | sed 's/^/- /')
+
+          gh pr create \
+            --base "${GITHUB_REF_NAME}" \
+            --head "$branch" \
+            --title "ideafeed: ${count} new skill(s)" \
+            --body "$(cat <<EOF
+          Extracted by the ideafeed pipeline from repositories discovered on GitHub.
+
+          Each of these passed the rule-based skill score **and** the reviewer stage.
+          Worth checking before merge: that every step is actually in the source
+          project's documentation, and that the \`description\` line would route
+          correctly if an agent matched against it.
+
+          ${names}
+
+          ---
+          _Generated by [Claude Code](https://claude.ai/code)_
+          EOF
+          )"

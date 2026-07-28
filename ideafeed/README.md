@@ -1,19 +1,38 @@
 # ideafeed
 
-A quiet feed of novel projects appearing on GitHub.
+A self-running pipeline that mines GitHub for reusable agent skills, and a feed
+for reviewing what it finds.
 
-A scanner runs every couple of hours, sweeps GitHub for repositories that look
-like genuinely new ideas rather than yet another awesome-list, cleans up what it
-finds into a readable one-liner, and commits the result as a static JSON file. A
-small web app reads that file and shows it as a feed you can skim, save from, and
-come back to.
-
-There is no server, no database and no account. The scanner is a cron job, the
-feed is a file, the app is static, and your saves live in your browser.
+Every couple of hours it sweeps GitHub for new AI projects, reads their
+documentation, extracts the reusable workflows buried in there, writes each one
+up as a `SKILL.md`, scores it, reviews it, and opens a pull request for the ones
+that survive. The web app is where you skim the output, read the generated
+skills, and save the ones worth coming back to.
 
 ```
-GitHub Search API  →  scanner (GitHub Actions, every 2h)  →  feed.json  →  web app
+                  ┌── GitHub Trending (daily + weekly)
+    1. Scout   ───┤
+                  └── GitHub Search (configurable lanes)
+                              │
+    2. Filter  ── keep AI projects (rules, not a model call)
+                              │
+    3. Reader  ── read the docs first: SKILL.md, AGENTS.md, docs/, examples/
+                              │
+    4. Extract ── pull out reusable workflows the docs actually teach
+                              │
+    5. Score   ── rules: specificity, actionability, grounding, reusability
+                              │
+    6. Generate ─ write the SKILL.md
+                              │
+    7. Review  ── adversarial pass: approve / hold / reject
+                              │
+    8. Publish ── approved skills → ideafeed/skills/ → pull request
+                              │
+                        feed.json → web app
 ```
+
+There is no server and no database. The pipeline is a cron job, the feed is a
+static file, the app is static, and your saves live in your browser.
 
 ---
 
@@ -21,116 +40,126 @@ GitHub Search API  →  scanner (GitHub Actions, every 2h)  →  feed.json  → 
 
 | Path | What it is |
 | --- | --- |
-| `scanner/scan.mjs` | The scan: search → score → summarise → merge → write |
-| `scanner/config.json` | Everything tunable: lanes, scoring weights, limits |
-| `scanner/lib/` | GitHub client, scoring, README summariser, LLM enrichment |
+| `scanner/scan.mjs` | The pipeline, stage by stage |
+| `scanner/config.json` | Everything tunable: lanes, filter, scoring, limits |
+| `scanner/lib/trending.mjs` | Stage 1 — GitHub Trending (no API, so it parses HTML) |
+| `scanner/lib/filter.mjs` | Stage 2 — the AI-project filter |
+| `scanner/lib/docs.mjs` | Stage 3 — finds and reads the documentation |
+| `scanner/lib/pipeline.mjs` | Stages 4, 6, 7 — extract, generate, review |
+| `scanner/lib/skillscore.mjs` | Stage 5 — the rule-based skill score |
+| `scanner/lib/skillfile.mjs` | Stage 8 — renders and writes `SKILL.md` |
+| `scanner/test/` | Offline tests for every stage that has no network in it |
+| `skills/` | Published skills. Written by the pipeline, merged by you |
 | `web/` | Vite + React + TypeScript app |
-| `web/public/feed.json` | The feed. Written by the scanner, read by the app |
-| `../.github/workflows/ideafeed-scan.yml` | The cron job |
-| `../.github/workflows/ideafeed-deploy.yml` | Optional GitHub Pages deploy (manual) |
+| `web/public/feed.json` | The feed. Written by the pipeline, read by the app |
 
 ---
 
-## Running it locally
+## Running it
 
 ```bash
-# 1. Fill the feed (a GitHub token is optional but strongly recommended —
-#    it raises the API limit from 60/hour to 5000/hour)
 cd scanner
 npm install
-GITHUB_TOKEN=ghp_… node scan.mjs
+npm test                        # 18 offline tests, no network, no key
 
-# 2. Look at it
-cd ../web
-npm install
-npm run dev
+# A GitHub token is optional but strongly recommended: it raises the API limit
+# from 60/hour to 5000/hour, and stage 3 reads several files per repository.
+GITHUB_TOKEN=ghp_… ANTHROPIC_API_KEY=sk-ant-… node scan.mjs
+
+cd ../web && npm install && npm run dev
 ```
 
-Useful scanner flags:
+| Flag | What it does |
+| --- | --- |
+| `--dry` | Runs every stage, writes nothing |
+| `--no-llm` | Stages 1–3 only: collect candidates, generate no skills |
+| `--mock-llm` | Runs all eight stages against deterministic stand-ins |
+| `IDEAFEED_CONFIG=./other.json` | Use a different config |
 
-```bash
-node scan.mjs --dry      # scan and print, write nothing
-node scan.mjs --no-llm   # skip enrichment even if a key is set
-IDEAFEED_CONFIG=./my-lanes.json node scan.mjs   # try a different lane set
-```
+**`--mock-llm` is worth knowing about.** It exercises the whole pipeline —
+extraction, generation, scoring, review, the publish gate and the app that reads
+the result — without an API key and without spending anything. Everything it
+produces is tagged `mock`, is refused by the publish gate, and is labelled as
+such in the UI. Use it to check wiring, never to judge output quality.
 
 ---
 
-## How something gets into the feed
+## The stages
 
-**1. Lanes.** `config.json` defines a handful of GitHub searches — brand new
-repos with traction, young repos still under 250 stars, plus topic lanes for
-agents, devtools, local-first, graphics and a couple of odd-language lanes. Each
-lane is a plain GitHub search query with a `{{days:N}}` placeholder for dates, so
-adding your own is a two-line edit.
+**1. Scout.** Two sources. GitHub Trending covers daily and weekly windows across
+several languages; the search lanes in `config.json` cover the rest — brand-new
+repos with traction, young repos under 250 stars, and topic lanes for agents,
+RAG, MCP, devtools. Trending has no API, so that half parses HTML and is the
+most fragile thing here; when it fails the run says so and the search lanes carry
+it.
 
-**2. Scoring.** Five components, weighted to sum to 100:
+**2. Filter.** Keeps AI projects, using rules rather than a model call — it runs
+on several hundred repos per run, so it has to be free. One strong signal (an
+`llm` topic, "agentic" in the description) or two weak ones is enough.
 
-| Component | What it measures |
-| --- | --- |
-| Momentum | Stars per day since creation, log-scaled |
-| Freshness | Full marks under a week old, decaying to zero at a year |
-| Novelty | Keyword and shape heuristics — see below |
-| Substance | Is there a real README, description, topics, a license |
-| Under the radar | A bell curve peaking around 400 stars |
+**3. Reader.** The README says what a project is; the docs say how people use it,
+which is where workflows live. This stage walks the file tree once and reads the
+best few markdown files it finds, preferring any `SKILL.md`, `AGENTS.md` or
+`CLAUDE.md` the repo already ships, then shallow files under `docs/`,
+`guides/` and `examples/`.
 
-The novelty component is the one doing the interesting work. It penalises the
-words that reliably mark a repo as *not* an idea — awesome, boilerplate, roadmap,
-cheatsheet, tutorial, clone of, 100 days — and rewards the ones that mark a real
-mechanism: compiler, allocator, wire protocol, from scratch, CRDT, decompiler.
-Odd languages get a bump, missing descriptions get a penalty, forks and archived
-repos get a large one. Anything over 90k stars is excluded outright: you already
-know about it.
+**4. Extract.** Pulls out reusable workflows — repeatable procedures with a
+trigger and steps. The prompt is explicit that most repositories don't have one
+and that an empty result is the correct answer, because the failure mode here is
+stretching an install guide into a "workflow".
 
-**3. Enrichment (optional).** If `ANTHROPIC_API_KEY` is set, the top new items
-from each run go to Claude in small batches, which writes the one-line hook, a
-sentence on what's actually new, a few tags, and a 0–100 novelty rating that
-nudges the final score by up to ±12 points. The prompt tells it plainly that most
-repos are not novel and that a 30 is a normal answer, because a rating that's
-always 80 is the same as no rating.
+**5. Score.** Five rules, weighted to sum to 100. The one doing the real work is
+**grounding**: it pulls the distinctive vocabulary out of the generated skill —
+code identifiers, CLI flags, dotted paths — and checks how much of it actually
+appears in the source docs. A skill full of terms the documentation never
+mentions was written from the model's priors, not from the project, and this
+catches that without asking a model to mark its own homework.
 
-Without a key, nothing breaks — the feed falls back to a heuristic summariser
-that strips badges, logos, nav rows and install instructions out of the README
-and keeps the first line that actually describes the project.
+**6. Generate.** Writes the `SKILL.md`. The `description` line gets the most
+attention because it's what an agent matches against when deciding whether to
+load the skill at all.
 
-**4. Merging.** Each run merges into the existing feed rather than replacing it.
-Items keep their `first_seen` date and the star count they had when first found,
-which is where the "+340 since found" figure on each card comes from. Items not
-seen for 45 days age out.
+**7. Review.** A separate adversarial pass whose job is to find the reason the
+skill *shouldn't* ship. Extraction, writing and reviewing are three different
+tasks; folding them into one call produces a skill that reviews itself well.
+
+**8. Publish.** A skill is written to `skills/` only if the reviewer approved it
+*and* it cleared the rule threshold. Those go out as a pull request, never
+straight onto the branch — the model decides what's worth proposing, you decide
+what's worth keeping.
 
 ---
 
 ## The app
 
-- **Feed / Saved / Archive.** Save keeps something for later; archive hides it
-  from the feed without deleting it.
-- **Lanes and search.** Filter to a lane, or search across names, hooks, tags and
-  languages.
-- **Sorting.** Most interesting, newest find, fastest moving, most stars.
-- **New since last visit.** The app remembers when you last looked and marks
-  everything that showed up since.
-- **Score breakdown.** The number on each card expands into the five components,
-  so you can see why something surfaced instead of taking the number on faith.
-- **Keyboard.** `j`/`k` move, `o` open, `b` save, `x` archive, `/` search,
-  `1`/`2`/`3` switch views, `⌘K` for the command palette.
-- **Export.** Saved items come back out as JSON.
+- **Skills** — the pipeline's output. Each card shows the routing description,
+  the source repo, the reviewer's verdict, and expands into the full rendered
+  `SKILL.md` with a copy button.
+- **Candidates** — repos that passed scout and filter but haven't produced a
+  skill. Most never will, which is the point.
+- **Saved / Archive** — save keeps something for later; archive hides it without
+  deleting it.
+- **Score breakdown** — the number on every card expands into its components, so
+  you can see *why* something scored the way it did.
+- **Keyboard** — `j`/`k` move, `o` opens the source, `b` saves, `x` archives,
+  `/` searches, `1`–`4` switch views, `⌘K` for the command palette.
+- **Export** — saved items come back out as JSON.
 
-Saves live in `localStorage` under `ideafeed.state.v1`. That's deliberate — no
-account, works offline, nothing to run. If you ever want them synced across
-devices, `web/src/lib/store.ts` defines an `IdeaStore` interface with a local
-implementation; a Supabase version is a drop-in replacement and no component
-changes.
+Saves live in `localStorage` under `ideafeed.state.v1`. If you ever want them
+synced across devices, `web/src/lib/store.ts` defines an `IdeaStore` interface
+with a local implementation; a Supabase version is a drop-in replacement and no
+component changes.
 
 ---
 
 ## Deploying
 
-**Netlify** (easiest): import the repo, set the base directory to `ideafeed/web`.
+**Netlify**: import the repo, set the base directory to `ideafeed/web`.
 `web/netlify.toml` handles build, caching and SPA routing.
 
-**GitHub Pages**: Settings → Pages → Source: "GitHub Actions", then run the
-*ideafeed deploy* workflow manually. It's manual on purpose — publishing to Pages
-replaces whatever else the repository currently serves there.
+**GitHub Pages**: Settings → Pages → Source "GitHub Actions", then run the
+*ideafeed deploy* workflow. It's manual on purpose — publishing to Pages replaces
+whatever else the repository serves there.
 
 Either way the scan workflow keeps committing `feed.json`, and each commit
 triggers a rebuild, so the live site stays current on its own.
@@ -139,25 +168,26 @@ triggers a rebuild, so the live site stays current on its own.
 
 ## Secrets
 
-| Secret | Needed? | Effect |
+| Secret | Needed? | Without it |
 | --- | --- | --- |
-| `GITHUB_TOKEN` | Provided automatically in Actions | Raises the API limit from 60/hr to 5000/hr |
-| `ANTHROPIC_API_KEY` | Optional | Enables the enrichment pass |
+| `GITHUB_TOKEN` | Provided automatically in Actions | 60 requests/hour, so stage 3 reads almost nothing |
+| `ANTHROPIC_API_KEY` | Optional | Stages 4–8 are skipped; candidates are still collected |
 
-Add the Anthropic key under Settings → Secrets and variables → Actions. The run
-cost is bounded by `limits.maxNewEnrichmentsPerRun` in `config.json` (36 items
-per run by default, in batches of 6).
+Cost is bounded by `limits.maxSkillsPerRun` (8 per run) and
+`limits.maxCandidatesPerRun` (40 repos read per run). Extraction and review are
+batched; generation is one call per skill.
 
 ---
 
 ## Tuning it
 
-Almost everything worth changing is in `scanner/config.json`:
+Everything worth changing is in `scanner/config.json`:
 
-- **Different interests?** Edit `lanes`. Any GitHub search query works.
-- **Too much noise?** Raise the `novelty` weight, or add the offending words to
-  `penalizeKeywords`.
-- **Too obscure?** Raise `obscurityIdealStars` or lower the `obscurity` weight.
-- **Too expensive?** Lower `maxNewEnrichmentsPerRun`, or set
-  `enrichment.enabled` to `false`.
-- **Scan more or less often?** The cron expression in the workflow.
+- **Different interests?** `scout.lanes` — any GitHub search query works.
+- **Wrong things getting through the filter?** `filter.strongKeywords` /
+  `weakKeywords`, or raise `requireScore`.
+- **Skills too generic?** Raise `skillScoring.publishThreshold`, or add the
+  offending phrasing to `genericPhrases`.
+- **Not finding docs?** `reader.preferredFiles` and `docDirectories`.
+- **Too expensive?** Lower `maxSkillsPerRun`, or set `enrichment.enabled: false`.
+- **Different cadence?** The cron expression in `ideafeed-scan.yml`.

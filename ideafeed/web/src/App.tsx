@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Feed, FeedItem, SortKey, View } from './types';
+import { isCandidate, isSkill } from './types';
 import { Card } from './components/Card';
+import { SkillCard } from './components/SkillCard';
 import { CommandK, SkFeed, ToastProvider, useToast, type Command } from './components/primitives';
 import { downloadJson, readTheme, store, writeTheme, type StoreState, type Theme } from './lib/store';
 import { relative } from './lib/format';
@@ -8,17 +10,21 @@ import { relative } from './lib/format';
 const FEED_URL = `${import.meta.env.BASE_URL}feed.json`;
 
 const SORTS: { key: SortKey; label: string }[] = [
-  { key: 'score', label: 'Most interesting' },
-  { key: 'newest', label: 'Newest find' },
+  { key: 'score', label: 'Highest scoring' },
+  { key: 'newest', label: 'Newest' },
   { key: 'momentum', label: 'Fastest moving' },
   { key: 'stars', label: 'Most stars' },
 ];
 
 const VIEWS: { key: View; label: string }[] = [
-  { key: 'feed', label: 'Feed' },
+  { key: 'skills', label: 'Skills' },
+  { key: 'candidates', label: 'Candidates' },
   { key: 'saved', label: 'Saved' },
   { key: 'archive', label: 'Archive' },
 ];
+
+/** Sort keys that only mean something for repos. */
+const REPO_ONLY_SORTS: SortKey[] = ['momentum', 'stars'];
 
 function App() {
   const toast = useToast();
@@ -31,7 +37,7 @@ function App() {
   /** The visit timestamp from *before* this session — drives the "new" pills. */
   const previousVisit = useRef<string | null>(null);
 
-  const [view, setView] = useState<View>('feed');
+  const [view, setView] = useState<View>('skills');
   const [sort, setSort] = useState<SortKey>('score');
   const [lane, setLane] = useState<string>('all');
   const [query, setQuery] = useState('');
@@ -103,51 +109,76 @@ function App() {
     let list = all.filter((item) => {
       if (view === 'saved') return bookmarks.has(item.id);
       if (view === 'archive') return archived.has(item.id);
-      return !archived.has(item.id);
+      if (archived.has(item.id)) return false;
+      return view === 'skills' ? isSkill(item) : isCandidate(item);
     });
 
-    if (lane !== 'all') list = list.filter((item) => item.lanes.includes(lane));
-
-    if (needle) {
-      list = list.filter((item) =>
-        [
-          item.full_name,
-          item.hook,
-          item.why ?? '',
-          item.language ?? '',
-          item.tags.join(' '),
-          item.topics.join(' '),
-        ]
-          .join(' ')
-          .toLowerCase()
-          .includes(needle),
-      );
+    if (lane !== 'all') {
+      list = list.filter((item) => isCandidate(item) && item.lanes.includes(lane));
     }
 
-    const sorted = [...list];
-    sorted.sort((a, b) => {
+    if (needle) {
+      list = list.filter((item) => {
+        const haystack = isSkill(item)
+          ? [
+              item.name,
+              item.description,
+              item.body,
+              item.source.full_name,
+              item.source.language ?? '',
+              (item.tools ?? []).join(' '),
+            ]
+          : [
+              item.full_name,
+              item.hook,
+              item.language ?? '',
+              item.tags.join(' '),
+              item.topics.join(' '),
+            ];
+        return haystack.join(' ').toLowerCase().includes(needle);
+      });
+    }
+
+    const scoreOf = (item: FeedItem) => (isSkill(item) ? item.skill_score : item.score);
+    const starsOf = (item: FeedItem) => (isSkill(item) ? item.source.stars : item.stars);
+    const velocityOf = (item: FeedItem) => (isSkill(item) ? 0 : item.star_velocity);
+
+    return [...list].sort((a, b) => {
       switch (sort) {
         case 'newest':
           return new Date(b.first_seen).getTime() - new Date(a.first_seen).getTime();
         case 'momentum':
-          return b.star_velocity - a.star_velocity;
+          return velocityOf(b) - velocityOf(a);
         case 'stars':
-          return b.stars - a.stars;
+          return starsOf(b) - starsOf(a);
         default:
-          return b.score - a.score;
+          return scoreOf(b) - scoreOf(a);
       }
     });
-    return sorted;
   }, [feed, view, lane, query, sort, bookmarks, archived]);
 
   const newCount = useMemo(
-    () => (feed?.items ?? []).filter((item) => isNew(item) && !archived.has(item.id)).length,
+    () =>
+      (feed?.items ?? []).filter(
+        (item) => isSkill(item) && isNew(item) && !archived.has(item.id),
+      ).length,
     [feed, isNew, archived],
   );
 
   useEffect(() => {
     setSelected(0);
   }, [view, lane, sort, query]);
+
+  // Lanes and repo-only sorts don't apply to the skills view.
+  const showLanes = view === 'candidates' || view === 'saved' || view === 'archive';
+  const sortOptions = useMemo(
+    () => (view === 'skills' ? SORTS.filter((s) => !REPO_ONLY_SORTS.includes(s.key)) : SORTS),
+    [view],
+  );
+  useEffect(() => {
+    if (view === 'skills' && REPO_ONLY_SORTS.includes(sort)) setSort('score');
+    if (view === 'skills' && lane !== 'all') setLane('all');
+  }, [view, sort, lane]);
 
   /* ------------------------------ actions ------------------------------ */
 
@@ -160,14 +191,16 @@ function App() {
     });
   };
 
+  const labelOf = (item: FeedItem) => (isSkill(item) ? item.slug ?? item.name : item.name);
+
   const toggleBookmark = (item: FeedItem) => {
     toggleIn('bookmarks', item.id);
-    toast(bookmarks.has(item.id) ? 'Removed from saved' : `Saved ${item.name}`);
+    toast(bookmarks.has(item.id) ? 'Removed from saved' : `Saved ${labelOf(item)}`);
   };
 
   const toggleArchive = (item: FeedItem) => {
     toggleIn('dismissed', item.id);
-    toast(archived.has(item.id) ? `Restored ${item.name}` : `Archived ${item.name}`);
+    toast(archived.has(item.id) ? `Restored ${labelOf(item)}` : `Archived ${labelOf(item)}`);
   };
 
   const markOpened = (item: FeedItem) => {
@@ -182,7 +215,7 @@ function App() {
     const item = visible[selected];
     if (!item) return;
     markOpened(item);
-    window.open(item.url, '_blank', 'noopener,noreferrer');
+    window.open(isSkill(item) ? item.source.url : item.url, '_blank', 'noopener,noreferrer');
   };
 
   const exportSaved = () => {
@@ -245,12 +278,15 @@ function App() {
           searchRef.current?.focus();
           break;
         case '1':
-          setView('feed');
+          setView('skills');
           break;
         case '2':
-          setView('saved');
+          setView('candidates');
           break;
         case '3':
+          setView('saved');
+          break;
+        case '4':
           setView('archive');
           break;
         default:
@@ -269,7 +305,7 @@ function App() {
   /* ---------------------------- command palette ---------------------------- */
 
   const commands: Command[] = useMemo(() => {
-    const list: Command[] = [
+    return [
       ...VIEWS.map((v) => ({
         id: `view-${v.key}`,
         label: `Go to ${v.label}`,
@@ -286,13 +322,19 @@ function App() {
         id: 'lane-all',
         label: 'Show all lanes',
         keywords: ['filter', 'lane', 'reset'],
-        run: () => setLane('all'),
+        run: () => {
+          setView('candidates');
+          setLane('all');
+        },
       },
       ...lanes.map((l) => ({
         id: `lane-${l.id}`,
-        label: `Filter to ${l.label}`,
+        label: `Filter candidates to ${l.label}`,
         keywords: ['lane', 'filter', l.label.toLowerCase()],
-        run: () => setLane(l.id),
+        run: () => {
+          setView('candidates');
+          setLane(l.id);
+        },
       })),
       {
         id: 'refresh',
@@ -313,13 +355,17 @@ function App() {
         run: () => setTheme(theme === 'dark' ? 'light' : 'dark'),
       },
     ];
-    return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lanes, theme, feed, bookmarks]);
 
   /* ------------------------------- render ------------------------------- */
 
   cardRefs.current = [];
+
+  const subtitle = feed
+    ? `${feed.stats.skills} skills · ${feed.stats.published} published · ` +
+      `${feed.stats.candidates} candidates · ${relative(feed.generated_at)}`
+    : 'Mining GitHub for reusable agent skills';
 
   return (
     <div className="app">
@@ -329,11 +375,7 @@ function App() {
             <span className="brand-mark" aria-hidden="true" />
             <div>
               <h1>ideafeed</h1>
-              <p className="sub">
-                {feed
-                  ? `${feed.stats.total} projects · updated ${relative(feed.generated_at)}`
-                  : 'Scanning GitHub for things worth a second look'}
-              </p>
+              <p className="sub">{subtitle}</p>
             </div>
           </div>
 
@@ -344,7 +386,7 @@ function App() {
                 ref={searchRef}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search the feed…"
+                placeholder="Search…"
                 aria-label="Search the feed"
               />
               {query && (
@@ -390,7 +432,7 @@ function App() {
           <label className="sort">
             <span className="sr-only">Sort by</span>
             <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
-              {SORTS.map((s) => (
+              {sortOptions.map((s) => (
                 <option key={s.key} value={s.key}>
                   {s.label}
                 </option>
@@ -399,7 +441,7 @@ function App() {
           </label>
         </div>
 
-        {lanes.length > 0 && (
+        {showLanes && lanes.length > 0 && (
           <div className="lanes" role="group" aria-label="Filter by lane">
             <button className={`chip${lane === 'all' ? ' on' : ''}`} onClick={() => setLane('all')}>
               All
@@ -419,10 +461,31 @@ function App() {
       </header>
 
       <main className="main">
-        {newCount > 0 && view === 'feed' && (
+        {feed?.mode === 'mock' && (
+          <div className="banner warn pagefade">
+            <span className="banner-dot" />
+            <span>
+              This feed was generated in mock mode — skills here are placeholders, not
+              real output. Run the scanner with an <code>ANTHROPIC_API_KEY</code> for real
+              ones.
+            </span>
+          </div>
+        )}
+
+        {feed?.mode === 'unavailable' && (
+          <div className="banner warn pagefade">
+            <span className="banner-dot" />
+            <span>
+              No <code>ANTHROPIC_API_KEY</code> was set on the last run, so no skills were
+              generated. Candidates are still being collected.
+            </span>
+          </div>
+        )}
+
+        {newCount > 0 && view === 'skills' && (
           <div className="banner pagefade">
             <span className="banner-dot" />
-            {newCount} new since your last visit
+            {newCount} new skill{newCount === 1 ? '' : 's'} since your last visit
             <button className="btn ghost tiny" onClick={() => setSort('newest')}>
               Show newest first
             </button>
@@ -450,37 +513,56 @@ function App() {
             view={view}
             query={query}
             lane={lane}
+            feed={feed}
             onReset={() => {
               setQuery('');
               setLane('all');
             }}
-            onGoFeed={() => setView('feed')}
+            onGoCandidates={() => setView('candidates')}
+            onGoSkills={() => setView('skills')}
           />
         )}
 
         {!loading && !error && visible.length > 0 && (
           <div className="pagefade" key={`${view}-${lane}-${sort}`}>
             <div className="feed stagger">
-              {visible.map((item, i) => (
-                <Card
-                  key={item.id}
-                  item={item}
-                  isNew={isNew(item)}
-                  bookmarked={bookmarks.has(item.id)}
-                  archived={archived.has(item.id)}
-                  opened={opened.has(item.id)}
-                  selected={i === selected}
-                  onBookmark={() => toggleBookmark(item)}
-                  onArchive={() => toggleArchive(item)}
-                  onOpen={() => markOpened(item)}
-                  cardRef={(el) => {
-                    cardRefs.current[i] = el;
-                  }}
-                />
-              ))}
+              {visible.map((item, i) =>
+                isSkill(item) ? (
+                  <SkillCard
+                    key={item.id}
+                    item={item}
+                    isNew={isNew(item)}
+                    bookmarked={bookmarks.has(item.id)}
+                    archived={archived.has(item.id)}
+                    selected={i === selected}
+                    onBookmark={() => toggleBookmark(item)}
+                    onArchive={() => toggleArchive(item)}
+                    cardRef={(el) => {
+                      cardRefs.current[i] = el;
+                    }}
+                  />
+                ) : (
+                  <Card
+                    key={item.id}
+                    item={item}
+                    isNew={isNew(item)}
+                    bookmarked={bookmarks.has(item.id)}
+                    archived={archived.has(item.id)}
+                    opened={opened.has(item.id)}
+                    selected={i === selected}
+                    onBookmark={() => toggleBookmark(item)}
+                    onArchive={() => toggleArchive(item)}
+                    onOpen={() => markOpened(item)}
+                    cardRef={(el) => {
+                      cardRefs.current[i] = el;
+                    }}
+                  />
+                ),
+              )}
             </div>
             <p className="footnote">
-              {visible.length} shown · scanned every few hours ·{' '}
+              {visible.length} shown
+              {feed ? ` · ${feed.stats.scanned} repos scanned last run` : ''} ·{' '}
               <button className="linklike" onClick={exportSaved}>
                 export saved
               </button>
@@ -491,7 +573,7 @@ function App() {
 
       <div className="keyhints" aria-hidden="true">
         <kbd>j</kbd>
-        <kbd>k</kbd> move · <kbd>o</kbd> open · <kbd>b</kbd> save · <kbd>x</kbd> archive ·{' '}
+        <kbd>k</kbd> move · <kbd>o</kbd> source · <kbd>b</kbd> save · <kbd>x</kbd> archive ·{' '}
         <kbd>/</kbd> search
       </div>
 
@@ -533,10 +615,7 @@ function ThemeIcon({ theme }: { theme: Theme }) {
   }
   return (
     <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-      <path
-        d="M13.2 10.1A5.6 5.6 0 0 1 6 2.8a5.7 5.7 0 1 0 7.2 7.3Z"
-        fill="currentColor"
-      />
+      <path d="M13.2 10.1A5.6 5.6 0 0 1 6 2.8a5.7 5.7 0 1 0 7.2 7.3Z" fill="currentColor" />
     </svg>
   );
 }
@@ -545,21 +624,25 @@ function EmptyState({
   view,
   query,
   lane,
+  feed,
   onReset,
-  onGoFeed,
+  onGoCandidates,
+  onGoSkills,
 }: {
   view: View;
   query: string;
   lane: string;
+  feed: Feed | null;
   onReset: () => void;
-  onGoFeed: () => void;
+  onGoCandidates: () => void;
+  onGoSkills: () => void;
 }) {
   if (query || lane !== 'all') {
     return (
       <div className="state pagefade">
         <h2>Nothing matches that</h2>
         <p>
-          No projects match{query ? ` “${query}”` : ''}
+          No results{query ? ` for “${query}”` : ''}
           {lane !== 'all' ? ` in ${lane}` : ''}.
         </p>
         <button className="btn primary" onClick={onReset}>
@@ -574,10 +657,10 @@ function EmptyState({
       <div className="state pagefade">
         <h2>Nothing saved yet</h2>
         <p>
-          Press <kbd>b</kbd> on anything in the feed to keep it here for later.
+          Press <kbd>b</kbd> on any skill or candidate to keep it here for later.
         </p>
-        <button className="btn primary" onClick={onGoFeed}>
-          Back to the feed
+        <button className="btn primary" onClick={onGoSkills}>
+          Back to skills
         </button>
       </div>
     );
@@ -591,20 +674,38 @@ function EmptyState({
           Press <kbd>x</kbd> on anything you don’t want to see again. It lands here, not in
           the bin.
         </p>
-        <button className="btn primary" onClick={onGoFeed}>
-          Back to the feed
+        <button className="btn primary" onClick={onGoSkills}>
+          Back to skills
         </button>
+      </div>
+    );
+  }
+
+  if (view === 'candidates') {
+    return (
+      <div className="state pagefade">
+        <h2>No candidates yet</h2>
+        <p>
+          The scanner hasn’t run, or nothing survived the AI filter. Run{' '}
+          <code>npm run scan</code> in <code>ideafeed/scanner</code>.
+        </p>
       </div>
     );
   }
 
   return (
     <div className="state pagefade">
-      <h2>The feed is empty</h2>
+      <h2>No skills yet</h2>
       <p>
-        The scanner hasn’t found anything yet. It runs every couple of hours — or run{' '}
-        <code>npm run scan</code> in <code>ideafeed/scanner</code> to fill it now.
+        {feed && feed.stats.candidates > 0
+          ? `${feed.stats.candidates} candidate repositories are waiting. Skills appear once the extractor finds a reusable workflow in one of their docs — most repos don't have one, which is the point.`
+          : 'Nothing has been through the pipeline yet.'}
       </p>
+      {feed && feed.stats.candidates > 0 && (
+        <button className="btn primary" onClick={onGoCandidates}>
+          See the candidates
+        </button>
+      )}
     </div>
   );
 }

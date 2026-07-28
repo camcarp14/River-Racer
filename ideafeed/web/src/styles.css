@@ -24,6 +24,7 @@
   --accent-soft: rgba(90, 209, 165, 0.14);
   --accent-2: #7aa2f7;
   --danger: #ff7a7a;
+  --warn: #e8b352;
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
 
   --radius: 14px;
@@ -46,6 +47,7 @@
   --accent-soft: rgba(15, 157, 112, 0.12);
   --accent-2: #3b6fd4;
   --danger: #c94040;
+  --warn: #b7791f;
   --shadow: 0 14px 40px rgba(20, 25, 40, 0.1);
 
   color-scheme: light;
@@ -759,6 +761,154 @@ kbd {
   opacity: 0.8;
 }
 
+/* ------------------------------ skill cards ------------------------------ */
+
+.card.skill {
+  border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.card.skill.mock {
+  border-left-color: color-mix(in srgb, var(--warn) 55%, transparent);
+  opacity: 0.85;
+}
+
+.skill-name {
+  font-size: 14px;
+  font-weight: 560;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pill.published {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+}
+
+.pill.verdict.approve {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.pill.verdict.hold {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 35%, transparent);
+}
+
+.pill.verdict.reject {
+  color: var(--muted);
+}
+
+.pill.warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.meta-item.source {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.meta-item.source:hover {
+  color: var(--text);
+}
+
+.meta-item.source .mono {
+  color: var(--text-dim);
+}
+
+.skillmd {
+  margin-top: 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+.skillmd-frontmatter {
+  font-size: 12px;
+  line-height: 1.7;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+.skillmd-frontmatter .dim {
+  color: var(--muted);
+}
+
+.skillmd-body {
+  padding: 4px 16px 14px;
+  font-size: 13.5px;
+  line-height: 1.62;
+  color: var(--text-dim);
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.skillmd-body h3,
+.skillmd-body h4,
+.skillmd-body h5,
+.skillmd-body h6 {
+  font-size: 12.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin: 16px 0 6px;
+}
+
+.skillmd-body p {
+  margin: 0 0 9px;
+}
+
+.skillmd-body ul,
+.skillmd-body ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.skillmd-body li {
+  margin-bottom: 4px;
+}
+
+.skillmd-body pre {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  margin: 0 0 10px;
+}
+
+.skillmd-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.skillmd-body blockquote {
+  margin: 0 0 10px;
+  padding-left: 11px;
+  border-left: 2px solid var(--line-strong);
+  color: var(--muted);
+}
+
+.evidence {
+  margin: 0;
+  padding: 10px 16px 13px;
+  font-size: 12.5px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+
 /* --------------------------- banners & states --------------------------- */
 
 .banner {
@@ -772,6 +922,19 @@ kbd {
   padding: 9px 13px;
   font-size: 13.5px;
   margin-bottom: 14px;
+}
+
+.banner.warn {
+  background: color-mix(in srgb, var(--warn) 11%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 32%, transparent);
+  color: var(--text-dim);
+  align-items: flex-start;
+  line-height: 1.5;
+}
+
+.banner.warn .banner-dot {
+  background: var(--warn);
+  margin-top: 6px;
 }
 
 .banner-dot {

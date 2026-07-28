@@ -4,7 +4,7 @@
 // READMEs are mostly badges, logos, headings and install instructions. We strip
 // all of that and keep the first sentence that actually says what the thing is.
 
-function stripMarkdown(text) {
+export function stripMarkdown(text) {
   let out = text;
   out = out.replace(/<!--[\s\S]*?-->/g, ' ');
   out = out.replace(/```[\s\S]*?```/g, ' ');

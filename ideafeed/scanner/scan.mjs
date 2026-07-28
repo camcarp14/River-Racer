@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-// ideafeed scanner
+// ideafeed — the skill-mining pipeline.
 //
-//   node scan.mjs            scan, merge into the existing feed, write feed.json
-//   node scan.mjs --dry      scan and print what would change, write nothing
-//   node scan.mjs --no-llm   skip the enrichment pass even if a key is present
+//   scout ─▶ filter ─▶ reader ─▶ extract ─▶ score ─▶ generate ─▶ review ─▶ publish
 //
-// Designed to run unattended on a cron. Every external call is retried, every
-// optional step degrades to a heuristic, and the feed file is only overwritten
-// once a full run has succeeded.
+//   node scan.mjs              full run
+//   node scan.mjs --dry        run everything, write nothing
+//   node scan.mjs --no-llm     scout/filter/read only; no skills generated
+//   node scan.mjs --mock-llm   run every stage against deterministic stand-ins
+//
+// Designed to run unattended on a cron. Every network call is retried, every
+// model stage degrades to "no skills this run" rather than failing the run, and
+// the feed is only written after a full pass has succeeded.
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -17,20 +20,36 @@ import { fileURLToPath } from 'node:url';
 import {
   searchRepos,
   fetchReadme,
+  getRepo,
   mapLimit,
   isAuthenticated,
   coreQuotaExhausted,
+  forbiddenRequests,
 } from './lib/github.mjs';
+import { fetchTrending } from './lib/trending.mjs';
+import { aiRelevance } from './lib/filter.mjs';
+import { readDocs } from './lib/docs.mjs';
 import { scoreRepo, shouldExclude, starVelocity, daysSince } from './lib/score.mjs';
-import { buildHook, readmeContext, cleanDescription } from './lib/summarize.mjs';
-import { enrichItems, enrichmentAvailable } from './lib/enrich.mjs';
+import { scoreSkill } from './lib/skillscore.mjs';
+import { buildHook, cleanDescription } from './lib/summarize.mjs';
+import {
+  createClient,
+  enrichmentAvailable,
+  extractWorkflows,
+  generateSkill,
+  reviewSkills,
+  mock,
+} from './lib/pipeline.mjs';
+import { writeSkill } from './lib/skillfile.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has('--dry');
 const NO_LLM = args.has('--no-llm');
+const MOCK_LLM = args.has('--mock-llm');
 
 const DAY = 86_400_000;
+const MAX_BODY_CHARS = 6000;
 
 // IDEAFEED_CONFIG points at an alternate config file — handy for trying a
 // different set of lanes without touching the one the cron job uses.
@@ -55,240 +74,486 @@ async function loadFeed(path) {
 
 /** `created:>{{days:21}}` -> `created:>2026-07-07` */
 function expandQuery(query) {
-  return query.replace(/\{\{days:(\d+)\}\}/g, (_, n) => {
-    const date = new Date(Date.now() - Number(n) * DAY);
-    return date.toISOString().slice(0, 10);
-  });
+  return query.replace(/\{\{days:(\d+)\}\}/g, (_, n) =>
+    new Date(Date.now() - Number(n) * DAY).toISOString().slice(0, 10),
+  );
 }
 
-async function collectCandidates(lanes, perQuery) {
+/* ------------------------------ stage 1: scout ------------------------------ */
+
+async function scout(config) {
   /** @type {Map<string, {repo: any, lanes: Set<string>}>} */
   const found = new Map();
 
-  for (const lane of lanes) {
+  const add = (repo, laneId) => {
+    const key = String(repo.id);
+    if (!found.has(key)) found.set(key, { repo, lanes: new Set() });
+    found.get(key).lanes.add(laneId);
+  };
+
+  console.log('\n[1] scout — search lanes');
+  for (const lane of config.scout.lanes) {
     const query = expandQuery(lane.query);
-    process.stdout.write(`  ${lane.id.padEnd(14)} ${query}\n`);
-    const repos = await searchRepos(query, { sort: lane.sort, perPage: perQuery });
-    for (const repo of repos) {
-      const key = String(repo.id);
-      if (!found.has(key)) found.set(key, { repo, lanes: new Set() });
-      found.get(key).lanes.add(lane.id);
-    }
+    console.log(`  ${lane.id.padEnd(14)} ${query}`);
+    const repos = await searchRepos(query, { sort: lane.sort, perPage: config.limits.perQuery });
+    repos.forEach((repo) => add(repo, lane.id));
     console.log(`  ${' '.repeat(14)} → ${repos.length} repos`);
+  }
+
+  if (config.scout.trending?.enabled) {
+    console.log('\n[1] scout — github trending');
+    const { names, ok } = await fetchTrending(config.scout.trending);
+    if (!ok) {
+      console.warn(
+        '  trending unavailable this run (it has no API, so this happens);\n' +
+          '  the search lanes above already cover most of the same ground.',
+      );
+    }
+    // Trending only gives owner/repo, so hydrate through the REST API to get
+    // the same shape as search results.
+    const hydrated = await mapLimit(names, 5, (name) => getRepo(name));
+    let added = 0;
+    for (const repo of hydrated) {
+      if (!repo?.id) continue;
+      add(repo, 'trending');
+      added++;
+    }
+    if (names.length) console.log(`  hydrated ${added}/${names.length} trending repos`);
   }
 
   return found;
 }
 
-function laneLabels(config) {
-  const byId = new Map();
-  for (const lane of config.lanes) {
-    byId.set(lane.id, { label: lane.label, blurb: lane.blurb });
+/* --------------------------------- helpers --------------------------------- */
+
+function laneChips(config) {
+  const chips = new Map();
+  chips.set('Trending', { id: 'Trending', label: 'Trending', blurb: 'From GitHub Trending.' });
+  for (const lane of config.scout.lanes) {
+    if (!chips.has(lane.label)) {
+      chips.set(lane.label, { id: lane.label, label: lane.label, blurb: lane.blurb });
+    }
   }
+  return [...chips.values()];
+}
+
+function laneLabels(config) {
+  const byId = new Map([['trending', 'Trending']]);
+  for (const lane of config.scout.lanes) byId.set(lane.id, lane.label);
   return byId;
 }
 
-/** The distinct lane labels, in config order — these become the UI filter chips. */
-function laneChips(config) {
-  const seen = new Map();
-  for (const lane of config.lanes) {
-    if (!seen.has(lane.label)) {
-      seen.set(lane.label, { id: lane.label, label: lane.label, blurb: lane.blurb });
-    }
-  }
-  return [...seen.values()];
-}
+/* ---------------------------------- main ---------------------------------- */
 
 async function main() {
   const config = await loadConfig();
   const outPath = resolve(config.__dir, config.output);
+  const skillsDir = resolve(config.__dir, config.skillsDir);
   const previous = await loadFeed(outPath);
   const previousById = new Map(previous.items.map((item) => [String(item.id), item]));
+  const knownRepoIds = new Set(
+    previous.items.filter((i) => i.type === 'candidate').map((i) => String(i.id)),
+  );
 
   console.log(
-    `ideafeed scan — ${previous.items.length} items in feed, ` +
+    `ideafeed pipeline — ${previous.items.length} items in feed · ` +
       `github auth: ${isAuthenticated() ? 'yes' : 'no (rate limits will be tight)'}`,
   );
 
-  console.log('\nsearching…');
-  const candidates = await collectCandidates(config.lanes, config.limits.perQuery);
-  console.log(`\n${candidates.size} unique repos found`);
+  const candidatesFound = await scout(config);
+  console.log(`\n${candidatesFound.size} unique repos found`);
 
-  // Split into repos we've never seen (need a README fetch + summary) and repos
-  // we already know (just refresh the numbers).
-  const fresh = [];
-  const known = [];
+  /* ---------------------------- stage 2: filter ---------------------------- */
+
+  console.log('\n[2] filter — keep AI projects');
+  const passed = [];
   let excluded = 0;
+  let notAi = 0;
 
-  for (const { repo, lanes } of candidates.values()) {
-    const reason = shouldExclude(repo, config.scoring);
-    if (reason) {
+  for (const { repo, lanes } of candidatesFound.values()) {
+    if (shouldExclude(repo, config.scoring)) {
       excluded++;
       continue;
     }
-    const entry = { repo, lanes: [...lanes] };
-    if (previousById.has(String(repo.id))) known.push(entry);
-    else fresh.push(entry);
+    const relevance = aiRelevance(repo, '', config.filter);
+    if (!relevance.keep) {
+      notAi++;
+      continue;
+    }
+    passed.push({ repo, lanes: [...lanes], relevance });
   }
 
-  console.log(`${fresh.length} new, ${known.length} already known, ${excluded} excluded`);
-
-  console.log('\nfetching readmes for new repos…');
-  const readmes = await mapLimit(fresh, 6, async ({ repo }) =>
-    fetchReadme(repo.full_name, config.limits.readmeBytes),
+  console.log(
+    `  ${passed.length} kept · ${notAi} not AI projects · ${excluded} excluded (forks, archived, too well known)`,
   );
-  const withReadme = readmes.filter(Boolean).length;
-  console.log(`  ${withReadme}/${fresh.length} readmes fetched`);
+
+  /* ---------------------------- stage 3: reader ---------------------------- */
+
+  // Only new repos need reading; ones already in the feed keep their summary.
+  const fresh = passed.filter(({ repo }) => !knownRepoIds.has(String(repo.id)));
+  const known = passed.filter(({ repo }) => knownRepoIds.has(String(repo.id)));
+
+  const ranked = fresh
+    .map((entry) => ({
+      ...entry,
+      preScore: scoreRepo(entry.repo, '', config.scoring).score,
+    }))
+    .sort((a, b) => b.preScore - a.preScore);
+
+  const toRead = ranked.slice(0, config.limits.maxCandidatesPerRun);
+  const notRead = ranked.slice(config.limits.maxCandidatesPerRun);
+
+  console.log(
+    `\n[3] reader — reading docs for the top ${toRead.length} of ${fresh.length} new repos`,
+  );
+
+  await mapLimit(toRead, 4, async (entry) => {
+    const readme = await fetchReadme(entry.repo.full_name, config.limits.docBytes);
+    entry.readme = readme;
+    entry.docs = await readDocs(entry.repo, readme, config.reader, config.limits);
+    // Re-run the filter now that we've actually read the documentation.
+    entry.relevance = aiRelevance(entry.repo, entry.docs.text, config.filter);
+    return entry;
+  });
+
+  const docStats = toRead.reduce(
+    (acc, e) => {
+      acc.files += e.docs?.files.length || 0;
+      acc.withDocs += (e.docs?.files.length || 0) > 1 ? 1 : 0;
+      return acc;
+    },
+    { files: 0, withDocs: 0 },
+  );
+  console.log(
+    `  read ${docStats.files} files · ${docStats.withDocs} repos had docs beyond the README`,
+  );
   if (coreQuotaExhausted()) {
     console.warn(
-      '  GitHub core quota exhausted — remaining summaries fall back to the repo\n' +
-        '  description. Set GITHUB_TOKEN to raise the limit from 60/hr to 5000/hr.',
+      '  GitHub core quota exhausted — set GITHUB_TOKEN to raise it from 60/hr to 5000/hr.',
     );
   }
+  if (forbiddenRequests() > 0) {
+    console.warn(
+      `  ${forbiddenRequests()} requests were refused by GitHub with 403 and no rate-limit\n` +
+        '  headers. That is a permissions or egress-policy block, not throttling —\n' +
+        '  check that the token can read public repositories other than this one.',
+    );
+  }
+
+  /* --------------------------- build candidate items --------------------------- */
 
   const labels = laneLabels(config);
   const nowIso = new Date().toISOString();
 
-  /**
-   * A model-assessed novelty rating is better evidence than our keyword
-   * heuristic, so once an item has one it nudges the final score.
-   */
-  const withNoveltyBoost = (score, novelty) => {
-    if (novelty == null) return score;
-    const delta = ((novelty - 50) / 50) * 12; // ±12 points
-    return Math.round(Math.max(0, Math.min(100, score + delta)) * 10) / 10;
-  };
-
-  /** Build the item shape shared by new and refreshed entries. */
-  const buildItem = ({ repo, lanes }, readme, prior) => {
+  const buildCandidate = (entry, prior) => {
+    const { repo, lanes, docs, readme, relevance } = entry;
     const { score, breakdown } = scoreRepo(
       repo,
       readme || '',
       config.scoring,
       prior?.breakdown || null,
     );
-    const velocity = starVelocity(repo);
-    const laneLabelSet = [...new Set(lanes.map((id) => labels.get(id)?.label || id))];
+    const laneLabelSet = [...new Set(lanes.map((id) => labels.get(id) || id))];
 
     return {
+      type: 'candidate',
       id: String(repo.id),
       full_name: repo.full_name,
       owner: repo.owner?.login || repo.full_name.split('/')[0],
       name: repo.name,
       url: repo.html_url,
-      homepage: repo.homepage || null,
       description: cleanDescription(repo.description || ''),
       hook: prior?.hook || buildHook(repo, readme || ''),
-      why: prior?.why || null,
-      tags: prior?.tags || (repo.topics || []).slice(0, 4),
-      novelty: prior?.novelty ?? null,
+      tags: (repo.topics || []).slice(0, 4),
       language: repo.language || null,
-      license: repo.license?.spdx_id || null,
       stars: repo.stargazers_count,
-      forks: repo.forks_count,
-      open_issues: repo.open_issues_count,
       topics: repo.topics || [],
       created_at: repo.created_at,
       pushed_at: repo.pushed_at,
       age_days: Math.round(daysSince(repo.created_at)),
-      star_velocity: Math.round(velocity * 100) / 100,
-      base_score: score,
-      score: withNoveltyBoost(score, prior?.novelty ?? null),
+      star_velocity: Math.round(starVelocity(repo) * 100) / 100,
+      score,
       breakdown,
       lanes: prior ? [...new Set([...(prior.lanes || []), ...laneLabelSet])] : laneLabelSet,
-      enriched: Boolean(prior?.enriched),
+      ai_signals: relevance.signals,
+      doc_files: docs?.files || prior?.doc_files || [],
+      skills_extracted: prior?.skills_extracted || 0,
       first_seen: prior?.first_seen || nowIso,
       last_seen: nowIso,
       stars_at_first_seen: prior?.stars_at_first_seen ?? repo.stargazers_count,
-      readme_context: undefined, // stripped before write; only used for enrichment
     };
   };
 
-  const newItems = fresh.map((entry, i) => {
-    const item = buildItem(entry, readmes[i], null);
-    item.readme_context = readmeContext(readmes[i] || '');
-    return item;
-  });
+  const candidateItems = [
+    ...toRead.map((entry) => buildCandidate(entry, null)),
+    ...notRead.map((entry) => buildCandidate(entry, null)),
+    ...known.map((entry) => buildCandidate(entry, previousById.get(String(entry.repo.id)))),
+  ];
 
-  const refreshedItems = known.map((entry) =>
-    buildItem(entry, '', previousById.get(String(entry.repo.id))),
-  );
+  /* ------------------- stages 4-7: extract, generate, review ------------------- */
 
-  // Enrich the most promising new items only — this is the one part of the run
-  // that costs money, so it's capped hard by config.
-  let enrichmentMap = new Map();
-  if (config.enrichment.enabled && !NO_LLM) {
-    const toEnrich = [...newItems]
-      .sort((a, b) => b.score - a.score)
-      .slice(0, config.limits.maxNewEnrichmentsPerRun);
+  const newSkills = [];
+  const runMode = MOCK_LLM ? 'mock' : NO_LLM ? 'off' : enrichmentAvailable() ? 'live' : 'unavailable';
 
-    if (toEnrich.length) {
+  if (runMode === 'off') {
+    console.log('\n[4-7] skill pipeline skipped (--no-llm)');
+  } else if (runMode === 'unavailable') {
+    console.log(
+      '\n[4-7] skill pipeline skipped — no ANTHROPIC_API_KEY.\n' +
+        '      Candidates are still collected; set a key to generate skills.',
+    );
+  } else {
+    const client = runMode === 'live' ? await createClient() : null;
+
+    if (runMode === 'live' && !client) {
+      console.warn('  could not create the Anthropic client; skipping the skill pipeline');
+    } else {
+      // Mock mode exists to exercise wiring, so it accepts thin input and falls
+      // back to the repo description — otherwise it can't run at all in an
+      // environment where fetching other repos' files is blocked.
+      const readable = toRead.filter((e) =>
+        runMode === 'mock'
+          ? e.relevance.keep
+          : e.relevance.keep && (e.docs?.text || '').length > 400,
+      );
+      if (runMode === 'mock') {
+        for (const entry of readable) {
+          if ((entry.docs?.text || '').length > 400) continue;
+          entry.docs = {
+            files: entry.docs?.files || [],
+            raw: (entry.repo.description || '').toLowerCase(),
+            text: `${entry.repo.description || ''}\n${(entry.repo.topics || []).join(', ')}`,
+          };
+        }
+      }
       console.log(
-        `\nenriching ${toEnrich.length} new items` +
-          `${enrichmentAvailable() ? '' : ' (skipped — no API key)'}…`,
+        `\n[4] extract — ${readable.length} repos with enough documentation to read` +
+          `${runMode === 'mock' ? ' (mock)' : ''}`,
       );
-      enrichmentMap = await enrichItems(
-        toEnrich,
-        config.enrichment,
-        config.limits.enrichBatchSize,
+
+      const extractInput = readable.map((entry) => ({
+        id: String(entry.repo.id),
+        full_name: entry.repo.full_name,
+        name: entry.repo.name,
+        stars: entry.repo.stargazers_count,
+        language: entry.repo.language,
+        topics: entry.repo.topics,
+        description: entry.repo.description,
+        docs: entry.docs,
+      }));
+
+      const extracted =
+        runMode === 'mock'
+          ? mock.extractWorkflows(extractInput)
+          : await extractWorkflows(client, extractInput, config.enrichment, config.limits.extractBatchSize);
+
+      // Flatten to individual workflows, best repos first, then cap.
+      const workflowQueue = [];
+      for (const entry of readable) {
+        const result = extracted.get(String(entry.repo.id));
+        if (!result?.is_ai_project) continue;
+        for (const workflow of result.workflows || []) {
+          workflowQueue.push({ entry, workflow });
+        }
+      }
+      workflowQueue.sort((a, b) => b.entry.preScore - a.entry.preScore);
+      const selected = workflowQueue.slice(0, config.limits.maxSkillsPerRun);
+
+      console.log(
+        `  ${workflowQueue.length} workflows extracted · generating ${selected.length}` +
+          `${workflowQueue.length > selected.length ? ` (capped by maxSkillsPerRun; ${workflowQueue.length - selected.length} dropped)` : ''}`,
       );
+
+      console.log(`\n[5-6] score + generate`);
+      for (const [i, { entry, workflow }] of selected.entries()) {
+        const source = {
+          full_name: entry.repo.full_name,
+          owner: entry.repo.owner?.login || entry.repo.full_name.split('/')[0],
+          url: entry.repo.html_url,
+          language: entry.repo.language || null,
+          stars: entry.repo.stargazers_count,
+          doc_files: entry.docs?.files || [],
+          repo_id: String(entry.repo.id),
+        };
+
+        let generated;
+        try {
+          generated =
+            runMode === 'mock'
+              ? mock.generateSkill({ repo: entry.repo, workflow })
+              : await generateSkill(client, { repo: { ...entry.repo, stars: entry.repo.stargazers_count }, docs: entry.docs, workflow }, config.enrichment);
+        } catch (err) {
+          console.warn(`  generation failed for ${entry.repo.full_name}: ${err.message}`);
+          continue;
+        }
+
+        const skillDraft = {
+          name: generated.name,
+          description: generated.description,
+          body: String(generated.body || '').slice(0, MAX_BODY_CHARS),
+          when_to_use: workflow.when_to_use,
+          steps: workflow.steps || [],
+          prerequisites: workflow.prerequisites || [],
+          tools: workflow.tools || [],
+        };
+
+        const { skill_score, skill_breakdown } = scoreSkill(
+          skillDraft,
+          entry.repo,
+          entry.docs,
+          config.skillScoring,
+        );
+
+        newSkills.push({
+          type: 'skill',
+          id: `skill:${entry.repo.id}:${i}`,
+          ...skillDraft,
+          workflow,
+          source,
+          skill_score,
+          skill_breakdown,
+          docs_excerpt: entry.docs?.text || '',
+          mock: runMode === 'mock',
+          review: null,
+          published: false,
+          slug: null,
+          first_seen: nowIso,
+          last_seen: nowIso,
+        });
+
+        console.log(
+          `  ${String(skill_score).padStart(5)}  ${generated.name}  ← ${entry.repo.full_name}`,
+        );
+      }
+
+      /* ----------------------------- stage 7: review ----------------------------- */
+
+      if (newSkills.length) {
+        console.log(`\n[7] review${runMode === 'mock' ? ' (mock)' : ''}`);
+        const reviews =
+          runMode === 'mock'
+            ? mock.reviewSkills(newSkills)
+            : await reviewSkills(client, newSkills, config.enrichment, config.limits.reviewBatchSize);
+
+        for (const skill of newSkills) {
+          skill.review = reviews.get(skill.id) || {
+            verdict: 'hold',
+            grounded: false,
+            quality: 0,
+            reasons: ['No review returned; held for a human.'],
+          };
+        }
+
+        const counts = newSkills.reduce((acc, s) => {
+          acc[s.review.verdict] = (acc[s.review.verdict] || 0) + 1;
+          return acc;
+        }, {});
+        console.log(
+          `  approve ${counts.approve || 0} · hold ${counts.hold || 0} · reject ${counts.reject || 0}`,
+        );
+      }
     }
   }
 
-  for (const item of newItems) {
-    const enriched = enrichmentMap.get(item.id);
-    if (!enriched) continue;
-    if (enriched.hook) item.hook = enriched.hook;
-    if (enriched.why) item.why = enriched.why;
-    if (enriched.tags?.length) item.tags = enriched.tags;
-    item.novelty = enriched.novelty;
-    item.enriched = true;
-    item.score = withNoveltyBoost(item.base_score, enriched.novelty);
+  /* --------------------------- stage 8: publish --------------------------- */
+
+  const published = [];
+  for (const skill of newSkills) {
+    const passes =
+      !skill.mock &&
+      skill.review?.verdict === 'approve' &&
+      skill.skill_score >= config.skillScoring.publishThreshold;
+    if (!passes) continue;
+
+    if (DRY_RUN) {
+      published.push(skill.name);
+      skill.published = true;
+      skill.slug = skill.name;
+      continue;
+    }
+
+    try {
+      const slug = await writeSkill(skillsDir, skill);
+      skill.published = true;
+      skill.slug = slug;
+      skill.skill_path = `${config.skillsRepoPath}/${slug}/SKILL.md`;
+      published.push(slug);
+    } catch (err) {
+      console.warn(`  could not write ${skill.name}: ${err.message}`);
+    }
   }
 
-  // Merge: refreshed + new override their previous versions, everything else
-  // in the old feed is carried forward untouched.
+  if (newSkills.length) {
+    console.log(
+      `\n[8] publish — ${published.length} written to ${config.skillsRepoPath}` +
+        `${published.length ? `: ${published.join(', ')}` : ''}`,
+    );
+  }
+
+  /* ----------------------------- merge and write ----------------------------- */
+
   const merged = new Map(previousById);
-  for (const item of [...refreshedItems, ...newItems]) merged.set(item.id, item);
+  for (const item of candidateItems) {
+    const prior = previousById.get(item.id);
+    merged.set(item.id, {
+      ...item,
+      skills_extracted:
+        (prior?.skills_extracted || 0) +
+        newSkills.filter((s) => s.source.repo_id === item.id).length,
+    });
+  }
+  for (const skill of newSkills) {
+    // docs_excerpt is prompt context, not feed content — don't ship it.
+    const { docs_excerpt, ...rest } = skill;
+    merged.set(skill.id, rest);
+  }
 
   const cutoff = Date.now() - config.limits.keepUnseenDays * DAY;
   const items = [...merged.values()]
-    .map((item) => {
-      const { readme_context, ...rest } = item;
-      return {
-        ...rest,
-        stars_gained: Math.max(0, rest.stars - (rest.stars_at_first_seen ?? rest.stars)),
-      };
+    .map((item) =>
+      item.type === 'skill'
+        ? item
+        : {
+            ...item,
+            stars_gained: Math.max(0, item.stars - (item.stars_at_first_seen ?? item.stars)),
+          },
+    )
+    // Skills are the output of the pipeline and are kept indefinitely;
+    // candidates age out once they stop showing up.
+    .filter((item) => item.type === 'skill' || new Date(item.last_seen).getTime() >= cutoff)
+    .sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'skill' ? -1 : 1;
+      return a.type === 'skill'
+        ? b.skill_score - a.skill_score
+        : b.score - a.score;
     })
-    .filter((item) => new Date(item.last_seen).getTime() >= cutoff)
-    .sort((a, b) => b.score - a.score)
     .slice(0, config.limits.maxItemsInFeed);
 
+  const skills = items.filter((i) => i.type === 'skill');
+
   const feed = {
-    version: 1,
+    version: 2,
     generated_at: nowIso,
-    enriched: enrichmentMap.size > 0,
+    mode: runMode,
     lanes: laneChips(config),
     stats: {
       total: items.length,
-      new_this_run: newItems.length,
-      enriched_this_run: enrichmentMap.size,
-      scanned: candidates.size,
+      skills: skills.length,
+      published: skills.filter((s) => s.published).length,
+      candidates: items.length - skills.length,
+      scanned: candidatesFound.size,
+      kept_by_filter: passed.length,
+      docs_read: toRead.length,
+      new_skills_this_run: newSkills.length,
+      published_this_run: published.length,
     },
     items,
   };
 
   console.log(
-    `\n${items.length} items in feed ` +
-      `(+${newItems.length} new, ${enrichmentMap.size} enriched this run)`,
+    `\n${items.length} items in feed · ${skills.length} skills ` +
+      `(${feed.stats.published} published) · ${feed.stats.candidates} candidates`,
   );
-
-  const top = items.slice(0, 8);
-  console.log('\ntop of the feed:');
-  for (const item of top) {
-    console.log(`  ${String(item.score).padStart(5)}  ${item.full_name}`);
-    console.log(`         ${item.hook.slice(0, 96)}`);
-  }
 
   if (DRY_RUN) {
     console.log('\n--dry: nothing written');
@@ -297,10 +562,10 @@ async function main() {
 
   await mkdir(dirname(outPath), { recursive: true });
   await writeFile(outPath, `${JSON.stringify(feed, null, 2)}\n`, 'utf8');
-  console.log(`\nwrote ${outPath}`);
+  console.log(`wrote ${outPath}`);
 }
 
 main().catch((err) => {
-  console.error(`\nscan failed: ${err.stack || err.message}`);
+  console.error(`\npipeline failed: ${err.stack || err.message}`);
   process.exit(1);
 });

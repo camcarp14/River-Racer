@@ -25,7 +25,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // hundreds of README fetches behind it, so we note the reset time and skip.
 let coreBlockedUntil = 0;
 
+// A 403 with no rate-limit headers is not a quota problem — it's the request
+// being refused outright (a policy, a proxy, an org restriction). Those are
+// counted separately so the run reports the real reason it read nothing.
+let forbiddenCount = 0;
+
 export const coreQuotaExhausted = () => Date.now() < coreBlockedUntil;
+export const forbiddenRequests = () => forbiddenCount;
 
 /**
  * GET with retry on rate limit / transient failure.
@@ -60,6 +66,13 @@ async function get(url, { accept, attempts = 4, waitOnRateLimit = true } = {}) {
     const remaining = res.headers.get('x-ratelimit-remaining');
     const isRateLimited =
       res.status === 429 || (res.status === 403 && remaining === '0');
+
+    // Refused, not throttled: private repo, org policy, or an egress proxy that
+    // only allows some paths. Retrying won't help and it isn't fatal.
+    if (res.status === 403 && !isRateLimited) {
+      forbiddenCount++;
+      return null;
+    }
 
     if (isRateLimited) {
       const reset = Number(res.headers.get('x-ratelimit-reset') || 0) * 1000;
@@ -112,6 +125,44 @@ export async function fetchReadme(fullName, maxBytes = 6000) {
   if (!res) return '';
   const text = await res.text();
   return text.slice(0, maxBytes);
+}
+
+/** Full repo object by `owner/name`. Used to hydrate trending results. */
+export async function getRepo(fullName) {
+  const res = await get(`${API}/repos/${fullName}`, { waitOnRateLimit: false });
+  if (!res) return null;
+  const repo = await res.json();
+  // The repos endpoint omits `topics` unless asked for it via the preview
+  // accept header; the search endpoint includes them. Normalise.
+  return { ...repo, topics: repo.topics || [] };
+}
+
+/** A single file's raw contents, or '' when it doesn't exist. */
+export async function fetchFile(fullName, path, maxBytes = 9000) {
+  if (coreQuotaExhausted()) return '';
+  const res = await get(
+    `${API}/repos/${fullName}/contents/${path.split('/').map(encodeURIComponent).join('/')}`,
+    { accept: 'application/vnd.github.raw', attempts: 2, waitOnRateLimit: false },
+  );
+  if (!res) return '';
+  const text = await res.text();
+  return text.slice(0, maxBytes);
+}
+
+/**
+ * Every file path in the default branch, via the git trees API — one request
+ * instead of one per directory. Returns [] if the tree is too large or missing.
+ */
+export async function listTree(fullName, defaultBranch = 'HEAD') {
+  if (coreQuotaExhausted()) return [];
+  const res = await get(
+    `${API}/repos/${fullName}/git/trees/${encodeURIComponent(defaultBranch)}?recursive=1`,
+    { attempts: 2, waitOnRateLimit: false },
+  );
+  if (!res) return [];
+  const json = await res.json();
+  if (!Array.isArray(json.tree)) return [];
+  return json.tree.filter((node) => node.type === 'blob').map((node) => node.path);
 }
 
 export const isAuthenticated = () => Boolean(token);
