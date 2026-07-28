@@ -1,0 +1,184 @@
+{
+  "$comment": "Everything the scanner does is tunable from this file. Edit lanes to change what gets surfaced; edit scoring to change what 'novel' means.",
+
+  "output": "../web/public/feed.json",
+
+  "limits": {
+    "perQuery": 50,
+    "maxItemsInFeed": 500,
+    "maxNewEnrichmentsPerRun": 36,
+    "enrichBatchSize": 6,
+    "readmeBytes": 6000,
+    "keepUnseenDays": 45
+  },
+
+  "lanes": [
+    {
+      "id": "brand-new",
+      "label": "Brand new",
+      "blurb": "Created in the last 21 days and already picking up real traction.",
+      "query": "created:>{{days:21}} stars:>20",
+      "sort": "stars"
+    },
+    {
+      "id": "under-radar",
+      "label": "Under the radar",
+      "blurb": "Young, small, and moving fast — before anyone has heard of it.",
+      "query": "created:>{{days:45}} stars:8..250 pushed:>{{days:7}}",
+      "sort": "updated"
+    },
+    {
+      "id": "ai-agents",
+      "label": "Agents & LLM tooling",
+      "blurb": "Agent frameworks, inference tricks, eval harnesses, context plumbing.",
+      "query": "created:>{{days:120}} stars:>40 topic:llm",
+      "sort": "stars"
+    },
+    {
+      "id": "ai-agents-2",
+      "label": "Agents & LLM tooling",
+      "blurb": "Agent frameworks, inference tricks, eval harnesses, context plumbing.",
+      "query": "created:>{{days:120}} stars:>30 topic:ai-agents",
+      "sort": "stars"
+    },
+    {
+      "id": "devtools",
+      "label": "Devtools",
+      "blurb": "Things that change how software gets built.",
+      "query": "created:>{{days:120}} stars:>60 topic:developer-tools",
+      "sort": "stars"
+    },
+    {
+      "id": "local-first",
+      "label": "Local-first & systems",
+      "blurb": "Databases, sync engines, runtimes, things that run on your own machine.",
+      "query": "created:>{{days:180}} stars:>40 topic:local-first",
+      "sort": "stars"
+    },
+    {
+      "id": "graphics",
+      "label": "Graphics & simulation",
+      "blurb": "Rendering, shaders, physics, generative and spatial work.",
+      "query": "created:>{{days:180}} stars:>40 topic:graphics",
+      "sort": "stars"
+    },
+    {
+      "id": "weird-zig",
+      "label": "Genuinely weird",
+      "blurb": "Low-level, odd-language, or hard-to-categorise experiments.",
+      "query": "created:>{{days:180}} stars:>10 language:zig",
+      "sort": "stars"
+    },
+    {
+      "id": "weird-ocaml",
+      "label": "Genuinely weird",
+      "blurb": "Low-level, odd-language, or hard-to-categorise experiments.",
+      "query": "created:>{{days:180}} stars:>10 language:ocaml",
+      "sort": "stars"
+    }
+  ],
+
+  "scoring": {
+    "weights": {
+      "momentum": 34,
+      "freshness": 22,
+      "novelty": 24,
+      "substance": 10,
+      "obscurity": 10
+    },
+    "penalizeKeywords": [
+      "awesome",
+      "awesome-list",
+      "curated list",
+      "list of",
+      "boilerplate",
+      "starter kit",
+      "starter-template",
+      "template repo",
+      "scaffold",
+      "roadmap",
+      "cheatsheet",
+      "cheat sheet",
+      "interview questions",
+      "leetcode",
+      "coding challenge",
+      "tutorial",
+      "course",
+      "learn ",
+      "learning path",
+      "study notes",
+      "my portfolio",
+      "portfolio website",
+      "resume template",
+      "100 days",
+      "clone of",
+      "netflix clone",
+      "todo app",
+      "crud app",
+      "free api",
+      "collection of resources",
+      "ebooks",
+      "books"
+    ],
+    "rewardKeywords": [
+      "from scratch",
+      "no dependencies",
+      "zero-dependency",
+      "single file",
+      "wire protocol",
+      "compiler",
+      "interpreter",
+      "kernel",
+      "scheduler",
+      "allocator",
+      "deterministic",
+      "incremental",
+      "differentiable",
+      "formally verified",
+      "proof",
+      "jit",
+      "sandbox",
+      "sync engine",
+      "crdt",
+      "raft",
+      "wasm",
+      "gpu",
+      "simd",
+      "reverse engineer",
+      "emulator",
+      "decompiler",
+      "protocol",
+      "runtime",
+      "novel",
+      "we found",
+      "turns out"
+    ],
+    "unusualLanguages": [
+      "Zig",
+      "Nim",
+      "OCaml",
+      "Haskell",
+      "Elixir",
+      "Erlang",
+      "Racket",
+      "Clojure",
+      "Odin",
+      "Crystal",
+      "Julia",
+      "Roc",
+      "Gleam",
+      "Rust",
+      "Assembly",
+      "Verilog",
+      "V"
+    ],
+    "obscurityIdealStars": 400,
+    "hardExcludeIfStarsAbove": 90000
+  },
+
+  "enrichment": {
+    "enabled": true,
+    "model": "claude-opus-5",
+    "effort": "low"
+  }
+}

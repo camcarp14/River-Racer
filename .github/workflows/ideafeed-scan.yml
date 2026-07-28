@@ -1,0 +1,65 @@
+name: ideafeed scan
+
+# Scans GitHub for novel projects and commits the refreshed feed.
+#
+# Note: GitHub only runs `schedule` triggers on the repository's default branch.
+# Until this branch is merged, use the "Run workflow" button (workflow_dispatch)
+# and pick this branch.
+
+on:
+  schedule:
+    - cron: '17 */2 * * *' # every two hours, off the hour to avoid the rush
+  workflow_dispatch:
+    inputs:
+      skip_enrichment:
+        description: 'Skip the LLM enrichment pass'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ideafeed-scan-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ideafeed/scanner/package-lock.json
+
+      - name: Install scanner dependencies
+        working-directory: ideafeed/scanner
+        run: npm ci
+
+      - name: Scan
+        working-directory: ideafeed/scanner
+        env:
+          # The default token is enough: everything the scanner reads is public,
+          # and it raises the API limit from 60/hr to 5000/hr.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional. Without it the scanner falls back to heuristic summaries.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node scan.mjs ${{ inputs.skip_enrichment && '--no-llm' || '' }}
+
+      - name: Commit the refreshed feed
+        run: |
+          if git diff --quiet -- ideafeed/web/public/feed.json; then
+            echo "No feed changes."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ideafeed/web/public/feed.json
+          count=$(node -e "console.log(require('./ideafeed/web/public/feed.json').stats.new_this_run)")
+          git commit -m "ideafeed: refresh feed (${count} new)"
+          git push
