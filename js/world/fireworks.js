@@ -46,6 +46,37 @@
     burst(x, y, z, colorArrOrNull || COLORS[(Math.random() * COLORS.length) | 0]);
   };
 
+  // ---- THE FINISH ----------------------------------------------------------------------------
+  // A win is an event. The Navy Pier week clock and the night-only flag do not apply here: this
+  // is a scripted show over wherever the boat stopped, queued on the SCALED clock so it runs long
+  // with the rest of RR.Feel's finale instead of racing past it.
+  const CHI = [[0.31, 0.69, 0.91], [0.95, 0.96, 0.97], [0.85, 0.14, 0.16]];   // the city flag
+  const sched = [];
+  let schedT = 0, wasFin = false;
+
+  F.finale = function (x, z, big) {
+    if (!geo) return;
+    sched.length = 0; schedT = 0;
+    const n = big ? 11 : 4;
+    for (let i = 0; i < n; i++) {
+      const a = i * 2.39996;                          // golden angle: no two shells stack up
+      const r = 30 + (i % 4) * 24;
+      sched.push({
+        t: 0.15 + i * (big ? 0.40 : 0.60),
+        x: x + Math.cos(a) * r, y: 40 + (i % 3) * 15, z: z + Math.sin(a) * r,
+        c: (big && i % 4 === 3) ? null : CHI[i % 3],
+      });
+    }
+  };
+
+  // 1-based finishing position of the player, or 0 if there is no result yet.
+  function placeOfPlayer() {
+    const S = RR.Race && RR.Race.state && RR.Race.state();
+    if (!S || !S.results) return 0;
+    for (let i = 0; i < S.results.length; i++) if (S.results[i].boat && S.results[i].boat.isPlayer) return i + 1;
+    return 0;
+  }
+
   F.init = function () {
     const np = window.CHICAGO.lake.navyPier;
     bases = [
@@ -105,6 +136,27 @@
         }
       }
     } else F.showing = 0;
+
+    // self-arming off RR.Feel, so a win needs no line in main.js and degrades to nothing if the
+    // finale module never lands
+    const fin = !!(RR.Feel && RR.Feel.finishing && RR.Feel.finishing());
+    if (fin && !wasFin) {
+      const S = RR.Race && RR.Race.state && RR.Race.state();
+      const p = S && S.player && S.player.pos;
+      if (p && placeOfPlayer() === 1) F.finale(p.x, p.z, true);
+    }
+    wasFin = fin;
+    if (sched.length) {
+      schedT += dt;
+      while (sched.length && sched[0].t <= schedT) {
+        const s = sched.shift();
+        burst(s.x, s.y, s.z, s.c || COLORS[(Math.random() * COLORS.length) | 0]);
+        // requested of the audio workstream, guarded: a shell you can see and not hear is a
+        // screensaver. Silent until doFireworkReport exists.
+        if (RR.Audio && RR.Audio.fireworkReport) RR.Audio.fireworkReport(s.x, s.z);
+      }
+    }
+
     const pos = geo.attributes.position.array, col = geo.attributes.color.array;
     for (let i = 0; i < MAX; i++) {
       const p = pool[i];

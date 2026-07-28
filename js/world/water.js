@@ -147,17 +147,25 @@
           // shallower, lighter, greener water near the banks
           base = mix(base, base * 1.12 + vec3(0.03, 0.06, 0.04), smoothstep(0.55, 1.0, vShore) * 0.5 * (1.0 - vLake));
           // light the crests and sink the troughs — signed, because on open water the dark trough
-          // is half of what tells you a swell is passing. Twice the swing out on the lake.
-          base *= (1.0 + vH * (0.10 + 0.14 * vLake)) * (1.0 - grazing * 0.22);
+          // is half of what tells you a swell is passing. Twice the swing out on the lake, and
+          // more again the flatter you are looking: from a hull at two metres a sea is read almost
+          // entirely off its faces, and that is the frame this game ends on.
+          base *= (1.0 + vH * (0.10 + 0.14 * vLake) * (1.0 + grazing * 1.4)) * (1.0 - grazing * 0.22);
           // The river meets vertical sheet pile and limestone, not a beach. The contact shadow
           // in the last half-metre is what makes the water look like it is IN a channel.
           float wallShade = smoothstep(0.84, 1.0, vShore);
           base *= mix(1.0, 0.70, wallShade * (1.0 - vLake));
 
-          // sky reflection tint: warmer when looking back into the sun, wherever it currently is
+          // Sky reflection tint, on two terms. The first is how far back into the sun you are
+          // looking. The second is how high up the dome each individual wave FACE points: a face
+          // tilted toward you mirrors the burning horizon, its back mirrors the zenith. That
+          // second term is the whole difference between indigo-and-copper and one flat plate,
+          // because at a low sun almost every pixel of water is reflection rather than body.
           vec3 sunH = normalize(vec3(uSunDir.x, 0.0, uSunDir.z) + vec3(0.0001, 0.0, 0.0));
           float westness = clamp(dot(normalize(vec3(V.x, 0.0, V.z)), -sunH), 0.0, 1.0);
-          vec3 sky = mix(uSkyHigh, uSkyLow, westness * 0.85 + 0.1);
+          float relev = clamp(reflect(-V, N).y, 0.0, 1.0);
+          float horizoness = 1.0 - smoothstep(0.0, 0.30, relev);
+          vec3 sky = mix(uSkyHigh, uSkyLow, clamp(westness * 0.62 + horizoness * 0.55, 0.0, 1.0));
 
           // real planar reflection of the skyline, rippled by the wave normal
           vec3 refl = sky;
@@ -166,7 +174,13 @@
             ruv += N.xz * 0.04 + vec2(bump * 0.015);
             if (ruv.x > 0.005 && ruv.x < 0.995 && ruv.y > 0.005 && ruv.y < 0.995) {
               vec3 rc = texture2D(uReflect, ruv).rgb;
-              refl = mix(sky, rc, uReflectStrength);
+              // A planar mirror of a smooth sky is smooth by construction, so out on a running sea
+              // it flattens the very swell it ought to be drawing. A rough surface only holds a
+              // coherent reflection along the grazing line: the skyline band near the horizon
+              // survives intact, the steep near field scatters back to the sky term above — which,
+              // unlike the mirror, knows which way each wave face is pointing.
+              float mirrorK = uReflectStrength * mix(1.0, 0.74 - 0.52 * smoothstep(0.04, 0.34, relev), vLake);
+              refl = mix(sky, rc, mirrorK);
             }
           }
 
@@ -186,16 +200,20 @@
 
           // foam grain: break flat white up with the mid noise octave
           float foamGrain = 0.6 + 0.8 * n2;
+          // Chicago River foam really is tan-green — but that is RIVER foam, in an opaque channel
+          // a metre deep. Out on the lake, breaking water is white and takes its colour from the
+          // sky standing over it, which is why a sunset sea has copper crests and not putty ones.
+          vec3 foamCol = mix(uFoamTint, mix(vec3(0.88, 0.91, 0.95), sky, 0.42), vLake);
 
           // Whitecaps. Past about force 4 the crests of a Lake Michigan swell curl and break, and
           // a scatter of white is the single strongest cue that a sea is RUNNING rather than
           // sitting. Gated on the swell ramp, so the sheltered harbour never grows any.
-          float cap = smoothstep(0.58, 0.96, vH) * sAmp * smoothstep(0.54, 0.82, n2);
-          col = mix(col, uFoamTint, clamp(cap * foamGrain, 0.0, 1.0) * 0.50);
+          float cap = smoothstep(0.46, 0.88, vH) * sAmp * smoothstep(0.52, 0.80, n2);
+          col = mix(col, foamCol, clamp(cap * foamGrain, 0.0, 1.0) * 0.62);
 
           // bank foam: a thin scum line against the wall, not a surf break
           float foamBand = smoothstep(0.905, 1.0, vShore + bump * 0.10 + 0.035 * sin(uTime * 1.9 + vWorld.x * 0.55 + vWorld.z * 0.42));
-          col = mix(col, uFoamTint, clamp(foamBand * foamGrain, 0.0, 1.0) * 0.34 * (1.0 - vLake * 0.6));
+          col = mix(col, foamCol, clamp(foamBand * foamGrain, 0.0, 1.0) * 0.34 * (1.0 - vLake * 0.6));
 
           // Wake. The Kelvin half-angle is 19.47 deg — a constant of deep-water physics and
           // instantly recognisable — so the arms diverge at lat = along * tan(19.47) = 0.3532.
@@ -216,8 +234,8 @@
           }
           trailFoam = clamp(trailFoam * foamGrain, 0.0, 1.0);
           bowFoam = clamp(bowFoam * foamGrain, 0.0, 1.0);
-          col = mix(col, uFoamTint, trailFoam * 0.55);
-          col = mix(col, min(uFoamTint * 1.07, vec3(1.0)), bowFoam * 0.55);
+          col = mix(col, foamCol, trailFoam * 0.55);
+          col = mix(col, min(foamCol * 1.07, vec3(1.0)), bowFoam * 0.55);
 
           float fog = smoothstep(uFogNear, uFogFar, distance(uCamPos, vWorld));
           col = mix(col, uFogColor, fog);

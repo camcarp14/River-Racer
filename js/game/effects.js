@@ -3,14 +3,22 @@
   const FX = {};
   const U = () => RR.U;
 
-  // ---------- wake ribbons: per-boat fading foam trail ----------
+  // ---------- wake ribbons: per-boat foam trail ----------
+  // Foam does not FADE, it BREAKS UP: the sheet behind a transom tears into patches, the middle
+  // opens first because that is where the two divergent crests are pulling apart from, and the
+  // last thing left is scattered cells of white. The old ribbon was a flat 0.42 alpha modulated by
+  // a product of two sines — which is a checkerboard, and read as chalky grey triangles laid on a
+  // plate for the entire race. Same geometry, same draw call; the erosion is all in the shader.
   const WAKE_SEGS = 56;
+  const WAKE_LIFE = 2.4;
   function createWake(scene) {
     const geo = new THREE.BufferGeometry();
     const verts = new Float32Array(WAKE_SEGS * 2 * 3);
     const alpha = new Float32Array(WAKE_SEGS * 2);
+    const wake = new Float32Array(WAKE_SEGS * 2 * 3);   // [side -1/+1, age 0..1, seed]
     geo.setAttribute('position', new THREE.BufferAttribute(verts, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('aAlpha', new THREE.BufferAttribute(alpha, 1).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('aWake', new THREE.BufferAttribute(wake, 3).setUsage(THREE.DynamicDrawUsage));
     const idx = [];
     for (let i = 0; i < WAKE_SEGS - 1; i++) {
       const a = i * 2, b = i * 2 + 1, c = i * 2 + 2, d = i * 2 + 3;
@@ -22,17 +30,41 @@
       uniforms: { uTime: { value: 0 } },
       vertexShader: `
         attribute float aAlpha;
+        attribute vec3 aWake;
         varying float vA;
         varying vec2 vP;
-        void main() { vA = aAlpha; vP = position.xz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        varying vec3 vW;
+        void main() {
+          vA = aAlpha; vP = position.xz; vW = aWake;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
       fragmentShader: `
         uniform float uTime;
         varying float vA;
         varying vec2 vP;
+        varying vec3 vW;
+        float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+        float vn(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x),
+                     mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y);
+        }
         void main() {
-          float n = sin(vP.x * 3.1 + uTime * 2.0) * sin(vP.y * 2.7 - uTime * 1.7);
-          float a = vA * (0.42 + 0.18 * n);
-          gl_FragColor = vec4(0.88, 0.95, 0.97, a);
+          float u = abs(vW.x);
+          float age = vW.y;
+          // the churn is solid across the strip at the transom; by mid-life only the two crests
+          // are still carrying foam and the middle has opened up
+          float band = mix(1.0, smoothstep(0.02, 0.90, u), smoothstep(0.02, 0.34, age));
+          band *= 1.0 - smoothstep(0.74, 1.0, u);                    // always feather the outer edge
+          float n = vn(vP * 1.05 + vec2(uTime * 0.17, -uTime * 0.11)) * 0.52
+                  + vn(vP * 3.40 - vec2(uTime * 0.31, uTime * 0.23)) * 0.32
+                  + vn(vP * 8.10 + vec2(uTime * 0.44, uTime * 0.37)) * 0.16;
+          n += vW.z * 0.10;                                          // per-segment grain, so the strip is not one field
+          float er = smoothstep(age * 1.25 - 0.14, age * 1.25 + 0.30, n + band * 0.26);
+          float a = vA * band * er;
+          if (a < 0.006) discard;
+          gl_FragColor = vec4(0.93, 0.97, 0.99, a);
         }`,
     });
     const mesh = new THREE.Mesh(geo, mat);
@@ -43,6 +75,7 @@
     return { mesh, geo, pts: [], mat };
   }
 
+  const wakeDefault = { x: 0, z: 0, px: 1, pz: 0, born: 0, str: 0, sd: 0, j0: 1, j1: 1 };
   function updateWake(w, boat, dt, t) {
     const speed = Math.hypot(boat.vel.x, boat.vel.z);
     // drop a segment roughly every 2.2m of travel
@@ -50,25 +83,39 @@
     const need = !last || U().dist2(boat.pos.x, boat.pos.z, last.x, last.z) > 4.8;
     if (need && !boat.airborne) {
       const s = Math.sin(boat.heading), c = Math.cos(boat.heading);
-      w.pts.push({ x: boat.pos.x - s * boat.radius * 0.8, z: boat.pos.z - c * boat.radius * 0.8, px: c, pz: -s, born: t, str: U().clamp(speed / 22, 0.12, 1) });
+      w.pts.push({
+        x: boat.pos.x - s * boat.radius * 0.8, z: boat.pos.z - c * boat.radius * 0.8,
+        px: c, pz: -s, born: t, str: U().clamp(speed / 22, 0.12, 1),
+        sd: Math.random(),
+        // the trailing edge of a real wake is ragged, not two parallel lines
+        j0: 0.80 + Math.random() * 0.42, j1: 0.80 + Math.random() * 0.42,
+      });
       if (w.pts.length > WAKE_SEGS) w.pts.shift();
     }
     const verts = w.geo.attributes.position.array;
     const alpha = w.geo.attributes.aAlpha.array;
+    const wk = w.geo.attributes.aWake.array;
     const n = w.pts.length;
+    wakeDefault.x = boat.pos.x; wakeDefault.z = boat.pos.z; wakeDefault.born = t;
     for (let i = 0; i < WAKE_SEGS; i++) {
-      const p = w.pts[Math.min(i, n - 1)] || { x: boat.pos.x, z: boat.pos.z, px: 1, pz: 0, born: t, str: 0 };
-      const age = t - p.born;
-      const width = (0.7 + age * 1.35) * (0.65 + p.str * 0.7);
-      const fade = Math.max(0, p.str * 0.6 * (1 - age / 2.4));
+      const p = w.pts[Math.min(i, n - 1)] || wakeDefault;
+      const age = U().clamp((t - p.born) / WAKE_LIFE, 0, 1);
+      const width = (0.7 + age * WAKE_LIFE * 1.35) * (0.65 + p.str * 0.7);
+      // the erosion carries the tail, so this only has to take the peak off — a linear fade to
+      // nothing is exactly what made the old ribbon read as a uniform grey plate
+      const fade = i >= n ? 0 : p.str * 0.55 * (1 - age * age * 0.75);
       const y = U().waterHeight(p.x, p.z, t, RR.River.waveAmp(p.x, p.z)) + 0.06;
       const o = i * 6;
-      verts[o] = p.x + p.px * width; verts[o + 1] = y; verts[o + 2] = p.z + p.pz * width;
-      verts[o + 3] = p.x - p.px * width; verts[o + 4] = y; verts[o + 5] = p.z - p.pz * width;
-      alpha[i * 2] = alpha[i * 2 + 1] = i >= n ? 0 : fade;
+      const wA = width * p.j0, wB = width * p.j1;
+      verts[o] = p.x + p.px * wA; verts[o + 1] = y; verts[o + 2] = p.z + p.pz * wA;
+      verts[o + 3] = p.x - p.px * wB; verts[o + 4] = y; verts[o + 5] = p.z - p.pz * wB;
+      alpha[i * 2] = alpha[i * 2 + 1] = fade;
+      wk[o] = -1; wk[o + 1] = age; wk[o + 2] = p.sd;
+      wk[o + 3] = 1; wk[o + 4] = age; wk[o + 5] = p.sd;
     }
     w.geo.attributes.position.needsUpdate = true;
     w.geo.attributes.aAlpha.needsUpdate = true;
+    w.geo.attributes.aWake.needsUpdate = true;
     w.mat.uniforms.uTime.value = t;
   }
 
@@ -146,6 +193,11 @@
         varying float vStretch;
         varying float vSeed;
         void main() {
+          // A NEGATIVE seed marks grit struck off a bascule's lattice rather than thrown water.
+          // Costs no attribute and no second draw call, and it inherits the smear-along-travel
+          // that makes a spark a streak instead of a dot. Over 1.0 so it crosses the bloom
+          // threshold the way something genuinely incandescent should.
+          vec3 col = vSeed < 0.0 ? vec3(1.70, 0.66, 0.20) : uCol;
           vec2 d = gl_PointCoord - 0.5;
           float ca = cos(vRot), sa = sin(vRot);
           vec2 q = vec2(d.x * ca + d.y * sa, d.y * ca - d.x * sa);
@@ -157,7 +209,7 @@
           r *= 1.0 + 0.14 * sin(ang * 3.0 + vSeed) + 0.07 * sin(ang * 5.0 - vSeed * 2.3);
           float a = vA * (1.0 - smoothstep(vCore, 1.0, r));
           if (a < 0.004) discard;
-          gl_FragColor = vec4(uCol, a);
+          gl_FragColor = vec4(col, a);
         }`,
     });
     pPts = new THREE.Points(pGeo, pMat);
@@ -210,6 +262,31 @@
         p.life = 0.22 + Math.random() * 0.26;
         p.g = 0.3; p.drag = 2.6; p.fp = 2.0; p.sMin = 0.3;
       }
+    }
+  };
+
+  // ---------- sparks: grit and hot steel off a bascule's lattice, same Points cloud ----------
+  // Rides the spray pool rather than the confetti one because that pool fades ALPHA. Confetti
+  // fades by darkening the colour at full opacity, which is fine for paper and turns an ember
+  // into a brown square on its way out.
+  FX.sparks = function (x, y, z, vx, vz, n) {
+    if (!pool) return;
+    for (let i = 0; i < n; i++) {
+      const p = pool[poolIdx]; poolIdx = (poolIdx + 1) % MAXP;
+      const a = Math.random() * 6.283, sp = 4 + Math.random() * 13;
+      p.x = x + (Math.random() - 0.5) * 1.4;
+      p.y = y + (Math.random() - 0.5) * 0.7;
+      p.z = z + (Math.random() - 0.5) * 1.4;
+      p.vx = vx + Math.cos(a) * sp;
+      p.vy = 1.0 + Math.random() * 7.5;
+      p.vz = vz + Math.sin(a) * sp;
+      p.age = 0;
+      p.life = 0.28 + Math.random() * 0.36;
+      p.s0 = 0.10 + Math.random() * 0.13;
+      p.a0 = 0.55 + Math.random() * 0.35;
+      p.core = 0.55;
+      p.seed = -(0.05 + Math.random() * 6.2);        // negative = hot; see the fragment shader
+      p.g = 1.15; p.drag = 0.8; p.fp = 1.6; p.sMin = 0.45;
     }
   };
 

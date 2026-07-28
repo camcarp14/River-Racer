@@ -93,9 +93,16 @@
 #gaps .bh::before{content:"\\25BC\\00a0";color:var(--chi-red)}
 
 /* ------------------------------------------------- speedometer + boost (BR) */
+/* The boost meter used to be a 1em-wide stack of cells beside the dial. At 85 MPH over a sunlit
+   river that was six pixels of information about the number the whole economy now runs on. It is
+   the OUTER RING of the dial instead: same 270 deg sweep as the speed arc, ten countable
+   segments, and it lands where the eye already is. */
 #speedo{position:absolute;right:1.625em;bottom:1.25em;width:11.5em;height:10.5em;
   background:none;border:0;border-radius:0;padding:0;text-align:right;backdrop-filter:none}
-#spd-arc{position:absolute;right:0;bottom:0;width:10.5em;height:10.5em;border-radius:50%;
+/* the three ring layers are 11.9em and hang .7em past the box, so the dial CENTRE never moves
+   and every percentage below still resolves against the same 11.5em x 10.5em it always did */
+#spd-arc,#spd-ticks,#spd-boost{position:absolute;right:-.7em;bottom:-.7em;width:11.9em;height:11.9em}
+#spd-arc{border-radius:50%;
   background:conic-gradient(from 225deg,
     var(--arc,#7EC8E3) 0turn calc(var(--spd,0)*.75turn),
     rgba(255,255,255,.08) calc(var(--spd,0)*.75turn) .75turn, transparent .75turn);
@@ -103,27 +110,78 @@
           mask:radial-gradient(circle,transparent 0 4.25em,#000 4.25em 4.75em,transparent 4.75em);
   transition:filter var(--t-micro) linear}
 #spd-arc.hot{filter:drop-shadow(0 0 .7em var(--arc))}
-#spd-ticks{position:absolute;right:0;bottom:0;width:10.5em;height:10.5em}
 /* percentages of #speedo (11.5em x 10.5em) = §4.3's 1.55em / 2.55em, immune to the em trap */
 #speed-num{position:absolute;right:13.5%;bottom:24.3%;font:400 4.75em/.85 var(--f-num);
   font-variant-numeric:tabular-nums;color:#fff;letter-spacing:-.02em;text-align:right;
   text-shadow:0 0 1.2em rgba(126,200,227,.55)}
 #speed-unit{position:absolute;right:14.8%;bottom:16.2%;font:700 .72em/1 var(--f-ui);
   letter-spacing:.34em;color:var(--chi-blue)}
-/* segmented, because you can COUNT segments peripherally and a smooth bar is unreadable at 70mph */
-#boost{position:absolute;right:11.9em;bottom:1.6em;width:1.0em;height:9.4em;
-  display:flex;flex-direction:column-reverse;gap:.19em}
-#boost .cell{flex:1;background:rgba(255,255,255,.09);border-radius:1px;
-  transition:background var(--t-micro) linear,box-shadow var(--t-micro) linear}
-#boost .cell.on{background:var(--chi-blue);color:var(--chi-blue)}
-#boost .cell.on.mid{background:var(--gold);color:var(--gold)}
-#boost .cell.on.hot{background:var(--chi-red);color:var(--chi-red)}
-#boost.burning .cell.on{box-shadow:0 0 .6em currentColor,inset 0 0 .25em rgba(255,255,255,.65)}
-/* cells 0-1 hatched: the 0.15 engage threshold made visible, so the hysteresis is learnable */
-#boost .cell.reserve{background-image:repeating-linear-gradient(45deg,
-  rgba(255,200,87,.32) 0 3px,transparent 3px 6px)}
-#boost-label{position:absolute;right:100.4%;bottom:4.8%;font:700 .58em/1 var(--f-ui);
-  letter-spacing:.28em;color:var(--chi-blue);writing-mode:vertical-rl;transform:rotate(180deg)}
+/* right:5.25em puts the legend's right edge on the dial axis; translateX(50%) centres it there */
+#boost-legend{position:absolute;right:5.25em;bottom:.30em;transform:translateX(50%);
+  text-align:center;white-space:nowrap}
+#boost-label{font:700 .58em/1 var(--f-ui);letter-spacing:.28em;text-indent:.28em;color:var(--chi-blue);
+  text-shadow:0 1px 3px rgba(0,0,0,.9)}
+/* the full-tank bonus was a secret: above 0.90 the top two segments go gold and this says why */
+#prime{margin-bottom:.34em;font:700 .62em/1 var(--f-ui);letter-spacing:.26em;text-indent:.26em;
+  color:var(--gold);text-shadow:0 1px 3px rgba(0,0,0,.9);opacity:0;
+  transition:opacity var(--t-micro) linear}
+#prime.on{opacity:1;animation:primebeat 900ms ease-in-out infinite}
+@keyframes primebeat{50%{text-shadow:0 0 .9em rgba(255,200,87,.95),0 1px 3px rgba(0,0,0,.9)}}
+
+/* ============================================================ THE SALUTE ====*/
+/* One number, and it must break loudly. The tier colours ARE the escalation table: blue to x4,
+   gold at THE WAVE (x5), white over red at THE RUN (x10). */
+#chain{position:absolute;left:50%;bottom:11.5em;transform:translateX(-50%);text-align:center;
+  white-space:nowrap;opacity:0;transition:opacity var(--t-std) var(--e-out)}
+#chain.on{opacity:1} #chain.zero{opacity:.55}
+#chain-lab{font:700 .66em/1 var(--f-ui);letter-spacing:.44em;text-indent:.44em;color:var(--chi-blue);
+  text-shadow:0 1px 3px #000,0 0 .7em rgba(0,0,0,.95)}
+#chain-num{margin-top:.10em;font:400 4.2em/.88 var(--f-display);letter-spacing:.01em;color:#EAF6FF;
+  text-shadow:0 .05em 0 rgba(4,18,27,.9),0 .09em .45em rgba(0,0,0,.8);
+  transition:color var(--t-std) linear,font-size var(--t-std) var(--e-out)}
+#chain.zero #chain-num{color:var(--text-mute)}
+#chain.t1 #chain-num{font-size:5.3em;color:var(--gold);
+  text-shadow:0 .05em 0 rgba(4,18,27,.9),0 0 .55em rgba(255,200,87,.8)}
+#chain.t2 #chain-num{font-size:6.1em;color:#fff;
+  text-shadow:0 .05em 0 rgba(4,18,27,.9),0 0 .5em rgba(239,51,64,.95),0 0 1.4em rgba(255,200,87,.6)}
+#chain-num.pop{animation:chainpop 420ms var(--e-pop) both}
+@keyframes chainpop{0%{transform:scale(1.65);opacity:.25}55%{transform:scale(1.07)}100%{transform:none}}
+/* the break is the punishment, so it is the loudest 600 ms in the HUD */
+#chain-num.dead{animation:chaindie 620ms linear both}
+@keyframes chaindie{
+  0%{color:#fff;transform:scale(1.34);opacity:1;text-shadow:0 0 1.4em rgba(239,51,64,1)}
+  14%{color:var(--chi-red);opacity:1} 28%{color:#fff;opacity:1}
+  42%{color:var(--chi-red);opacity:1} 62%{color:var(--chi-red);transform:scale(1);opacity:1}
+  100%{color:var(--chi-red);transform:scale(.84);opacity:0}}
+#chain-sub{margin-top:.34em;min-height:1.1em;font:700 .74em/1 var(--f-ui);letter-spacing:.20em;
+  color:var(--gold);text-shadow:0 1px 3px rgba(0,0,0,.95);opacity:0;
+  transition:opacity var(--t-micro) linear}
+#chain-sub.on{opacity:1} #chain-sub.bad{color:var(--chi-red)}
+/* BANK is a choice the player has to be offered, not merely told about: it gets a plate */
+#chain-sub.bank{display:inline-block;color:var(--chi-blue);padding:.42em .8em;border-radius:2px;
+  background:var(--panel-hi);box-shadow:inset 0 0 0 2px var(--rule-soft);text-shadow:none}
+
+/* The arc: the ask window made visible, and then — once the tender answers — the lift cycle with
+   YOUR arrival marked on it. If the player cannot read this, the hook does not exist. */
+#salute{position:absolute;left:50%;bottom:1.0em;transform:translateX(-50%);width:18em;height:9.6em;
+  opacity:0;transition:opacity 200ms var(--e-out)}
+#salute.on{opacity:1}
+#sal-ring{position:absolute;left:0;top:0;width:18em;height:9.6em}
+#sal-cue{position:absolute;left:0;right:0;top:22%;text-align:center;
+  font:400 1.55em/1 var(--f-display);letter-spacing:.05em;color:var(--gold);
+  text-shadow:0 .05em .28em rgba(0,0,0,.9)}
+#salute.ask #sal-cue{animation:askbeat 640ms ease-in-out infinite}
+#salute.ok  #sal-cue{color:#3ED17E}
+#salute.bad #sal-cue{color:var(--chi-red)}
+#salute.wait #sal-cue{color:var(--text-dim)}
+@keyframes askbeat{50%{opacity:.42}}
+#sal-name{position:absolute;left:0;right:0;bottom:.1em;text-align:center;white-space:nowrap;
+  font:700 .66em/1 var(--f-ui);letter-spacing:.16em;color:var(--text-dim);
+  text-shadow:0 1px 3px rgba(0,0,0,.95)}
+#sal-name b{color:#fff;margin-left:.5em}
+#sal-name i{font-style:normal;margin-left:.8em;padding:.2em .5em;border-radius:2px;
+  color:var(--gold);box-shadow:inset 0 0 0 1px currentColor}
+#sal-name i.no{color:var(--chi-red)}
 
 /* ------------------------------------------------------------- status chips */
 #chips{position:absolute;right:1.625em;bottom:12.2em;display:flex;flex-direction:column;
@@ -223,6 +281,7 @@
   padding:.6em .9em;border:0;box-shadow:inset 0 0 0 2px var(--rule-soft);
   transition:opacity 900ms var(--e-out)}
 #boost-hint b{color:#fff}
+#boost-hint b.key{color:var(--gold);letter-spacing:.18em}
 #boost-hint.gone{opacity:0}
 
 /* ------------------------------------------------ cinematic / photo overlay */
@@ -251,7 +310,16 @@
       rgba(4,18,27,0) 60%,rgba(4,18,27,.34) 80%,rgba(4,18,27,.66) 100%),
     linear-gradient(180deg,transparent 0 16.6%,rgba(126,200,227,.13) 16.6% 33.3%,
     transparent 33.3% 66.6%,rgba(126,200,227,.13) 66.6% 83.3%,transparent 83.3%)}
-#menu.title-screen{padding:2.2vh 0}
+#menu.title-screen{padding:1.5vh 0}
+/* Eight rows is the worst case — CONTINUE at the top, THE FIRST BRIDGE at the bottom — and the
+   whole screen has to survive a 1280x720 window, so the title scales off the SHORT axis too. */
+#menu.title-screen{font-size:clamp(10.5px,min(1.05vw,1.82vh),16px)}
+#menu.title-screen #title{font:400 clamp(40px,min(7.2vw,10.2vh),104px)/.90 var(--f-display)}
+#menu.title-screen .stars{margin-bottom:1.0vh}
+#menu.title-screen .menu-list{margin-top:1.5vh;gap:.42em}
+#menu.title-screen .menu-item{padding:.62em 2em}
+#menu.title-screen .sound-row{margin-top:1.0em}
+#menu.title-screen .menu-note{margin-top:1.0em}
 #title{font:400 clamp(44px,7.2vw,104px)/.90 var(--f-display);letter-spacing:.005em;
   text-align:center;color:#fff;background:none;-webkit-background-clip:border-box;background-clip:border-box;
   filter:none;text-shadow:0 .045em 0 var(--chi-blue-ink),0 .09em .3em rgba(0,0,0,.6)}
@@ -320,10 +388,12 @@
 #livery i.sel{box-shadow:inset 0 0 0 2px #fff,0 0 .8em rgba(255,255,255,.35);transform:translateY(-.15em)}
 
 /* --------------------------------------------------------------- results ---*/
-#results-list{min-width:44em;border-top:2px solid var(--chi-blue);margin-top:1.2em}
-.result-head,.result-row{display:grid;grid-template-columns:3.2em 1fr 7em 5.4em 5em;
-  align-items:center;gap:.8em;padding:.7em 1em}
-.result-head.cup,.result-row.cup{grid-template-columns:3.2em 1fr 7em 5.4em 5em 3.4em}
+/* the hull column was 7em against a two-word hull name, so every row wrapped to two lines and the
+   card ran off a 720-high window the moment the banked strip arrived */
+#results-list{min-width:47em;border-top:2px solid var(--chi-blue);margin-top:.8em}
+.result-head,.result-row{display:grid;grid-template-columns:3.2em 1fr 9.6em 5.4em 5em;
+  align-items:center;gap:.8em;padding:.55em 1em}
+.result-head.cup,.result-row.cup{grid-template-columns:3.2em 1fr 9.6em 5.4em 5em 3.4em}
 .result-head{font:700 .66em/1 var(--f-ui);letter-spacing:.24em;color:var(--chi-blue);
   border-bottom:1px solid var(--rule-soft)}
 .result-row{background:var(--panel);border:0;border-bottom:1px solid rgba(255,255,255,.05);
@@ -334,10 +404,23 @@
 .result-row:nth-child(6){animation-delay:300ms} .result-row:nth-child(7){animation-delay:360ms}
 @keyframes rowin{from{opacity:0;transform:translateX(-1.2em)}to{opacity:1;transform:none}}
 .result-row .p{font:400 1.5em/1 var(--f-display);color:#fff;text-align:right}
+.result-row .h{font-size:.86em;letter-spacing:.06em;color:var(--text-mute);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .result-row .t,.result-row .gap,.result-row .pts{font-family:var(--f-num);font-variant-numeric:tabular-nums;color:#fff}
 .result-row .gap{color:var(--text-mute)}
 .result-row.you{background:rgba(255,200,87,.10);box-shadow:inset .28em 0 0 var(--gold);color:#fff;font-weight:700}
 .result-row.p1 .p{color:var(--gold)} .result-row.p2 .p{color:#DDE3E8} .result-row.p3 .p{color:#C97B3C}
+/* The banked strip. A results screen that cannot say what changed means the run changed nothing:
+   what you chained, the mark it is measured against, and the medal it moved. */
+#bank-strip{margin:.8em 0 .1em;display:flex;justify-content:center;align-items:center;gap:1.6em;
+  padding:.66em 1.6em;background:var(--panel-hi);border-radius:2px;
+  box-shadow:inset 0 0 0 2px var(--rule-soft);font:700 .80em/1 var(--f-ui);letter-spacing:.20em;
+  color:var(--text-dim);animation:rowin 380ms var(--e-out) both}
+#bank-strip b{margin-left:.55em;color:#fff;font-family:var(--f-num);font-variant-numeric:tabular-nums}
+#bank-strip .hi b{color:var(--gold)}
+#bank-strip .med{color:var(--text-mute)}
+#bank-strip .med u{text-decoration:none;color:var(--gold);margin:0 .35em}
+#bank-strip .med s{text-decoration:none;color:var(--text-dim)}
 #record-banner{margin:.9em 0;padding:.7em 1.4em;background:var(--gold);color:var(--ink-900);
   font:700 .95em/1 var(--f-ui);letter-spacing:.28em;text-align:center;border-radius:2px;
   animation:recordin 620ms var(--e-pop) both}

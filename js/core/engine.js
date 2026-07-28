@@ -129,6 +129,12 @@
     if (qualityTimer > 1.5) {
       qualityTimer = 0;
       if (E.autoQuality) {
+        // first rung, above every other: the speed streaks are the only thing here the player
+        // never sees the absence of, so they go before a single pixel of resolution does.
+        if (RR.Post) {
+          if (fpsEMA < 50 && RR.Post.streaks > 0) RR.Post.streaks = 0;
+          else if (fpsEMA > 57 && RR.Post.streaks < 1) RR.Post.streaks = 1;
+        }
         if (fpsEMA < 47 && pixelScale > 0.55) { pixelScale = Math.max(0.55, pixelScale - 0.15); onResize(); }
         else if (fpsEMA > 57 && pixelScale < 1) { pixelScale = Math.min(1, pixelScale + 0.1); onResize(); }
         if (RR.Reflect) {

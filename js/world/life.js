@@ -12,6 +12,8 @@
   let bikes, bikeData = [];
   let cars, carData = [];
   let riverCraft = [];
+  let staticData = [];            // the idlers — they only move when the city has a reason to look
+  let watchK = 0, watchTurned = 0, lateArmed = false;
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1);
   const _up = new THREE.Vector3(0, 1, 0);
 
@@ -150,7 +152,7 @@
           statics.push({ x, z, yaw: rng() * 6.28, col: SHIRTS[(rng() * SHIRTS.length) | 0],
                          skin: SKINS[(rng() * SKINS.length) | 0],
                          acc: rng() < 0.5 ? ACCENT[(rng() * ACCENT.length) | 0] : 0,
-                         sc: 0.93 + rng() * 0.14 });
+                         sc: 0.93 + rng() * 0.14, ph: rng() * 9, k: 0 });
         }
       }
     }
@@ -180,6 +182,7 @@
       body.setColorAt(i, new THREE.Color(all[i].skin));
       if (bagOf[i] >= 0) bags.setColorAt(bagOf[i], new THREE.Color(all[i].acc));
     }
+    staticData = statics;
     // the idlers never move: place them once and let the per-frame loop skip them entirely
     for (let i = 0; i < statics.length; i++) {
       const st = statics[i], idx = nWalk + i;
@@ -347,16 +350,50 @@
         obst = { x: 0, z: 0, r: 1.5 };
         RR.River.obstacles.push(obst);
       }
-      riverCraft.push({ g: craftMesh(t.kind), p, d: rng() * p.len, off: t.off, spd: t.spd, dir: t.dir, ph: rng() * 9, obst, seg, halfLen });
+      riverCraft.push({ g: craftMesh(t.kind), p, d: rng() * p.len, off: t.off, spd: t.spd, dir: t.dir,
+                        ph: rng() * 9, obst, seg, halfLen, kayak: !big, flee: 0 });
     }
 
     LIFE.craft = riverCraft;                 // main.js reads this for the passing-wake rock
+    // handles on the crowd, so a test can find the idlers without guessing which InstancedMesh in
+    // a scene full of them is the one carrying people
+    LIFE.crowd = { mesh: people, base: nWalk, idlers: staticData };
     LIFE._ready = true;
   };
 
+  // The Wendella already collides as a moving capsule; this puts it in one of the eight slots the
+  // water shader's bow-wave/trail foam accepts, so 30 m of white hull crossing the Main Stem
+  // actually unsettles a planing hull instead of gliding through it. main.js writes uNumBoats from
+  // the race field at the top of ITS update; engine.js walks updateFns by live length, so a
+  // callback appended from inside LIFE.update lands immediately AFTER that write — the only place
+  // this can go without editing main.js. ONE craft, the nearest, and only inside 180 m: the
+  // fragment shader loops once per registered boat, so this is a deliberate +1 iteration and never
+  // more, and past 180 m a 26 m trail is a sub-pixel smear that would not be worth even that.
+  function feedWake() {
+    const W = RR.Water && RR.Water.material;
+    if (!W || !W.uniforms || !W.uniforms.uBoats || !W.uniforms.uNumBoats) return;
+    const u = W.uniforms;
+    const n = u.uNumBoats.value | 0;
+    if (n >= 8) return;
+    const cam = RR.Engine.camera.position;
+    let best = null, bd = 180 * 180;
+    for (let i = 0; i < riverCraft.length; i++) {
+      const c = riverCraft[i];
+      if (!c.seg) continue;                              // a kayak makes no wake worth a uniform slot
+      const d = U().dist2(cam.x, cam.z, c.g.position.x, c.g.position.z);
+      if (d < bd) { bd = d; best = c; }
+    }
+    if (!best) return;
+    u.uBoats.value[n].set(best.g.position.x, best.g.position.z, U().clamp(best.spd / 12, 0, 1), best.g.rotation.y);
+    u.uNumBoats.value = n + 1;
+  }
+
   LIFE.update = function (dt, t) {
     if (!LIFE._ready) return;
+    if (!lateArmed) { lateArmed = true; RR.Engine.onUpdate(feedWake); }
     const bp = {};
+    const RS = RR.Race && RR.Race.state && RR.Race.state();
+    const pl = RS && RS.player && RS.player.pos ? RS.player.pos : null;
     // pedestrians + cyclists
     for (let i = 0; i < peopleData.length; i++) {
       const w = peopleData[i];
@@ -375,6 +412,33 @@
       if (bagOf[i] >= 0) bags.setMatrixAt(bagOf[i], _m);
     }
     _s.setScalar(1);
+
+    // Above chain ×6 the Riverwalk stops pretending you are traffic and watches you go past. The
+    // idlers are the crowd — the walkers keep walking, because a promenade where nobody is going
+    // anywhere reads as a diorama. Costs one distance test per idler per frame, and only while
+    // somebody is actually on a chain: with no chain and nobody turned, the loop never runs.
+    const chain = (RR.Salute && RR.Salute.chain) || 0;
+    watchK = U().damp(watchK, chain >= 6 ? 1 : 0, 2.2, dt);
+    if (pl && (watchK > 0.002 || watchTurned > 0)) {
+      watchTurned = 0;
+      for (let i = 0; i < staticData.length; i++) {
+        const st = staticData[i];
+        const tgt = U().dist2(pl.x, pl.z, st.x, st.z) < 130 * 130 ? watchK : 0;
+        if (st.k < 0.0015 && tgt < 0.0015) continue;
+        st.k = U().damp(st.k, tgt, 3.0, dt);
+        if (st.k > 0.0015) watchTurned++;
+        const face = Math.atan2(pl.x - st.x, pl.z - st.z);
+        const idx = nWalk + i;
+        _q.setFromAxisAngle(_up, st.yaw + U().wrapAngle(face - st.yaw) * st.k);
+        _p.set(st.x, PY() + st.k * Math.abs(Math.sin(t * 3.4 + st.ph)) * 0.05, st.z);
+        _s.setScalar(st.sc);
+        _m.compose(_p, _q, _s);
+        people.setMatrixAt(idx, _m); body.setMatrixAt(idx, _m);
+        if (bagOf[idx] >= 0) bags.setMatrixAt(bagOf[idx], _m);
+      }
+      _s.setScalar(1);
+    }
+
     people.instanceMatrix.needsUpdate = true;
     body.instanceMatrix.needsUpdate = true;
     bags.instanceMatrix.needsUpdate = true;
@@ -415,16 +479,27 @@
 
     // river traffic
     for (const c of riverCraft) {
-      c.d += c.spd * c.dir * dt;
+      // A racing hull inside 20 m is a real event in a sea kayak: you paddle for the bank and you
+      // paddle hard. They ease back out over the next few seconds, which is also how it goes.
+      if (c.kayak) {
+        let want = 0;
+        if (pl) {
+          const d2 = U().dist2(pl.x, pl.z, c.g.position.x, c.g.position.z);
+          if (d2 < 400) want = 1 - Math.sqrt(d2) / 20;
+        }
+        c.flee = want > c.flee ? want : U().damp(c.flee, 0, 0.55, dt);
+      }
+      c.d += c.spd * (1 + 2.2 * c.flee) * c.dir * dt;
       c.d = ((c.d % c.p.len) + c.p.len) % c.p.len;      // loop around the channel
       const a = U().pathAt(c.p, c.d, bp);
       const nx = -a.tz, nz = a.tx;
-      const x = a.x + nx * a.w * c.off, z = a.z + nz * a.w * c.off;
+      const off = c.flee ? U().clamp(c.off + (c.off < 0 ? -0.32 : 0.32) * c.flee, -0.95, 0.95) : c.off;
+      const x = a.x + nx * a.w * off, z = a.z + nz * a.w * off;
       const amp = RR.River.waveAmp(x, z);
       const y = U().waterHeight(x, z, t, amp) + 0.1;
       c.g.position.set(x, y, z);
       c.g.rotation.y = Math.atan2(a.tx * c.dir, a.tz * c.dir);
-      c.g.rotation.z = Math.sin(t * 0.8 + c.ph) * 0.04 * amp;
+      c.g.rotation.z = Math.sin(t * 0.8 + c.ph) * 0.04 * amp + Math.sin(t * 7 + c.ph) * 0.22 * c.flee;
       if (c.seg) {                                       // drive the moving capsule's bow/stern endpoints
         c.seg.ax = x - a.tx * c.halfLen; c.seg.az = z - a.tz * c.halfLen;
         c.seg.bx = x + a.tx * c.halfLen; c.seg.bz = z + a.tz * c.halfLen;

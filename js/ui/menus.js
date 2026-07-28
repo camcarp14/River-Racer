@@ -27,8 +27,9 @@
     root.classList.toggle('showroom', screen === 'vehicle');
     root.classList.toggle('title-screen', screen === 'title');
     root.classList.toggle('paused', screen === 'pause');
-    // the post-race screens sit over a still-rendering city: without a scrim the tables are unreadable
-    root.classList.toggle('scrim', screen === 'cup' || screen === 'results');
+    // the post-race screens sit over a still-rendering city: without a scrim the tables are
+    // unreadable, and the same is true of the prose on HOW TO PLAY over the attract flythrough
+    root.classList.toggle('scrim', screen === 'cup' || screen === 'results' || screen === 'help');
     paintSound();
   }
   MENU.hide = function () {
@@ -41,6 +42,27 @@
   let liveryIdx = (() => { try { return Math.max(0, Math.min(5, parseInt(localStorage.getItem('rr_livery') || '0', 10) || 0)); } catch (e) { return 0; } })();
   MENU.livery = () => LIVERIES[liveryIdx];
 
+  // ---------- what the player was last doing ----------
+  // CONTINUE only means something if there is something to continue. Prefer rr_save (W3 owns it)
+  // and fall back to a key of our own, so the entry works before progress.js is real.
+  function lastRun() {
+    try {
+      const p = RR.Progress && RR.Progress.get ? (RR.Progress.get() || {}) : {};
+      if (p.last && p.last.c != null) return p.last;
+      const v = JSON.parse(localStorage.getItem('rr_last') || 'null');
+      if (v && v.c != null) return v;
+    } catch (e) { /* fine */ }
+    return null;
+  }
+  function rememberRun(c, v) {
+    const rec = { c, v };
+    try { localStorage.setItem('rr_last', JSON.stringify(rec)); } catch (e) { /* fine */ }
+    if (RR.Progress && RR.Progress.set) RR.Progress.set('last', rec);
+  }
+  function seenOpening() {
+    try { return !!((RR.Progress && RR.Progress.get ? RR.Progress.get() : {}) || {}).seenOpening; } catch (e) { return false; }
+  }
+
   // ---------- title ----------
   function showTitle() {
     screen = 'title'; sel = 0; timeTrial = false; tourMode = false; cupMode = false; cupPending = false;
@@ -50,29 +72,42 @@
     const cupLabel = !cup ? 'CHAMPIONSHIP'
       : cup.done ? 'CHAMPIONSHIP · FINAL'
         : 'CHAMPIONSHIP · ROUND ' + Math.min(rounds, cup.round + 1) + '/' + rounds;
+
+    // The list is built, not written out, because CONTINUE and THE FIRST BRIDGE come and go and
+    // data-i indices have to stay in step with the action array.
+    const rows = [], acts = [];
+    const last = lastRun();
+    const openCup = cup && !cup.done;
+    if (openCup) {
+      rows.push('CONTINUE · ROUND ' + Math.min(rounds, cup.round + 1));
+      acts.push(() => { cupMode = true; showCupBoard(-1); });
+    } else if (last && RR.Race.COURSES[last.c]) {
+      rows.push('CONTINUE · ' + String(RR.Race.COURSES[last.c].name).toUpperCase());
+      acts.push(() => { courseIdx = last.c; if (RR.Boats.CATALOG[last.v]) vehicleIdx = last.v; launch(); });
+    }
+    rows.push('RACE');                    acts.push(() => showVehicles({}));
+    rows.push(cupLabel);                  acts.push(() => { cupMode = true; if (cup) showCupBoard(-1); else { cupPending = true; showVehicles({ cup: true }); } });
+    rows.push('TIME TRIAL');              acts.push(() => showVehicles({ tt: true }));
+    rows.push('ARCHITECTURE TOUR');       acts.push(() => { tourMode = true; showVehicles({ tour: true }); });
+    rows.push('MULTIPLAYER');             acts.push(() => { if (RR.NetUI && RR.NetUI.openEntry) RR.NetUI.openEntry(); });
+    rows.push('HOW TO PLAY');             acts.push(showHelp);
+    // the cold open runs once on its own; after that it is a thing you can go back and play
+    if (RR.Opening && RR.Opening.start && seenOpening()) {
+      rows.push('THE FIRST BRIDGE');
+      acts.push(() => { MENU.hide(); if (RR.Audio && RR.Audio.setMusic) RR.Audio.setMusic(false); RR.Opening.start(); });
+    }
+
     html(`
       <div class="stars">${STAR_CAPS.map((c) => '<div class="starcol">' + STAR + '<span>' + c + '</span></div>').join('')}</div>
       <div id="title">RIVER<br>RACER</div>
       <div id="subtitle">CHICAGO · LAKE MICHIGAN</div>
       <div class="menu-list">
-        <div class="menu-item" data-i="0">RACE</div>
-        <div class="menu-item" data-i="1">${cupLabel}</div>
-        <div class="menu-item" data-i="2">TIME TRIAL</div>
-        <div class="menu-item" data-i="3">ARCHITECTURE TOUR</div>
-        <div class="menu-item" data-i="4">MULTIPLAYER</div>
-        <div class="menu-item" data-i="5">HOW TO PLAY</div>
+        ${rows.map((r, i) => `<div class="menu-item" data-i="${i}">${r}</div>`).join('')}
       </div>
       <div id="snd-row" class="sound-row"></div>
       <div class="menu-note">↑↓ SELECT · ENTER CONFIRM · <b>M</b> SOUND<br>BUILT ON THE REAL CHICAGO RIVER</div>
     `);
-    bindClicks([
-      () => showVehicles({}),
-      () => { cupMode = true; if (cup) showCupBoard(-1); else { cupPending = true; showVehicles({ cup: true }); } },
-      () => showVehicles({ tt: true }),
-      () => { tourMode = true; showVehicles({ tour: true }); },
-      () => { if (RR.NetUI && RR.NetUI.openEntry) RR.NetUI.openEntry(); },
-      showHelp,
-    ]);
+    bindClicks(acts);
     const row = $('snd-row');
     if (row) row.addEventListener('click', () => MENU.toggleSound());
     buildSoundChip();
@@ -87,16 +122,23 @@
     screen = 'help'; sel = 0;
     html(`
       <div id="select-title">HOW TO PLAY</div>
-      <div class="menu-note" style="font-size:15px;max-width:640px;line-height:2.1;">
+      <div class="menu-note" style="font-size:15px;max-width:660px;line-height:2.0;">
         <b>W / ↑</b> — throttle &nbsp;&nbsp; <b>S / ↓</b> — brake &amp; reverse &nbsp;&nbsp; <b>A·D / ←·→</b> — steer<br>
-        <b>SHIFT</b> — boost. The bottom two cells of the meter are hatched: that is your reserve,
-        and the engine will not light below it.<br>
+        <b>SHIFT</b> — boost. The meter is the outer ring of the dial; the two
+        <span style="color:#EF3340">red</span> segments at the bottom are the reserve, and the engine
+        will not light below them. Above <span style="color:#FFC857">PRIME</span> it pays 15% more.<br>
+        <b>SPACE</b> — <span style="color:#FFC857">ASK FOR THE BRIDGE</span>. One prolonged blast and
+        one short is how a vessel asks a Chicago bascule for passage, and the tender answers. Press it
+        while the amber arc is closing and the leaves lift: cross under them open and that is a
+        <b>CLEAN SALUTE</b> — the chain climbs and pays boost. Miss the window and nothing hits you,
+        but the chain goes back to zero.<br>
+        With no bridge in range and a chain of three or more, <b>SPACE</b> banks it for boost instead.<br>
         <b>C</b> camera &nbsp; <b>[ ]</b> cinematic shot &nbsp; <b>P</b> photo &nbsp; <b>N</b> time of day &nbsp;
-        <b>G</b> green river &nbsp; <b>R</b> reset &nbsp; <b>ESC</b> pause<br><br>
+        <b>G</b> green river &nbsp; <b>R</b> reset &nbsp; <b>ESC</b> pause<br>
         Thread the checkpoint buoys — <span style="color:#EF3340">red LEFT</span>,
-        <span style="color:#3ED17E">green RIGHT</span>. Gold gates off the racing line pay boost.<br>
-        Hold a drift and the meter fills; graze the wall at a shallow angle and you barely lose a thing —
-        hit it square and you lose everything.
+        <span style="color:#3ED17E">green RIGHT</span>. Gold gates off the racing line pay boost.
+        The jump ramps are moored on the bridge approaches: take one with the span still shut and
+        you will meet the underside of it.
       </div>
       <div class="menu-list"><div class="menu-item sel" data-i="0">BACK</div></div>
     `);
@@ -420,6 +462,39 @@
     }).join('');
   }
 
+  // ---------- the banked strip ----------
+  // A results screen that cannot say what changed means the run changed nothing. Three facts:
+  // what you chained, the mark it is measured against, and the medal it moved.
+  // RR.Progress is W3's; every shape below is optional and the strip degrades to the chain alone.
+  const MEDALS = ['BRONZE', 'SILVER', 'GOLD', 'AUTHOR'];
+  function medalName(m) {
+    if (m == null || m === '') return null;
+    if (typeof m === 'number') return MEDALS[Math.max(0, Math.min(3, m))] || null;
+    return String(m).toUpperCase();
+  }
+  function bankStrip(courseId) {
+    let run = 0, best = 0, medal = null, prev = null;
+    if (RR.HUD && RR.HUD.runChain) run = RR.HUD.runChain() | 0;
+    if (RR.Salute) best = RR.Salute.best | 0;
+    try {
+      const P = RR.Progress;
+      const s = P && P.summary ? P.summary(courseId) : null;
+      if (s) {
+        if (s.chain != null) run = s.chain | 0;
+        if (s.best != null) best = s.best | 0;
+        medal = medalName(s.medal);
+        prev = medalName(s.prevMedal);
+      }
+    } catch (e) { /* the strip is never worth an exception */ }
+    if (best < run) best = run;
+    let med = '';
+    if (medal && prev && medal !== prev) med = `<span class="med"><s>${prev}</s> → <u>${medal}</u></span>`;
+    else if (medal) med = `<span class="med"><u>${medal}</u></span>`;
+    const sep = med ? '<span class="sep">·</span>' : '';
+    return `<div id="bank-strip"><span class="${run && run >= best ? 'hi' : ''}">SALUTE<b>×${run}</b></span>
+      <span class="sep">·</span><span>BEST<b>×${best}</b></span>${sep}${med}</div>`;
+  }
+
   MENU.showResults = function (results, courseId) {
     screen = 'results'; sel = 0;
     const prevBest = bestAtStart;
@@ -441,7 +516,8 @@
       <div id="select-sub">${sub}</div>
       ${record ? '<div id="record-banner">★ NEW COURSE RECORD ★</div>' : ''}
       <div id="results-list">${head}${resultRows(results, !!cup)}</div>
-      <div class="menu-list" style="margin-top:1.4em;">
+      ${bankStrip(courseId)}
+      <div class="menu-list" style="margin-top:1.0em;">
         ${board ? `<div class="menu-item" data-i="0">${board.done ? 'FINAL STANDINGS' : 'CHAMPIONSHIP STANDINGS'} ▸</div>
         <div class="menu-item" data-i="1">TITLE SCREEN</div>`
         : `<div class="menu-item" data-i="0">RACE AGAIN</div>
@@ -624,7 +700,7 @@
       <div id="select-title">RACE COMPLETE</div>
       <div id="select-sub">MULTIPLAYER · ${String(courseId || '').toUpperCase()}</div>
       <div id="results-list"><div class="result-head"><span>POS</span><span>PILOT</span><span>HULL</span><span>TIME</span><span>GAP</span></div>${rows}</div>
-      <div class="menu-list" style="margin-top:1.4em;"><div class="menu-item" data-i="0">TITLE SCREEN</div></div>
+      <div class="menu-list" style="margin-top:1.0em;"><div class="menu-item" data-i="0">TITLE SCREEN</div></div>
     `);
     bindClicks([() => { if (RR.Net && RR.Net.leave) RR.Net.leave(); showTitle(); }]);
     paintSel();
@@ -649,6 +725,7 @@
       </div>
       <div class="menu-note" style="margin-top:1.4em;max-width:640px">
         <b>W/↑</b> throttle · <b>A·D/←·→</b> steer · <b>S/↓</b> brake · <b>SHIFT</b> boost<br>
+        <b style="color:#FFC857">SPACE</b> ask for the bridge — or bank the chain<br>
         <b>C</b> camera · <b>[ ]</b> shot · <b>P</b> photo · <b>N</b> time of day · <b>G</b> green river ·
         <b>M</b> sound · <b>R</b> reset
       </div>
@@ -736,6 +813,7 @@
     // to beat here or the record banner fires on every single run
     const c = RR.Race.COURSES[courseIdx];
     bestAtStart = c ? RR.Race.best(c.id) : null;
+    if (!tourMode && !timeTrial && !cupMode) rememberRun(courseIdx, vehicleIdx);
     MENU.hide();
     RR.Audio.setMusic(false);
     onStartRace(courseIdx, vehicleIdx, timeTrial, null, tourMode);

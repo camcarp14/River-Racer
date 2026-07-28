@@ -22,6 +22,9 @@
       rpm: 0,
       visRoll: 0, visPitch: 0,
       radius: (mesh.userData.size ? mesh.userData.size.r : 2) * 0.7,
+      // how far the highest bit of her stands over the waterline — screen, arch, wheelhouse. This
+      // is what a bascule deck actually meets, and on the BELLE it is a two-deck superstructure.
+      hullTop: Math.max(1.6, (mesh.userData.size ? mesh.userData.size.r : 2) * 0.8),
       hullLen: (mesh.userData.size && mesh.userData.size.len) || 5,   // waterline the hull averages
       mass: spec.mass || 1,
       bumpRecover: 0,
@@ -89,7 +92,11 @@
     boat.boostKickT = Math.max(0, (boat.boostKickT || 0) - dt);
 
     if (boosting) boat.boostEnergy = Math.max(0, boat.boostEnergy - dt * 0.34);   // 2.9 s from full
-    else boat.boostEnergy = Math.min(1, boat.boostEnergy + dt * 0.100);           // 10 s refill
+    // Passive refill is a trickle, not an allowance. At 0.100/s the meter refilled itself every
+    // ten seconds whatever you did, which made boost a cooldown; at 0.030 a full tank means you
+    // have been brave for a while. Everything else — checkpoints, gates, drift, airtime, the
+    // salute — pays for risk, and those are the only meaningful supply now.
+    else boat.boostEnergy = Math.min(1, boat.boostEnergy + dt * 0.030);           // 33 s refill
     boat.boostHeat = U().damp(boat.boostHeat, boosting ? 1 : 0, boosting ? 14 : 5, dt);
 
     const bMul = boosting ? 1 + (spec.boost - 1) * (boat.boostFull || 1) : 1;
@@ -221,6 +228,30 @@
       }
     }
 
+    // ---- the ceiling ----
+    // A Chicago bascule carries 5.8 m of soffit over a hull with about two metres of freeboard, so
+    // a boat ON THE WATER can never be hit by one — measured, not assumed, and that is why the
+    // safe line under a closed span costs nothing. Leave the water and the arithmetic inverts:
+    // ramps.js launches at sp*0.2875*1.25 + 1.6, which at 40 m/s puts you through the span line at
+    // about 11 m, twice the deck height. The deck is the only wall in this game and you can only
+    // find it by choosing to jump. W1 owns the footprint-accurate query; until it lands, this is
+    // exactly today's behaviour.
+    boat._ceilT = Math.max(0, (boat._ceilT || 0) - dt);
+    if (boat.airborne && !boat._ramp && RR.Bridges && RR.Bridges.clearanceAt) {
+      // pass the WATERLINE datum, not the masthead: a hull whose keel line is over the parapet has
+      // genuinely cleared the whole span, and anything less is still meeting steel somewhere.
+      const ceil = RR.Bridges.clearanceAt(boat.pos.x, boat.pos.z, boat.pos.y);
+      if (isFinite(ceil) && boat.pos.y + boat.hullTop > ceil) {
+        const impactVy = boat.vy;
+        boat.pos.y = Math.max(rideY, ceil - boat.hullTop);
+        boat.vy = Math.min(boat.vy, -2.6);                 // slammed back down, not parked in mid-air
+        if (boat._ceilT <= 0) {
+          boat._ceilT = 0.7;
+          P.ceilingHit(boat, speed, impactVy, fx, fz);
+        }
+      }
+    }
+
     // ---- jump ramps: ride up the wedge, launch off the lip (speed sets the arc) ----
     if (RR.Ramps) {
       const r = RR.Ramps.query(boat.pos.x, boat.pos.z);
@@ -300,6 +331,30 @@
     boat.rpm = U().damp(boat.rpm, U().clamp(ctl.throttle * 0.55 + load * 0.45 + (boosting ? 0.12 : 0), 0.06, 1.15), 4, dt);
 
     boat.crashTimer = Math.max(0, boat.crashTimer - dt);
+  };
+
+  // Meeting the underside of a bascule at 90 mph. This is the only wreck in the game the player
+  // did not have to be given — they asked for the ramp with the span shut — so it has to land like
+  // one: a quarter of the speed gone, the wheel taken away for the better part of a second, sparks
+  // off the lattice and the hull dropped flat onto the water.
+  P.ceilingHit = function (boat, speed, vyUp, fx, fz) {
+    const sev = U().clamp(speed / 30 + Math.max(0, vyUp) / 14, 0.35, 1);
+    boat.vel.x *= 0.75; boat.vel.z *= 0.75;              // 25% of your way gone into the steel
+    boat.angVel *= 0.35;
+    boat.bumpRecover = Math.max(boat.bumpRecover || 0, 0.45 + sev * 0.55);
+    boat.crashTimer = Math.max(boat.crashTimer, 0.5);
+    boat.launchArmed = false;
+    if (boat.onCeiling) boat.onCeiling(sev);
+    // onCrash is already wired to the thud, the splash burst and the camera kick for the player
+    if (boat.onCrash) boat.onCrash(sev, -fx, -fz);
+    if (boat.isPlayer) {
+      if (RR.Feel && RR.Feel.dilate) RR.Feel.dilate(0.42, 300);
+      if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.45 + sev * 0.5);
+    }
+    if (RR.FX && RR.FX.sparks) {
+      RR.FX.sparks(boat.pos.x, boat.pos.y + boat.hullTop * 0.9, boat.pos.z,
+        boat.vel.x * 0.4, boat.vel.z * 0.4, Math.round(18 + sev * 30));
+    }
   };
 
   // Separate the normal and the tangent. Bounce the normal, but only SCRUB the tangent, and only

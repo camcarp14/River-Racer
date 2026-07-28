@@ -3,17 +3,22 @@
   const $ = (id) => document.getElementById(id);
   let boats = [], player = null, pilots = [];
   let remotes = [], netSendT = 0;          // multiplayer: network-driven rival boats + broadcast throttle
-  let mode = 'menu';                       // menu | race | paused
+  let mode = 'boot';                       // boot | menu | race | paused | photo | results
   let raceState = null;
   let landmarkTags = [];                   // {x, z, name, r2} for HUD callouts
+  let booted = 0;                          // 0 not started · 1 building · 2 rendering the ride
 
   function setLoad(f, msg) {
     $('load-fill').style.width = Math.round(f * 100) + '%';
     if (msg) $('load-msg').textContent = msg;
   }
 
+  // The render loop now starts three steps in (the load is a boat ride), which means every module
+  // that self-arms from RR.Engine.onUpdate is live while the back half of the world is still being
+  // built — and eggs.js throws spray from its own update. So the particle pool comes up with the
+  // river, not with the HUD. Every label is unchanged; only which step does the work moved.
   const STEPS = [
-    ['SURVEYING THE RIVER…', () => { RR.River.init(); }],
+    ['SURVEYING THE RIVER…', () => { RR.River.init(); RR.FX.init(); }],
     ['REVERSING THE FLOW…', () => { RR.Sky.init(); RR.Water.init(); }],
     ['RAISING THE SKYLINE…', () => { RR.City.init(); }],
     ['DRESSING THE LANDMARKS…', () => { landmarkTags = RR.Landmarks.init(); }],
@@ -39,8 +44,28 @@
       }
     }],
     ['FILLING THE STREETS…', () => { RR.Life.init(); RR.Fireworks.init(); }],
-    ['DYEING THE WATER GREEN…', () => { RR.FX.init(); RR.HUD.init(); RR.Minimap.init(); }],
+    ['DYEING THE WATER GREEN…', () => { RR.HUD.init(); RR.Minimap.init(); }],
   ];
+
+  // THE COLD OPEN, first move: the load is a boat ride. The render loop and the menu flythrough
+  // start as soon as there is a river and a sky to fly over — three steps in — so the last two
+  // thirds of the build happen behind a live shot of Chicago assembling itself, with the progress
+  // bar reduced to a hairline along the bottom of it. Before that the veil holds, because an empty
+  // blue void is not a boat ride.
+  const RIDE_AT = 3;                        // river + sky/water + city are up
+  function startRide() {
+    if (booted !== 1) return;
+    booted = 2;
+    RR.Engine.onUpdate(bootFly);
+    RR.Engine.start();
+    const l = $('loading');
+    if (l) l.classList.remove('veil');
+  }
+  function bootFly(dt) {
+    if (mode !== 'boot') return;
+    const main = RR.River && RR.River.paths && RR.River.paths.main;
+    if (main) RR.Camera.flyover(dt, main);
+  }
 
   function boot() {
     RR.Engine.init();
@@ -50,7 +75,11 @@
         setLoad(i / STEPS.length, STEPS[i][0]);
         const fn = STEPS[i][1];
         i++;
-        requestAnimationFrame(() => { fn(); next(); });
+        requestAnimationFrame(() => {
+          fn();
+          if (i >= RIDE_AT) startRide();
+          next();
+        });
       } else {
         finishBoot();
       }
@@ -85,9 +114,45 @@
     setupNet();
     if (RR.NetUI) RR.NetUI.init();
     RR.Engine.onUpdate(update);
-    RR.Engine.start();
-    setTimeout(() => { $('loading').style.display = 'none'; }, 250);
+    RR.Engine.start();                                 // a no-op if startRide already ran
+    const load = $('loading');
+    if (load) { load.classList.add('gone'); setTimeout(() => { load.style.display = 'none'; }, 500); }
+    mode = 'menu';
+
+    // THE FIRST BRIDGE. opening.js drives itself, but the two things it cannot do for itself —
+    // start a race and get back to the title — belong to this file, so they are handed over once.
+    if (RR.Opening && RR.Opening.attach) {
+      RR.Opening.attach({
+        startRace: () => startRace(0, 0, false, null, false, false, true),
+        toMenu: () => { quitToTitle(); if (RR.Menus.showTitle) RR.Menus.showTitle(); },
+      });
+      if (RR.Opening.shouldRun && RR.Opening.shouldRun()) {
+        RR.Menus.hide();
+        if (RR.Audio.setMusic) RR.Audio.setMusic(false);
+        RR.Opening.start();
+      }
+    }
     window.RRTest.ready = true;
+  }
+
+  // ---------- the attract loop ----------
+  // Twenty seconds of nothing on the title screen and the AI takes THE FIRST BRIDGE out for a run.
+  // It is the cold open with the prompts off and a pilot at the wheel, so it costs one timer.
+  const ATTRACT_S = 20;
+  let idleT = 0;
+  function pokeIdle() { idleT = 0; }
+  window.addEventListener('keydown', pokeIdle);
+  window.addEventListener('pointerdown', pokeIdle);
+  window.addEventListener('pointermove', pokeIdle);
+  function attractTick(dt) {
+    if (mode !== 'menu' || !RR.Menus.screen || RR.Menus.screen() !== 'title') { idleT = 0; return; }
+    if (!RR.Opening || !RR.Opening.start || !RR.Opening.shouldRun || RR.Opening.active()) { idleT = 0; return; }
+    idleT += dt;
+    if (idleT < ATTRACT_S) return;
+    idleT = 0;
+    RR.Menus.hide();
+    if (RR.Audio.setMusic) RR.Audio.setMusic(false);
+    RR.Opening.start({ attract: true });
   }
 
   // ---------- multiplayer wiring (dormant unless a room is joined) ----------
@@ -205,9 +270,13 @@
   }
 
   // roster (multiplayer) = [{id, name, boatIdx, isSelf}] sorted identically on every client
-  function startRace(courseIdx, vehicleIdx, timeTrial, roster, tourMode, cupRound) {
+  function startRace(courseIdx, vehicleIdx, timeTrial, roster, tourMode, cupRound, opening) {
+    // A real race replacing the cold open must not bounce the player back to the title; the
+    // opening lets go quietly and this race owns the screen from here.
+    if (!opening && RR.Opening && RR.Opening.abort) RR.Opening.abort();
     clearBoats();
     if (RR.HUD.resetSession) RR.HUD.resetSession();
+    if (RR.Feel && RR.Feel.cancelFinale) RR.Feel.cancelFinale();   // a finish beat must not open over a new race
     RR.Engine.timeScale = 1;                          // clear any pause/photo slo-mo from a prior race
     const catalog = RR.Boats.CATALOG;
     const mp = !!(roster && roster.length);
@@ -228,7 +297,7 @@
       }
       player = boats.find((b) => b.isPlayer) || boats[0];
     } else {
-      const N = (timeTrial || tourMode) ? 1 : 6;
+      const N = (timeTrial || tourMode || opening) ? 1 : 6;
       // one-design racing: every rival runs the SAME hull as you (fair fight, pure skill),
       // each in its own livery so you can tell the field apart at speed
       const LIVERY = [0xd8dce0, 0x2f8f4f, 0x8a2fb0, 0xe07820, 0x16303f];
@@ -250,8 +319,11 @@
       player = boats[0];
     }
 
-    raceState = RR.Race.start(courseIdx, boats, player, { timeTrial: !!timeTrial, tour: !!tourMode });
+    // THE FIRST BRIDGE is not a mode: it is this race with the rivals off, the ghost off and the
+    // countdown skipped, because the boat has to be moving the instant the player touches a key.
+    raceState = RR.Race.start(courseIdx, boats, player, { timeTrial: opening ? false : !!timeTrial, tour: !!tourMode });
     raceState.mp = mp;
+    if (opening) { raceState.opening = true; raceState.phase = 'racing'; }
 
     pilots = [];
     docent = null;
@@ -305,6 +377,12 @@
         if (b.isPlayer) { RR.Audio.splash(imp); RR.Camera.kick(imp * 0.5); }
       };
       b.onLaunch = () => { if (b.isPlayer) RR.Audio.seagull(); };
+      // the underside of a bascule at 90 mph. physics.js has already bled a quarter of the speed,
+      // dilated, thrown sparks and fired onCrash — this is the word for it. No second thud here:
+      // onCrash already played one and a double reads as a bug.
+      b.onCeiling = () => {
+        if (b.isPlayer && RR.HUD.chip) RR.HUD.chip('bad', 'CLIPPED THE SPAN', 1600);
+      };
       b.onBump = (sev, nx, nz) => {
         RR.FX.splashBurst(b.pos.x, b.pos.y, b.pos.z, sev * 0.6);
         if (b.isPlayer) { RR.Audio.thud(sev * 0.9); RR.Camera.kick(sev * 0.7); }
@@ -321,14 +399,24 @@
     }
 
     RR.Race.onCount = (n) => { RR.HUD.countdown(n); if (n > 0) RR.Audio.countdownBeep(false); else { RR.Audio.countdownBeep(true); RR.Audio.airhorn(); } };
-    RR.Race.onCheckpoint = (n, total) => {
+    // THE BUOY RULE. race.js pays the gate itself now — between the buoys 0.10-0.26 by line
+    // quality and clean-gate streak, outside them 0.06 — so the flat +0.45 that used to live here
+    // is gone. All this adds is the tell: a clean line reads +BOOST, a wide one reads WIDE.
+    // The cold open stays quiet: it is teaching one thing at a time and the gate is not it.
+    RR.Race.onCheckpoint = (n, total, gate) => {
+      if (opening) return;
+      const clean = !gate || gate.clean;
       RR.HUD.checkpointFlash(n, total); RR.Audio.checkpoint();
-      if (player) { player.boostEnergy = Math.min(1, player.boostEnergy + 0.45); RR.Camera.kick(0.25); RR.HUD.flash('+BOOST'); }
+      if (!player) return;
+      RR.Camera.kick(clean ? 0.25 : 0.12);
+      if (RR.HUD.chip) RR.HUD.chip(clean ? 'near' : 'bad', clean ? '+BOOST' : 'WIDE — LESS BOOST', 1100);
+      else RR.HUD.flash(clean ? '+BOOST' : 'WIDE');
     };
     RR.Race.onLap = () => { RR.Audio.checkpoint(); };
     // race.js already pays the boost, kicks the camera and rings the chime; all this adds is the
     // gate's name, so the player learns WHICH line paid.
     RR.Race.onBoostGate = (gate) => {
+      if (opening) return;
       if (gate && gate.name && RR.HUD.chip) RR.HUD.chip('near', String(gate.name).toUpperCase() + ' +BOOST', 1300);
     };
     RR.Race.onPlayerFinish = (pos, time) => {
@@ -367,7 +455,9 @@
 
   function quitToTitle() {
     mode = 'menu';
+    if (RR.Feel && RR.Feel.cancelFinale) RR.Feel.cancelFinale();
     RR.Engine.timeScale = 1;
+    idleT = 0;                                        // don't hand the wheel straight back to the AI
     docent = null; tourDriving = false;
     RR.Input.onFTap = null; RR.Input.onFiveF = null;
     RR.HUD.show(false);
@@ -415,6 +505,9 @@
     // both of these used to fall through into the pause branch in the SAME event: leaving photo
     // mode, or menus.js resuming from pause, sets mode='race' and the next line re-paused you.
     if (e.code === 'Escape' && mode === 'photo') togglePhotoMode();
+    // ESC skips the cold open at any point, and skipping counts as having seen it — a run you
+    // walked out of should still put THE FIRST BRIDGE in the menu rather than ambush you again.
+    else if (e.code === 'Escape' && RR.Opening && RR.Opening.active && RR.Opening.active()) RR.Opening.skip();
     else if (e.code === 'Escape' && mode === 'race' && !e.defaultPrevented) {
       mode = 'paused'; RR.Engine.timeScale = 0; RR.Menus.showPause();
     }
@@ -471,6 +564,7 @@
       const main = RR.River.paths.main;
       if (main) RR.Camera.flyover(dt, main);
       RR.Race.animateGates && raceState && RR.Race.animateGates(t);
+      attractTick(RR.Engine.rawDt || dt);       // wall clock: an idle timer must not care about timeScale
       return;
     }
     if (showBoat) { RR.Engine.scene.remove(showBoat); showBoat = null; showIdx = -1; }   // never leak into a race
@@ -484,9 +578,13 @@
 
     const racing = raceState.phase !== 'countdown';
 
-    // player — or, on the Architecture Tour until you have taken the wheel, the skipper
+    // player — or, on the Architecture Tour until you have taken the wheel, the skipper; or, in the
+    // attract loop, the pilot opening.js has at the wheel until the first key is pressed
     let pc;
-    if (raceState.tour && !tourDriving && docent) {
+    const oc = RR.Opening && RR.Opening.control ? RR.Opening.control() : null;
+    if (oc) {
+      pc = oc;
+    } else if (raceState.tour && !tourDriving && docent) {
       RR.AI.update(docent, dt, t, player.routeD);
       docent.ctl.boost = false;                       // she does not have a boost button
       pc = docent.ctl;
@@ -523,12 +621,16 @@
 
     if (!raceState.mp) RR.Physics.collidePairs(boats, dt);   // MP contact handled visually; no authoritative push (avoids fighting the net)
 
-    // drawbridge warning: a bascule leaf rising just ahead sounds its horn + scatters gulls
+    // A bascule leaf rising just ahead scatters the gulls off the girder. The horn is the TENDER'S
+    // answer, so it only sounds for a lift you did not ask for — salute.js already plays your
+    // signal and the answer back when you did, and a third horn on top of those reads as a bug.
     if (racing && RR.Bridges && RR.Bridges.openings) {
       for (const o of RR.Bridges.openings) {
         const near = RR.U.dist2(player.pos.x, player.pos.z, o.x, o.z) < 95 * 95;
         if (near && o.rising && !o._warned) {
-          o._warned = true; RR.Audio.airhorn(); RR.Audio.seagull();
+          o._warned = true;
+          if (o.why !== 'ask' && RR.Audio.airhorn) RR.Audio.airhorn();
+          if (RR.Audio.seagull) RR.Audio.seagull();
           for (let k = 0; k < 6; k++) RR.FX.spray(o.x + (Math.random() - 0.5) * 14, 7 + Math.random() * 3, o.z + (Math.random() - 0.5) * 14,
             (Math.random() - 0.5) * 6, 3, (Math.random() - 0.5) * 6, 1, 3, 1);
         }
@@ -576,6 +678,12 @@
       if (!seated) RR.Camera.follow(player, dt);
     }
     RR.Engine.trackShadow(player.pos.x, player.pos.z);
+
+    // W5's seams into the composite pass: it reads speed for the radial streaks and the salute
+    // chain for the grade. 46 is the next-best hull's top speed, so ordinary boats reach full
+    // streaks at their own ceiling and the podracer overdrives past it (post.js clamps).
+    if (RR.Post && RR.Post.setSpeed) RR.Post.setSpeed(Math.hypot(player.vel.x, player.vel.z) / 46);
+    if (RR.Post && RR.Post.setChainTier) RR.Post.setChainTier(RR.Salute ? (RR.Salute.chain || 0) : 0);
 
     RR.HUD.update(dt, player, raceState);
     RR.Minimap.draw(raceState, player, boats);
@@ -678,6 +786,17 @@
           RR.AI.update(p, dt, RR.Engine.time(), player.routeD);
           RR.Input.throttle = p.ctl.throttle; RR.Input.brake = p.ctl.brake;
           RR.Input.steer = p.ctl.steer; RR.Input.boost = p.ctl.boost;
+          // The autopilot asks for the bridge too, once per span, so a warped run exercises the
+          // player's own salute instead of only the rivals'. It asks on TIME to the span rather
+          // than on the raw window: the window is 170-55 m and a leaf is clear for 1.0-4.3 s
+          // after the ask, so at 28 m/s the far half of that window is a bridge already shutting.
+          const sp = Math.hypot(player.vel.x, player.vel.z);
+          if (RR.Salute && RR.Salute.arm && RR.Salute.window > 0 && !RR.Salute.armed &&
+              window.RRTest._askedSpan !== RR.Salute.target &&
+              RR.Salute.dist < Math.max(60, sp * 2.6)) {
+            window.RRTest._askedSpan = RR.Salute.target;
+            RR.Salute.arm(player);
+          }
         };
       }
       RR.Engine.warp(sec);
@@ -706,6 +825,29 @@
     night: (m) => { if (RR.Theme) RR.Theme.apply(typeof m === 'string' ? m : (m ? 'night' : 'day')); },
     // hold full quality (disable adaptive downgrade) — used by visual tests on the software renderer
     pinQuality: () => { RR.Engine.setAutoQuality(false); if (RR.Reflect) RR.Reflect.enabled = true; if (RR.Post) RR.Post.enabled = true; },
+    // THE FIRST BRIDGE runs on a fresh save, which means a harness that wants the TITLE SCREEN has
+    // to say so — the cold open is on screen the moment the world is ready, by design.
+    skipOpening: () => {
+      if (RR.Progress && RR.Progress.setSeenOpening) RR.Progress.setSeenOpening(true);
+      if (RR.Opening && RR.Opening.active && RR.Opening.active()) RR.Opening.skip();
+      else { mode = 'menu'; if (RR.Menus.showTitle) RR.Menus.showTitle(); }
+      idleT = 0;
+      return true;
+    },
+    // THE FIRST BRIDGE, on demand: the cold open, and the same run with the AI at the wheel
+    opening: (attract) => {
+      RR.Menus.hide();
+      if (RR.Audio.setMusic) RR.Audio.setMusic(false);
+      return !!(RR.Opening && RR.Opening.start && RR.Opening.start({ attract: !!attract }));
+    },
+    openingState: () => {
+      const d = RR.Opening && RR.Opening.detail ? RR.Opening.detail() : null;
+      return {
+        active: !!(d && d.live), attract: !!(d && d.attract), ended: d ? d.ended : null,
+        routeD: player ? Math.round(player.routeD) : 0, chain: RR.Salute ? RR.Salute.chain : 0,
+        beat: d ? d.beat : -1, ending: d ? d.ending : 0, age: d ? d.age : 0,
+      };
+    },
     getState: () => ({
       scene: mode === 'menu' ? 'menu' : mode === 'results' ? 'results' : 'race',
       speed: player ? Math.hypot(player.vel.x, player.vel.z) : 0,
@@ -716,8 +858,7 @@
     }),
   };
 
-  let booted = false;
-  function bootOnce() { if (!booted) { booted = true; boot(); } }
+  function bootOnce() { if (!booted) { booted = 1; boot(); } }
   window.addEventListener('DOMContentLoaded', bootOnce);
   if (document.readyState !== 'loading') bootOnce();
 })();

@@ -67,8 +67,11 @@
       bloom: { threshold: 0.66, strength: 1.05 },
       grade: { lift: [0.030, 0.020, 0.030], gamma: [1.02, 1.00, 0.98], gain: [1.06, 1.00, 0.96], sat: 1.12, vignette: 0.36 },
       sunGlitter: 0xff7a2e,
-      water: { deepR: 0x2a3630, shalR: 0x6b6a4e, deepL: 0x1a3550, shalL: 0x7a6a5e,
-               skyLo: 0xff9a4a, skyHi: 0x6a5a86, fog: 0xe8a978, refl: 0.80 },
+      // Lake Michigan at a low sun is INDIGO AND COPPER, never warm grey: the body of the water
+      // is deep blue and every wave face that tilts toward the sun mirrors the burning horizon.
+      // The old shalL (0x7a6a5e) was a desaturated putty and it owned 60% of the frame.
+      water: { deepR: 0x2a3630, shalR: 0x6b6a4e, deepL: 0x121f4a, shalL: 0x2d3a72,
+               skyLo: 0xff9a4a, skyHi: 0x43497f, fog: 0xef8f4e, refl: 0.80 },
     },
     // blue hour: the only state where the sky is still readable AND every window, lamp and
     // navigation light is lit. skyDir is BELOW the horizon while the key light still rims west faces.
@@ -87,8 +90,8 @@
       bloom: { threshold: 0.58, strength: 1.20 },
       grade: { lift: [0.030, 0.036, 0.058], gamma: [1.05, 1.02, 0.96], gain: [0.98, 1.00, 1.08], sat: 1.10, vignette: 0.40 },
       sunGlitter: 0xffb07a,
-      water: { deepR: 0x16232c, shalR: 0x2b4048, deepL: 0x0e2038, shalL: 0x1d4360,
-               skyLo: 0x7a5f8e, skyHi: 0x17255a, fog: 0x2e4870, refl: 0.88 },
+      water: { deepR: 0x16232c, shalR: 0x2b4048, deepL: 0x091a3e, shalL: 0x1b3a6e,
+               skyLo: 0x8f6382, skyHi: 0x141f52, fog: 0x2e4870, refl: 0.88 },
     },
     night: {
       sunDir: [0.5868, 0.6428, 0.4925], skyDir: [0.5868, 0.6428, 0.4925],   // this is the MOON

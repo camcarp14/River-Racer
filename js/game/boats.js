@@ -63,7 +63,10 @@
       hull: 0xeef1f4, deck: 0x8a6a44, accent: 0xc0392b, seat: 0x1f5f8b,
     },
     {
-      id: 'podracer', name: 'ANAKIN’S PODRACER', kind: 'podracer',
+      // The fastest hull in the game — 61 m/s against a next-best 46 — and the biggest joke in it,
+      // and until now it was a plain menu entry on run one. hidden: you buy it with a chain of ten
+      // clean salutes, which is the only run in the game that deserves an engine this silly.
+      id: 'podracer', name: 'ANAKIN’S PODRACER', kind: 'podracer', hidden: true,
       desc: 'Twin radial turbines on a plasma tether, skimming the river on a cushion of thrust. Untouchable top end — if you can steer the thing.',
       top: 61, accel: 21.0, turn: 1.55, grip: 1.7, lean: 0.42, boost: 1.18, mass: 0.85,
       hover: 1.15,                                    // rides ~1.15m above the wave crests
@@ -84,10 +87,17 @@
     if (saved && typeof saved === 'object') unlocked = saved;
   } catch (e) { /* file:// may refuse storage entirely — then nothing is remembered, and that is fine */ }
 
-  B.isUnlocked = (v) => !!v && (!v.hidden || !!unlocked[v.id]);
+  // rr_save is the one versioned record file (progress.js) and it loads AFTER this one, so it is
+  // consulted lazily rather than at init: a boat earned before the save file existed still counts,
+  // and a save file restored on another machine hands its unlocks straight back.
+  function earned(id) {
+    if (unlocked[id]) return true;
+    return !!(RR.Progress && RR.Progress.unlocked && RR.Progress.unlocked(id));
+  }
+  B.isUnlocked = (v) => !!v && (!v.hidden || earned(v.id));
   // returns true only on the transition, so the caller announces the find exactly once
   B.unlock = function (id) {
-    if (!id || unlocked[id]) return false;
+    if (!id || earned(id)) return false;
     unlocked[id] = 1;
     try { localStorage.setItem(UNLOCK_KEY, JSON.stringify(unlocked)); } catch (e) { /* fine */ }
     return true;

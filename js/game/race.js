@@ -329,7 +329,9 @@
       L.position.set(pt.x - pt.tz * off, 0, pt.z + pt.tx * off);
       R.position.set(pt.x + pt.tz * off, 0, pt.z - pt.tx * off);
       gateGroup.add(L, R);
-      state.checkpoints.push({ d, x: pt.x, z: pt.z, L, R });
+      // tx/tz/off are the gate LINE, not a blob: the buoy rule below measures how far off the
+      // centre of the pair you crossed, and the two buoys are already standing at +/-off.
+      state.checkpoints.push({ d, x: pt.x, z: pt.z, tx: pt.tx, tz: pt.tz, off, L, R });
     }
     // ---- finish gate: a tall checkered arch with a FINISH banner, flags, and a water line ----
     const fd = route.loop ? route.len : route.len - 12;
@@ -444,6 +446,7 @@
     if (gateGroup) { RR.Engine.scene.remove(gateGroup); gateGroup = null; }
     clearGhost();
     const course = RACE.COURSES[courseIdx];
+    if (RR.Progress && RR.Progress.noteRun) RR.Progress.noteRun(null);   // last run's strip is history
     const tour = !!opts.tour;
     const timeTrial = tour ? false : (opts.timeTrial != null ? !!opts.timeTrial : boats.length === 1);
     S = {
@@ -482,6 +485,7 @@
       b._inLap = startD;
       b.lap = 0; b.nextCp = 0; b.finished = false; b.finishTime = 0;
       b.routeHint = null;
+      b.cpStreak = 0;
       b.boostEnergy = 1;
       RR.Physics.applyVisual(b);
     });
@@ -493,6 +497,9 @@
   RACE.end = function () {
     if (gateGroup) { RR.Engine.scene.remove(gateGroup); gateGroup = null; }
     clearGhost();
+    // quit-to-title mid-finale: the screen the beat would open no longer exists, and a stuck
+    // 0.6x clock would follow the player back onto the menu flythrough.
+    if (S && S.finaleRunning && RR.Feel && RR.Feel.cancelFinale) RR.Feel.cancelFinale();
     S = null;
   };
 
@@ -523,17 +530,51 @@
     }
 
     // checkpoints
-    let hit = false;
+    let hit = null;
     const cps = S.checkpoints;
     const inLapD = route.loop ? b.routeD % route.len : b.routeD;
-    while (b.nextCp < cps.length && inLapD > cps[b.nextCp].d - 6 &&
-           U().dist2(b.pos.x, b.pos.z, cps[b.nextCp].x, cps[b.nextCp].z) < 130 * 130) {
+    while (b.nextCp < cps.length && inLapD > cps[b.nextCp].d) {
+      hit = scoreGate(b, cps[b.nextCp]);
       b.nextCp++;
-      hit = true;
     }
     // cps is empty in the Architecture Tour, and the tour runs on loop courses too
     if (route.loop && cps.length && b.nextCp >= cps.length && inLapD < cps[0].d) b.nextCp = 0;
     return hit;
+  }
+
+  // ---------- THE BUOY RULE ----------
+  // A 130 m radius on a sixty-metre river is not a gate, it is a formality: the pair of buoys has
+  // been standing there since launch and nothing ever asked you to drive between them. Now it does.
+  //
+  // Passing INSIDE the pair pays 0.10-0.26, graded on how central the line was and on how many
+  // gates in a row you have taken cleanly. Passing outside still counts you through — a chain
+  // broken by something you did not choose to attempt would feel like theft, and by decree there
+  // is exactly one chain in this game and bridges own it (VISION R2) — but it pays 0.06. Sloppy
+  // players feel the boat get heavy; nobody gets stopped.
+  const CP_FLOOR = 0.10, CP_SPAN = 0.16, CP_SLOPPY = 0.06;
+  const CP_STREAK_FULL = 6;          // gates in a row to saturate the consistency half of the pay
+  const CP_QUALITY_M = 18;           // metres off the centreline at which the line-quality half is spent
+
+  function scoreGate(b, cp) {
+    // Rewind to where the hull actually crossed the line. A frame at 40 m/s is 0.7 m, but a warped
+    // test step is metres, and reading the lateral offset late is exactly what decides clean.
+    let px = b.pos.x, pz = b.pos.z;
+    const spd = Math.hypot(b.vel.x, b.vel.z);
+    if (spd > 0.5) {
+      const along = (px - cp.x) * cp.tx + (pz - cp.z) * cp.tz;
+      if (along > 0) { px -= (b.vel.x / spd) * along; pz -= (b.vel.z / spd) * along; }
+    }
+    const lat = Math.abs((px - cp.x) * cp.tz - (pz - cp.z) * cp.tx);
+    const clean = lat < cp.off;
+    b.cpStreak = clean ? (b.cpStreak || 0) + 1 : 0;
+    // The clean test is the buoys themselves — that is what the player can see. The line-quality
+    // half is measured against a tighter reference, because out on the lake legs the pair stands
+    // sixty metres apart and a gate you cannot miss must not also pay the maximum.
+    const q = U().clamp(1 - lat / Math.min(Math.max(1, cp.off), CP_QUALITY_M), 0, 1);
+    const s = U().clamp(b.cpStreak / CP_STREAK_FULL, 0, 1);
+    const pay = clean ? CP_FLOOR + CP_SPAN * (0.62 * s + 0.38 * q) : CP_SLOPPY;
+    b.boostEnergy = Math.min(1, (b.boostEnergy || 0) + pay);
+    return { clean, pay, lat, q, streak: b.cpStreak };
   }
 
   function checkFinish(b) {
@@ -546,29 +587,70 @@
       S.results.push({ boat: b, time: S.time });
       if (b === S.player) {
         S.phase = 'finished';
-        S.finishTimeout = Math.min(S.finishTimeout, 3.0);   // the race is over when YOU cross the line (placement pop plays first)
-        saveBest(S.course.id, S.time);
+        S.summary = bankRun();
         if (S.timeTrial && RR.Replay && RR.Replay.commit) {
           S.ghostBeaten = RR.Replay.commit(S.time);         // only stored if it beat the old lap
+        }
+        // The city lets you go. The finale owns the three seconds after the line — engine and music
+        // cut, the chase rig releases onto the skyline — and it, not a timer, says when the results
+        // card slides in. The timeout stays as a backstop in case feel.js is absent or wedged.
+        if (RR.Feel && RR.Feel.finale) {
+          S.finaleRunning = true;
+          RR.Feel.finale(() => { S.finaleDone = true; });
+          S.finishTimeout = Math.min(S.finishTimeout, 6.0);
+        } else {
+          S.finishTimeout = Math.min(S.finishTimeout, 3.0); // placement pop plays first
         }
         if (RACE.onPlayerFinish) RACE.onPlayerFinish(S.results.length, S.time);
       }
     }
   }
 
-  function saveBest(id, t) {
+  // ---------- records ----------
+  // Everything the run changed, in one object, written once and read by the results strip. A screen
+  // that cannot say what changed means the run changed nothing.
+  function bankRun() {
+    const P = RR.Progress;
+    const id = S.course.id;
+    const route = S.route;
+    const len = route.len * (route.loop ? (S.course.laps || 1) : 1);
+    const chain = RR.Salute ? Math.max(RR.Salute.best || 0, RR.Salute.chain || 0) : 0;
+    // `best` is the alias the results strip reads; bestChain is the same number under its own name
+    const out = { course: id, time: S.time, chain, best: chain, tour: !!S.tour };
+    if (S.tour || !P) return out;
     try {
-      const k = 'rr_best_' + id;
-      const old = parseFloat(localStorage.getItem(k));
-      if (!isFinite(old) || t < old) localStorage.setItem(k, String(t));
-    } catch (e) { /* storage may be unavailable from file:// — fine */ }
+      out.prevTime = P.bestTime(id);
+      out.timeImproved = P.recordTime(id, S.time, len);
+      out.bestTime = P.bestTime(id);
+      out.prevChain = P.bestChain(id);
+      out.chainImproved = P.recordChain(id, chain);
+      out.bestChain = out.best = P.bestChain(id);
+      const top = S.player && S.player.spec ? S.player.spec.top : null;
+      const m = P.awardMedal(id, S.time, len, top);
+      out.medal = m.medal; out.prevMedal = m.prev; out.medalUp = m.improved;
+      out.par = P.parTimes(id, len, top);
+      P.set('runs', (P.get().runs || 0) + 1);
+      P.noteRun(out);
+    } catch (e) { /* a record is never worth a thrown finish */ }
+    return out;
   }
+  RACE.summary = () => (S ? S.summary || null : null);
+
   RACE.best = function (id) {
+    if (RR.Progress && RR.Progress.bestTime) { const v = RR.Progress.bestTime(id); if (v != null) return v; }
     try { const v = parseFloat(localStorage.getItem('rr_best_' + id)); return isFinite(v) ? v : null; }
     catch (e) { return null; }
   };
+  RACE.bestChain = function (id) {
+    return RR.Progress && RR.Progress.bestChain ? RR.Progress.bestChain(id) : null;
+  };
+  RACE.medal = function (id) {
+    return RR.Progress && RR.Progress.medalOf ? RR.Progress.medalOf(id) : null;
+  };
 
-  // circle test against the boost gates, once per lap. +0.30 boost for a line you had to choose.
+  // circle test against the boost gates, once per lap. The risky thing must pay best: an off-line
+  // gate costs you a metre and pays 0.35, more than any single gate on the racing line.
+  const GATE_PAY = 0.35;
   function checkBoostGates(b) {
     const gates = S.boostGates;
     if (!gates || !gates.length || b !== S.player || b.finished) return;
@@ -577,7 +659,7 @@
       if (U().dist2(b.pos.x, b.pos.z, g.x, g.z) > 56.25) continue;   // radius 7.5 m: the posts stand at 4
       g.lastLap = b.lap || 0;
       g.hitT = 0.55;                                              // the ring blows out and goes dark
-      b.boostEnergy = Math.min(1, b.boostEnergy + 0.30);
+      b.boostEnergy = Math.min(1, b.boostEnergy + GATE_PAY);
       if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.18);
       if (RR.HUD && RR.HUD.chip) RR.HUD.chip('near', '+BOOST');
       else if (RR.HUD && RR.HUD.flash) RR.HUD.flash('+BOOST');
@@ -587,6 +669,21 @@
       if (RR.FX && RR.FX.spray) RR.FX.spray(g.x, 0.6, g.z, 0, 7.5, 0, 14, 6.5, 1.1);
       if (RACE.onBoostGate) RACE.onBoostGate(g);
     }
+  }
+
+  // ---------- item 14: the podracer goes back in the box ----------
+  // The fastest hull in the game — 61 m/s against a next-best 46 — and its funniest secret were a
+  // menu entry on run one. Ten bridges in a row is what buys it, and it is announced the instant
+  // the tenth lands rather than on a results screen, because that is when you earned it.
+  function checkPodracer() {
+    if (S._pod || !RR.Salute || !RR.Boats || !RR.Boats.unlock) return;
+    if ((RR.Salute.chain || 0) < 10) return;
+    S._pod = 1;
+    const isNew = RR.Boats.unlock('podracer');            // true only on the transition
+    if (RR.Progress && RR.Progress.unlock) RR.Progress.unlock('podracer');
+    if (!isNew) return;
+    if (RR.HUD && RR.HUD.chip) RR.HUD.chip('gold', 'CHAIN ×10 · ANAKIN’S PODRACER UNLOCKED', 8000);
+    if (RACE.onUnlock) RACE.onUnlock('podracer');
   }
 
   RACE.update = function (dt) {
@@ -617,7 +714,7 @@
     for (const b of S.boats) {
       if (b.remote) continue;         // multiplayer rivals: progress + finish come over the network
       const hitCp = updateProgress(b, dt);
-      if (hitCp && b === S.player && RACE.onCheckpoint) RACE.onCheckpoint(b.nextCp, S.checkpoints.length);
+      if (hitCp && b === S.player && RACE.onCheckpoint) RACE.onCheckpoint(b.nextCp, S.checkpoints.length, hitCp);
       checkBoostGates(b);
       checkFinish(b);
     }
@@ -635,10 +732,15 @@
     // player wrong-way indicator
     S.wrongWay = (S.player._backT || 0) > 1.2;
 
+    checkPodracer();
+
     if (S.phase === 'finished') {
       S.finishTimeout -= dt;
       const allDone = S.boats.every((b) => b.finished);
-      if ((allDone || S.finishTimeout <= 0) && RACE.onRaceOver) {
+      // With the finale running the card waits for the beat, not for the field: a rival crossing
+      // 0.3 s behind you must not cut the three seconds of skyline short.
+      const ready = S.finaleRunning ? (S.finaleDone || S.finishTimeout <= 0) : (allDone || S.finishTimeout <= 0);
+      if (ready && RACE.onRaceOver) {
         // fill DNF entries by current position
         for (const b of S.boats) if (!b.finished) S.results.push({ boat: b, time: Infinity });
         const cb = RACE.onRaceOver; RACE.onRaceOver = null;

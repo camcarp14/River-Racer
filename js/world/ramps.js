@@ -6,9 +6,25 @@
   const RAMPS = { list: [] };
   const U = () => RR.U;
 
-  // bridge name → how far upstream of the span the ramp lip sits (course travel = increasing d)
-  const PICKS = { 'LaSalle St': 40, 'State St': 44, 'Adams St': 42, 'Randolph St': 44, 'Grand Ave': 40, 'Columbus Dr': 48 };
-  const LEN = 16, W = 7, H = 4.6;
+  // Every ramp is moored on a bascule approach, and with a live ceiling overhead that makes each
+  // one the same question: is it up? For that question to have an honest answer the arc has to
+  // land in the same place whatever the boat is doing, and it does not do that for free.
+  //
+  // Height at the span is y0 + 1.25*(H/LEN)*D + 1.6*D/v - 4.9*D²/v². The middle term is
+  // speed-free — the launch is proportional to speed, so the two v terms very nearly cancel — but
+  // the tail term is not, and at the old 40-48 m lip it swamped everything: 2.8 m at 20 m/s (you
+  // pass harmlessly under a shut span), 9.2 m at 25 (you hit it), 15.9 m at 40 (you sail clean
+  // over the parapet and nothing happens). Three different games on one ramp.
+  //
+  // At a 16 m lip the tail is worth half a metre across the whole speed range, so the hull crosses
+  // the span line at 6.9-7.9 m at every speed a boat can reach: dead level with a shut deck, and
+  // well inside a raised slot. H drops 4.6 → 3.4 to keep the flight (110 m at 40 m/s) shorter than
+  // the 124 m between Main Stem bascules, so a jump lands on water rather than on the next bridge.
+  // Apex is still 11.3 m over the water. Published, because these three numbers are the ramp.
+  RAMPS.LIP_M = 16;                                  // lip → span line
+  RAMPS.LEN = 16; RAMPS.H = 3.4;
+  const PICKS = { 'LaSalle St': 1, 'State St': 1, 'Adams St': 1, 'Randolph St': 1, 'Grand Ave': 1, 'Columbus Dr': 1 };
+  const LEN = RAMPS.LEN, W = 7, H = RAMPS.H;
   const ORANGE = 0xf07820, ORANGE_DK = 0xc45a14, ORANGE_MD = 0xd8681a;
   const WHITE = 0xf2f2ee, HULL = 0x54585e, RUBBER = 0x2b2e33;
 
@@ -16,15 +32,17 @@
     const rng = U().mulberry(777);
     const geoms = [];
     for (const b of window.CHICAGO.bridges) {
-      const dist = PICKS[b.name];
-      if (!dist) continue;
+      if (!PICKS[b.name]) continue;
       const p = RR.River.paths[b.branch];
       if (!p) continue;
       const q = U().pathNearest(p, b.x, b.z);
-      const d0 = q.d - dist - LEN;                    // leading (low) edge of the wedge
+      const d0 = q.d - RAMPS.LIP_M - LEN;             // leading (low) edge of the wedge
       if (d0 < 40) continue;
       const a = U().pathAt(p, d0, {});
-      RAMPS.list.push({ x: a.x, z: a.z, dirx: a.tx, dirz: a.tz, len: LEN, w: W, h: H, slope: H / LEN });
+      RAMPS.list.push({
+        x: a.x, z: a.z, dirx: a.tx, dirz: a.tz, len: LEN, w: W, h: H, slope: H / LEN,
+        bridge: b.name, bx: q.x, bz: q.z, lipD: RAMPS.LIP_M,
+      });
       buildMesh(geoms, a.x, a.z, a.tx, a.tz, rng);
     }
     if (geoms.length) {

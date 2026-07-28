@@ -27,6 +27,8 @@
     BLOCK_HOLD: 0.7, BLOCK_COOLDOWN: 5.0,
     SHOVE_RANGE: 9, SHOVE_COOLDOWN: 3.5,
     BOOST_TANK: 0.90,       // physics.js pays 15% more for a boost lit from a tank this full
+    BOOST_SPILL: 0.97,      // a tank this full is about to waste the next gate — light it
+    SALUTE_RANGE: 240,      // metres at which a rival starts watching a bascule
   };
 
   // The whole difficulty curve, as ROOKIE-value -> LEGEND-value pairs. `w` walks between them and
@@ -59,11 +61,20 @@
       blockGain:  L(0.32, 0.45),      // 0.39  half-widths of cover over the line behind
       blockHold:  L(0.62, 0.90),      // 0.78  s
       blockCool:  L(5.50, 4.20),      // 4.78  s
-      // +0.03 so the tank is comfortably OVER the bonus line when the button goes down, not on it
-      boostArm:   L(0.45, K.BOOST_TANK + 0.03), // 0.72  tank level they'll light it at
+      // The boost economy is now EARNED, not issued: passive refill is a 33 s trickle and the tank
+      // fills in lumps off gates and salutes. A LEGEND still hoards to the full-tank bonus line,
+      // but the old +0.03 cushion meant sitting on a nearly-full tank waiting for a top-up that no
+      // longer arrives on a timer — so the arm level is the bonus line itself, and both ends came
+      // down a notch to keep the field spending what it earns.
+      boostArm:   L(0.36, K.BOOST_TANK), // 0.66  tank level they'll light it at
       boostBend:  L(0.24, 0.32),      // 0.28  bend they'll light it in
       boostHold:  L(0.38, 0.52),      // 0.46  bend they'll hold it through
       boostGap:   L(2.60, 0.50),      // 1.44  s between stints
+      // ---- THE SALUTE. Rivals ask for bridges too, and chain them: the bridge answers whoever
+      // asked, so a span a rival opened is a span you can take. Difficulty governs how WELL —
+      // whether they ask at all, and how close to the middle of the clear window they time it.
+      salute:     L(0.42, 1.00),      // 0.68  chance a rival asks for a given bascule
+      saluteErr:  L(1.15, 0.08),      // 0.56  s of error on the ask, either side of ideal
       leadCap:    w < 0.15 ? 150 : 1e9,  // ROOKIE ONLY: a rival this far clear stops pressing it
       bandUp:     L(0.70, 1.00),      // 0.87  catch-UP band, used when the PLAYER is ahead
       // The catch-DOWN half is the one that quietly hands you races. It is exactly ZERO at LEGEND:
@@ -94,8 +105,81 @@
       boosting: false,
       apex: 0, block: 0, _blockTgt: 0, blockT: 0, blockHold: 0, steerSm: 0,
       draftBias: 0, mistakeT: A.K.MISTAKE_PERIOD, errT: 0, errKind: '', errDir: 1,
+      // the salute: which span this pilot is working on, whether it means to ask, and its chain
+      span: null, spanRel: null, spanAsk: 0, chain: 0, bestChain: 0,
+      // one mulberry stream per pilot, so a field of rivals makes the same salute decisions on
+      // every reload — the same reason race.js draws the cup roster this way, and the reason the
+      // determinism gate's call count does not grow by a single site
+      rng: U().mulberry(((idx + 1) * 2654435761 ^ Math.round((d + 1) * 4096)) >>> 0),
     };
   };
+
+  // ---- THE SALUTE, for rivals ------------------------------------------------------------------
+  // A hook only the player can use is a gimmick; a rule the whole river obeys is a world. The
+  // tender answers whoever asked, so a rival's salute raises the span for everyone behind it —
+  // get under a bridge a rival opened and you took their bridge. Difficulty governs how WELL they
+  // ask (whether at all, and how near the middle of the clear window they time it), never how fast
+  // they go: the rubber band is still the only thing that touches their pace.
+  //
+  // The player's own salute belongs to salute.js. This never runs on the player's hull, or the
+  // crossing would be paid twice.
+  function saluteCrossed(pilot, s) {
+    const Br = RR.Bridges, o = s.opening;
+    if (!o || o.open <= Br.CLEAN_OPEN) { pilot.chain = 0; return; }
+    pilot.chain++;
+    if (pilot.chain > pilot.bestChain) pilot.bestChain = pilot.chain;
+    const SP = RR.Salute;
+    const pay = (SP && SP.PAY != null ? SP.PAY : 0.35) * (0.70 + 0.06 * Math.min(10, pilot.chain));
+    pilot.boat.boostEnergy = Math.min(1, (pilot.boat.boostEnergy || 0) + pay);
+  }
+
+  function saluteUpdate(pilot, speed) {
+    const b = pilot.boat, k = pilot.k, Br = RR.Bridges;
+    if (b.isPlayer || !Br || Br.mode !== 'race' || !Br.nextAhead) return;
+
+    // hold one span until it is crossed or gone by, so the ask is decided once per bridge
+    const s = pilot.span;
+    if (s) {
+      const dx = b.pos.x - s.x, dz = b.pos.z - s.z;
+      const rel = dx * s.tx + dz * s.tz;                   // signed, along the course direction
+      const prev = pilot.spanRel;
+      pilot.spanRel = rel;
+      let drop = false;
+      if (prev != null && prev <= 0 && rel > 0) {
+        if (Math.abs(dx * -s.tz + dz * s.tx) <= s.halfSpan) saluteCrossed(pilot, s);
+        drop = true;
+      } else if (rel > 30 || dx * dx + dz * dz > A.K.SALUTE_RANGE * A.K.SALUTE_RANGE * 2) drop = true;
+      if (drop) { pilot.span = null; pilot.spanRel = null; pilot.spanAsk = 0; }
+    }
+    if (!pilot.span) {
+      const t = Br.nextAhead(b.pos.x, b.pos.z, Math.sin(b.heading), Math.cos(b.heading), A.K.SALUTE_RANGE);
+      if (!t) return;
+      pilot.span = t;
+      pilot.spanRel = (b.pos.x - t.x) * t.tx + (b.pos.z - t.z) * t.tz;
+      // The clear window runs from LIFT_S * CLEAN_OPEN after the tender answers until
+      // FALL_S * (1 - CLEAN_OPEN) past the end of the hold. Aim to cross the middle of it; a
+      // rookie's aim is over a second out either way, a legend's is inside a tenth.
+      const early = Br.LIFT_S * Br.CLEAN_OPEN;
+      const late = Br.LIFT_S + Br.HOLD_S + Br.FALL_S * (1 - Br.CLEAN_OPEN);
+      const jitter = (pilot.rng() * 2 - 1) * k.saluteErr;
+      pilot.spanAsk = pilot.rng() < k.salute ? Math.max(early + 0.15, (early + late) * 0.5 + jitter) : 0;
+      return;
+    }
+    if (!pilot.spanAsk || Br.armed(pilot.span)) return;    // not asking, or somebody asked already
+    const dx = pilot.span.x - b.pos.x, dz = pilot.span.z - b.pos.z;
+    const at = U().clamp(Math.max(6, speed) * pilot.spanAsk, Br.WINDOW_NEAR_M + 4, Br.WINDOW_M - 4);
+    if (dx * dx + dz * dz > at * at) return;
+    if (!Br.arm(pilot.span, 0, 'rival')) { pilot.spanAsk = 0; return; }
+    pilot.spanAsk = 0;
+    // audio.js is frozen, so both of these are optional and guarded, and they only sound when the
+    // exchange is close enough to the player to be part of his race rather than noise off-screen.
+    const st = RR.Race && RR.Race.state && RR.Race.state();
+    const p = st && st.player;
+    if (p && U().dist2(p.pos.x, p.pos.z, pilot.span.x, pilot.span.z) < 240 * 240) {
+      if (RR.Audio && RR.Audio.saluteHorn) RR.Audio.saluteHorn(b.pos.x, b.pos.z);
+      if (RR.Audio && RR.Audio.bridgeHorn) RR.Audio.bridgeHorn(pilot.span.x, pilot.span.z);
+    }
+  }
 
   const pt = {}, ptFar = {};
   A.update = function (pilot, dt, t, playerProgress) {
@@ -258,11 +342,15 @@
     // straight — not to trickle it away the instant the meter allows. LEGEND does exactly that;
     // ROOKIE lights it early, half-full, and gives it back in the next bend.
     pilot.boostTimer -= dt;
+    // The tank is now filled by gates, buoy lines and salutes, not by a clock, so a tank sitting at
+    // the ceiling is not discipline — it is the next checkpoint being thrown away. Anything this
+    // full spends, whatever the pilot's usual patience.
+    const armAt = b.boostEnergy >= A.K.BOOST_SPILL ? 0 : k.boostArm;
     if (pilot.boosting) {
       // stay lit until the tank is dry or a real bend arrives — a stint is worth more than a stab
       pilot.boosting = b.boostEnergy > 0.03 && bend < k.boostHold && pilot.ctl.throttle > pilot.skill * 0.6;
       if (!pilot.boosting) pilot.boostTimer = k.boostGap;
-    } else if (pilot.boostTimer <= 0 && b.boostEnergy >= k.boostArm && pilot.ctl.throttle > pilot.skill * 0.9 &&
+    } else if (pilot.boostTimer <= 0 && b.boostEnergy >= armAt && pilot.ctl.throttle > pilot.skill * 0.9 &&
                (bend < k.boostBend || speed < b.spec.top * 0.82)) {
       // out of a bend the same fuel buys more, because the boost KICK is an acceleration, not a
       // top-speed number — so "straight ahead" and "still climbing back to speed" both qualify.
@@ -293,6 +381,8 @@
 
     // a fresh bump saps steering authority + throttle, so a good shove actually costs them track
     if (b.bumpRecover > 0) { pilot.ctl.steer *= 0.30; pilot.ctl.throttle *= 0.65; }
+
+    if (S && S.phase === 'racing') saluteUpdate(pilot, speed);
 
     return pilot.ctl;
   };

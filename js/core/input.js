@@ -13,6 +13,15 @@
   I.fTaps = 0;
   let fLastT = -99;
 
+  // ---- the salute ---------------------------------------------------------------------------
+  // SPACE has been preventDefaulted and bound to nothing since the first build. It is the ask:
+  // one prolonged blast and one short, the Inland Rules signal for "open the bridge".
+  // Published as a monotonic COUNT rather than a flag, so a consumer compares it against its own
+  // last-seen value and can never lose a press to frame ordering or eat one meant for a menu.
+  I.saluteCount = 0;
+  I.salute = function () { I.saluteCount++; if (I.onSalute) I.onSalute(); };
+  let padSalute = false;
+
   window.addEventListener('keydown', (e) => {
     const held = keys[e.code];
     keys[e.code] = true;
@@ -21,6 +30,7 @@
     if ((e.code === 'BracketLeft' || e.code === 'BracketRight') && RR.Camera && RR.Camera.cycleShot) {
       RR.Camera.cycleShot(e.code === 'BracketLeft' ? -1 : 1);
     }
+    if (e.code === 'Space' && !e.repeat && !held) I.salute();
     if (e.code === 'KeyF' && !e.repeat && !held) {
       const now = performance.now() / 1000;
       I.fTaps = now - fLastT > I.F_WINDOW ? 1 : I.fTaps + 1;
@@ -62,6 +72,7 @@
     bo = !!(keys.ShiftLeft || keys.ShiftRight);
 
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    let padSal = false;
     for (const p of pads) {
       if (!p || !p.connected) continue;
       const ax = p.axes[0] || 0;
@@ -72,8 +83,11 @@
       if (lt > 0.05) br = Math.max(br, lt);
       if (p.buttons[0] && p.buttons[0].pressed) th = 1;
       if (p.buttons[2] && p.buttons[2].pressed) bo = true;
+      if (p.buttons[3] && p.buttons[3].pressed) padSal = true;    // Y / triangle: ask for the bridge
       break;
     }
+    if (padSal && !padSalute) I.salute();
+    padSalute = padSal;
 
     if (touchThrottle > 0) th = Math.max(th, touchThrottle);
     if (touchSteer !== 0) st = RR.U.clamp(st + touchSteer, -1, 1);

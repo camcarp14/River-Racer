@@ -13,6 +13,13 @@
   // axis-aligned or rotated wall segments: {ax, az, bx, bz, pad}
   R.walls = [];
 
+  // THE THRESHOLD: the downstream (east) sill of the Chicago Harbor Lock, in world x. lake.js
+  // builds the chamber from -60 to len-60 along the channel, so the lake-side sill is len-60 m
+  // past the lock point. Everything about the sea state hangs off this line — west of it you are
+  // in a canyon, east of it you are on Lake Michigan. Overwritten with the surveyed value in init.
+  R.sillX = 2015;
+  R.sillZ = -62;
+
   R.init = function () {
     const C = window.CHICAGO;
     for (const key in C.paths) {
@@ -24,6 +31,11 @@
     R.lakeShoreZTop = C.lake.shoreZNorth;   // north shoreline of the lake play area
     R.lakeShoreZBot = C.lake.shoreZSouth;
     R.lakeEastX = C.lake.eastX;
+
+    const lk = C.lake.lock;
+    const lq = U().pathNearest(R.paths.main, lk.x, lk.z);
+    R.sillX = lk.x + lq.tx * (lk.len - 60);
+    R.sillZ = lk.z + lq.tz * (lk.len - 60);
   };
 
   // Is (x,z) in the open lake basin?
@@ -95,14 +107,21 @@
     return null;
   };
 
-  // Wave amplitude by locale: calm in the river canyon, rolling out on the lake. This is also the
-  // SWELL ramp — RR.U.swellFactor reads (amp-1)/2.3 off this number to decide how much of the long
-  // Lake Michigan swell exists here, so the 420 m past the lock is the boat clearing the harbour
-  // breakwater and meeting open-lake fetch. Move these numbers and you move the sea state.
+  // Sea state as a pure function of x, in TWO ramps, because clearing a lock is two events and
+  // not one. The KNEE is the east sill: 95 m — about three seconds at racing speed — takes you
+  // from a dead-flat chamber to a metre of harbour chop, and that step is what makes the sill
+  // felt rather than merely crossed. The FETCH is the long build behind the breakwater out to
+  // open Lake Michigan. Peak stays 3.3 because RR.U.swellFactor normalises against (amp-1)/2.3.
+  R.lakeAmpAt = function (x) {
+    const s = R.sillX;
+    return 1 + 0.9 * U().smoothstep(s - 25, s + 95, x) + 1.4 * U().smoothstep(s + 55, s + 615, x);
+  };
+
+  // Wave amplitude by locale: calm in the river canyon, rolling out on the lake. The lock chamber
+  // itself now reads as flat as it really is — a lock is a box of still water, which is the point.
   R.waveAmp = function (x, z) {
     if (!R.inLake(x, z)) return 1;
-    const t = U().smoothstep(R.lakeWestX, R.lakeWestX + 420, x);
-    return 1 + t * 2.3;
+    return R.lakeAmpAt(x);
   };
 
   RR.River = R;

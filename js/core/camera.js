@@ -10,10 +10,15 @@
   // edge: how far inside the channel edge the lens has to stay. The hull cam is welded to a hull
   // that is itself allowed to graze the quay, so it gets slack instead of a keep-out.
   // lag: metres of spring lag the leash tolerates at full chat before it starts clamping.
+  // The two chase shots come IN and DOWN with speed (spdK) and take the FOV punch (fovK). The hull
+  // cam does not: its boom is NEGATIVE — it sits forward of the origin, on the foredeck — so
+  // shrinking it puts the lens in the cockpit looking at the driver's legs, and it starts at 72 deg
+  // so it would finish at 95. It keeps the old additive extension (backSpd/upSpd) instead, which on
+  // a negative boom walks the lens back out of the boat as the speed comes up.
   const MODES = [
-    { back: 16.5, up: 6.2, lookUp: 1.6, fov: 60, kLong: 9.0, kLat: 3.6, kUp: 7.5, roll: 0.16, lead: 1.00, edge: 2.4, lag: 9 },
-    { back: 9.5, up: 3.4, lookUp: 1.3, fov: 64, kLong: 12.0, kLat: 6.0, kUp: 10.0, roll: 0.22, lead: 0.80, edge: 2.0, lag: 6 },
-    { back: -0.6, up: 1.55, lookUp: 1.1, fov: 72, kLong: 24.0, kLat: 20.0, kUp: 22.0, roll: 0.55, lead: 0.45, edge: -2.5, lag: 0 },
+    { back: 16.5, up: 6.2, backSpd: 0, upSpd: 0, lookUp: 1.6, fov: 62, fovK: 1.00, spdK: 1.00, kLong: 9.0, kLat: 3.6, kUp: 7.5, roll: 0.16, lead: 1.00, edge: 2.4, lag: 9 },
+    { back: 9.5, up: 3.4, backSpd: 0, upSpd: 0, lookUp: 1.3, fov: 64, fovK: 0.80, spdK: 0.85, kLong: 12.0, kLat: 6.0, kUp: 10.0, roll: 0.22, lead: 0.80, edge: 2.0, lag: 6 },
+    { back: -0.6, up: 1.55, backSpd: 0.10, upSpd: 0.02, lookUp: 1.1, fov: 72, fovK: 0.45, spdK: 0.00, kLong: 24.0, kLat: 20.0, kUp: 22.0, roll: 0.55, lead: 0.45, edge: -2.5, lag: 0 },
   ];
   const pos = new THREE.Vector3(0, 30, 60);
   const look = new THREE.Vector3();
@@ -73,7 +78,7 @@
     const wh = U().waterHeight(pos.x, pos.z, RR.Engine.time(), 1) + 0.9;
     if (pos.y < wh) pos.y = wh;
     C._duck = 0; C._roll = 0; C._fovB = 0;
-    boom = 1; lostT = 0; recov = 0;
+    boom = 1; lostT = 0; recov = 0; relT = -1;   // a new race reclaims the rig from any release
     leash = Math.hypot(pos.x - boat.pos.x, pos.z - boat.pos.z) + 3;
   };
 
@@ -85,14 +90,87 @@
 
   const BOOM = [1, 0.86, 0.72, 0.58, 0.46, 0.34, 0.24];
 
+  // ---- the hull may never leave the frame: cap the angle off the lens axis at a fraction of the
+  // HALF-FOV, so under 1.0 is on screen whatever the aspect. Measured over both courses the hull
+  // rides at 0.3-0.5 in the chase and peaks at 0.94 out on the lake chop, so 0.95 is a pure
+  // backstop for a look-ahead gone wrong. The release shot asks for a tighter fraction because
+  // there the hull is the FOREGROUND, not a thing that merely has to be present.
+  // Returns the lens-to-hull distance, which the recovery test downstream also needs.
+  function keepHullInFrame(cam, boat, frac) {
+    const gx = boat.pos.x - pos.x, gy = (boat.pos.y + 0.6) - pos.y, gz = boat.pos.z - pos.z;
+    const gl = Math.hypot(gx, gy, gz);
+    if (gl <= 4.5) return gl;                            // meaningless for the hull cam
+    const ax = look.x - pos.x, ay = look.y - pos.y, az = look.z - pos.z;
+    const al = Math.max(1e-4, Math.hypot(ax, ay, az));
+    const ang = Math.acos(U().clamp((gx * ax + gy * ay + gz * az) / (gl * al), -1, 1));
+    const maxA = cam.fov * (Math.PI / 360) * frac;
+    if (ang <= maxA) return gl;
+    const k = 1 - maxA / ang;
+    const nx = (ax / al) * (1 - k) + (gx / gl) * k;
+    const ny = (ay / al) * (1 - k) + (gy / gl) * k;
+    const nz = (az / al) * (1 - k) + (gz / gl) * k;
+    const nl = Math.max(1e-4, Math.hypot(nx, ny, nz));
+    look.set(pos.x + nx / nl * al, pos.y + ny / nl * al, pos.z + nz / nl * al);
+    return gl;
+  }
+
+  // ---- the release: the rig lets go of the transom and swings onto the skyline ---------------
+  // The world frame's origin IS the Loop (41.888 N, 87.63 W), so "the skyline" is a bearing you
+  // can compute from wherever the finish line happens to be rather than a hand-placed lens. The
+  // lens falls back to the far side of the boat and looks PAST it at the city, so the last thing
+  // on screen is the skyline with your own wake still opening in the foreground.
+  let relT = -1, relDur = 0;
+  C.release = function (sec) { relT = 0; relDur = Math.max(0.5, sec || 3.5); };
+  C.releasing = function () { return relT >= 0; };
+
+  function releaseShot(boat, dt) {
+    const cam = RR.Engine.camera;
+    const w = RR.Engine.rawDt || dt;                    // keep swinging at a natural rate in slo-mo
+    relT += w;
+    const p = U().smoothstep(0, relDur, relT);
+    let ax = -boat.pos.x, az = -boat.pos.z;
+    let al = Math.hypot(ax, az);
+    if (al < 250) { ax = -Math.sin(boat.heading); az = -Math.cos(boat.heading); al = 1; }
+    ax /= al; az /= al;
+
+    const dist = U().lerp(13, 36, p), hgt = U().lerp(3.2, 11, p);
+    const wt = toWater(boat.pos.x - ax * dist, boat.pos.z - az * dist, 1.5);
+    pos.x = U().damp(pos.x, wt.x, 2.6, w);
+    pos.z = U().damp(pos.z, wt.z, 2.6, w);
+    pos.y = U().damp(pos.y, boat.pos.y + hgt, 2.2, w);
+    // the hull is the foreground of this shot — a lens that lags a 30 m/s boat loses it, and then
+    // the skyline is just a postcard. Same leash principle as the chase rig, one clamp.
+    const dx = pos.x - boat.pos.x, dz = pos.z - boat.pos.z, dh = Math.hypot(dx, dz);
+    const lim = dist * 1.6;
+    if (dh > lim) { const k = lim / dh; pos.x = boat.pos.x + dx * k; pos.z = boat.pos.z + dz * k; }
+    const wh = U().waterHeight(pos.x, pos.z, RR.Engine.time(), 1) + 1.0;
+    if (pos.y < wh) pos.y = wh;
+
+    const reach = U().lerp(26, 165, p);
+    look.set(boat.pos.x + ax * reach, boat.pos.y + U().lerp(1.4, 9, p), boat.pos.z + az * reach);
+    keepHullInFrame(cam, boat, 0.68);       // the hull is the foreground of this shot, not a detail
+    cam.position.copy(pos);
+    cam.up.set(0, 1, 0);
+    cam.lookAt(look);
+    C._duck = U().damp(C._duck || 0, 0, 3, w);          // out from under the steel; the reverb opens
+    C._roll = U().damp(C._roll || 0, 0, 3, w);
+    const fovT = U().lerp(58, 47, p);
+    if (Math.abs(cam.fov - fovT) > 0.03) { cam.fov += (fovT - cam.fov) * Math.min(1, 2.2 * w); cam.updateProjectionMatrix(); }
+    applyShake(cam, w);
+  }
+
   C.follow = function (boat, dt) {
+    if (relT >= 0) { releaseShot(boat, dt); return; }
     const cam = RR.Engine.camera;
     const m = MODES[mode];
     const s = Math.sin(boat.heading), c = Math.cos(boat.heading);
     const spd = Math.hypot(boat.vel.x, boat.vel.z);
     const topS = (boat.spec && boat.spec.top) || 40;
     const spdN = U().clamp(spd / topS, 0, 1);
-    const back = (m.back + spd * 0.10) * (1 - 0.55 * recov);   // pull back with speed, in on recovery
+    // IN and DOWN with speed, not out. The boom used to EXTEND at 0.10 m per m/s, which pushed the
+    // lens 4 m further back exactly as the FOV punch opened up — the two cancelled and 85 mph
+    // looked like 40. Low and close is what makes a bascule coming at you read as a wall.
+    const back = (m.back + spd * m.backSpd) * (1 - 0.14 * spdN * m.spdK) * (1 - 0.55 * recov);
 
     // Never demand the lens sit further inside the channel than the boat itself does — a boat
     // grinding along the quay would otherwise reject every boom length and suck the camera in.
@@ -135,7 +213,7 @@
     }
     boom = U().damp(boom, bf, bf < boom ? 12 : 2.5, dt);       // retract fast, extend back slowly
     // a short boom has to come down with it or the shot turns into a plan view of your own deck
-    const up = (m.up + spd * 0.02) * (0.42 + 0.58 * boom) * (1 - 0.42 * recov);
+    const up = (m.up + spd * m.upSpd) * (1 - 0.42 * spdN * m.spdK) * (0.42 + 0.58 * boom) * (1 - 0.42 * recov);
 
     let tx = boat.pos.x + ox * boom;
     let tz = boat.pos.z + oz * boom;
@@ -206,26 +284,7 @@
     }
     look.set(lx, boat.pos.y + lookUpEff, lz);
 
-    // ---- the hull may never leave the frame: cap the angle off the lens axis at a fraction of
-    // the HALF-FOV, so under 1.0 is on screen whatever the aspect. Measured over both courses the
-    // hull rides at 0.3-0.5 and peaks at 0.94 out on the lake chop, so 0.95 is a pure backstop for
-    // a look-ahead gone wrong — the positional constraints above do the real work.
-    const gx = boat.pos.x - pos.x, gy = (boat.pos.y + 0.6) - pos.y, gz = boat.pos.z - pos.z;
-    const gl = Math.hypot(gx, gy, gz);
-    if (gl > 4.5) {                                      // meaningless for the hull cam
-      const ax = look.x - pos.x, ay = look.y - pos.y, az = look.z - pos.z;
-      const al = Math.max(1e-4, Math.hypot(ax, ay, az));
-      const ang = Math.acos(U().clamp((gx * ax + gy * ay + gz * az) / (gl * al), -1, 1));
-      const maxA = cam.fov * (Math.PI / 360) * 0.95;
-      if (ang > maxA) {
-        const k = 1 - maxA / ang;
-        const nx = (ax / al) * (1 - k) + (gx / gl) * k;
-        const ny = (ay / al) * (1 - k) + (gy / gl) * k;
-        const nz = (az / al) * (1 - k) + (gz / gl) * k;
-        const nl = Math.max(1e-4, Math.hypot(nx, ny, nz));
-        look.set(pos.x + nx / nl * al, pos.y + ny / nl * al, pos.z + nz / nl * al);
-      }
-    }
+    const gl = keepHullInFrame(cam, boat, 0.95);
 
     cam.position.copy(pos);
     cam.up.set(0, 1, 0);
@@ -247,10 +306,10 @@
     C._roll = U().damp(C._roll || 0, rollT, 6.5, dt);
     cam.rotation.z += C._roll * (mode === 2 ? 2.4 : m.roll / 0.16);
 
-    // ---- FOV: 60 idle -> 67 flat out -> 76 flat out on boost. The fast attack / slow release
-    // asymmetry IS the punch.
-    const fovSpd = spdN * 7;
-    const bTgt = (boat.boostHeat || 0) * 9;
+    // ---- FOV: 62 idle -> 71 flat out -> 85 flat out on boost. The fast attack / slow release
+    // asymmetry IS the punch, and now that the boom comes IN with speed nothing cancels it.
+    const fovSpd = spdN * 9 * m.fovK;
+    const bTgt = (boat.boostHeat || 0) * 14 * m.fovK;
     C._fovB = U().damp(C._fovB || 0, bTgt, bTgt > (C._fovB || 0) ? 12 : 2.5, dt);
     const fovT = m.fov + fovSpd + C._fovB + (boat.airborne ? 3 : 0);
     if (Math.abs(cam.fov - fovT) > 0.03) { cam.fov += (fovT - cam.fov) * Math.min(1, 9 * dt); cam.updateProjectionMatrix(); }

@@ -687,6 +687,23 @@
       if (RR.Theme) RR.Theme.addLamp(2178, GY + 4.8, sz, 0xffe6b0);
     }
 
+    // ---------- one source of truth for sea state ----------
+    // water.js bakes aAmp into its meshes from an inline copy of the old single-ramp curve. Now
+    // that the ramp has a knee at the sill, an inline copy is a hull floating a third of a metre
+    // off its own reflection east of the lock. Re-derive every water vertex from
+    // RR.River.lakeAmpAt — the same function physics.js asks — so the surface the boat sits on and
+    // the surface the shader draws cannot disagree.
+    if (RR.Water && RR.Water.group) {
+      for (const wm of RR.Water.group.children) {
+        const g = wm.geometry;
+        if (!g || !g.attributes || !g.attributes.aAmp || !g.attributes.position) continue;
+        const pa = g.attributes.position, aa = g.attributes.aAmp;
+        if (aa.count !== pa.count) continue;
+        for (let i = 0; i < aa.count; i++) aa.setX(i, RR.River.lakeAmpAt(pa.getX(i)));
+        aa.needsUpdate = true;
+      }
+    }
+
     const mesh = new THREE.Mesh(RR.City.mergeGeoms(geoms), RR.City.flatMaterial());
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -706,6 +723,12 @@
     const _gs = new THREE.Vector3(1, 1, 1), _up = new THREE.Vector3(0, 1, 0);
     const LIT = { night: 1, dusk: 0.72, sunset: 0.35, day: 0 };   // dusk is blue hour, not daylight
     let gateF = 0;                                               // 0 = wide open, 1 = mitred shut
+    // THE THRESHOLD state, and the celebration
+    const SILL = RR.River.sillX;
+    let fogMode = null, fogN0 = 0, fogF0 = 0, fogK = 0;
+    let wasEast = null, wasFin = false;
+    // Chicago's flag, not America's: white ground, two light-blue stripes, four red stars.
+    const FLAG = [0x4fb0e8, 0xf2f4f6, 0xd8232a];
     RR.Engine.onUpdate((dt, t) => {
       const w = wheel;
       w.spinner.rotation.z += dt * 0.021;                        // 3 revolutions in ~15 min, as ridden
@@ -717,29 +740,52 @@
         w.gonds.setMatrixAt(i, _gm);
       }
       w.gonds.instanceMatrix.needsUpdate = true;
-      const lit = (RR.Theme && LIT[RR.Theme.mode] !== undefined) ? LIT[RR.Theme.mode] : 0;
-      const hue = (t * 0.05) % 1;
-      w.mats[0].emissive.setHSL(hue, 0.6, 0.5); w.mats[0].emissiveIntensity = lit * 1.4;   // structure
-      w.mats[1].emissive.setHSL(hue, 0.6, 0.5); w.mats[1].emissiveIntensity = lit * 0.7;   // gondolas
+      // ---------- the celebration: the wheel answers a win ----------
+      // Nine seconds of the Centennial Wheel pinned to the city flag beats any amount of confetti,
+      // and it costs two material writes. Self-arming off RR.Feel so no wiring is needed in main.
+      const finishing = !!(RR.Feel && RR.Feel.finishing && RR.Feel.finishing());
+      if (finishing && !wasFin) { const pl = placeOfPlayer(); if (pl > 0 && pl <= 3) LK.celebrate(pl === 1 ? 10 : 5); }
+      wasFin = finishing;
+      if (LK._celeb > 0) {
+        LK._celeb -= dt;
+        const fc = FLAG[((t * 3) | 0) % 3];
+        w.mats[0].emissive.setHex(fc).convertSRGBToLinear(); w.mats[0].emissiveIntensity = 2.0;
+        w.mats[1].emissive.setHex(fc).convertSRGBToLinear(); w.mats[1].emissiveIntensity = 1.1;
+      } else {
+        const lit = (RR.Theme && LIT[RR.Theme.mode] !== undefined) ? LIT[RR.Theme.mode] : 0;
+        const hue = (t * 0.05) % 1;
+        w.mats[0].emissive.setHSL(hue, 0.6, 0.5); w.mats[0].emissiveIntensity = lit * 1.4;   // structure
+        w.mats[1].emissive.setHSL(hue, 0.6, 0.5); w.mats[1].emissiveIntensity = lit * 0.7;   // gondolas
+      }
       // Fl R 5s: 0.4 s of red every 5 s, nothing in between.
       LK._beacon.intensity = (t % 5 < 0.4) ? 3.2 : 0;
 
-      // A lock never closes on a boat in the chamber. 45 s cycle, 8 s swing, and if anyone is
-      // between the sills the gates stall wide open until they are through.
+      // ---------- the lock actually cycles now ----------
+      // It used to stall wide open for anything within 120 m of a sill — which is the whole
+      // approach, so during a race the gates never moved and the animation existed for nobody.
+      // Two rules replace it, and both are what a lock tender with a radio really does:
+      //   1. a lock NEVER closes on a hull between the sills;
+      //   2. a hull running at a sill gets the emergency swing — 1.2 s instead of 3.
+      // So you come round the last bend and the miter gates are already opening for you.
       const S = RR.Race && RR.Race.state && RR.Race.state();
-      let occupied = false;
+      let inChamber = false, closing = false;
       if (S && S.boats) {
         for (const b of S.boats) {
           if (!b || !b.pos) continue;
           const ds = (b.pos.x - lock.x) * ldx + (b.pos.z - lock.z) * ldz;
           const dp = (b.pos.x - lock.x) * lperp.x + (b.pos.z - lock.z) * lperp.z;
-          // 120 m of approach: at 30 m/s that is four seconds, and the leaves swing back in three
-          if (ds > GS0 - 120 && ds < GS1 + 120 && Math.abs(dp) < lock.w * 1.5) { occupied = true; break; }
+          if (Math.abs(dp) > lock.w * 1.6) continue;
+          if (ds > GS0 - 6 && ds < GS1 + 6) { inChamber = true; break; }
+          if (!b.vel) continue;
+          const v = b.vel.x * ldx + b.vel.z * ldz;                            // +ve = running east
+          if (ds <= GS0 - 6 && ds > GS0 - 110 && v > 4) closing = true;       // upstream, coming down
+          else if (ds >= GS1 + 6 && ds < GS1 + 110 && v < -4) closing = true; // out on the lake, coming back
         }
       }
       const cyc = t % 45;
-      const want = (!occupied && cyc > 22 && cyc < 36) ? 1 : 0;
-      gateF += U().clamp(want - gateF, -dt / 3, dt / 8);   // closes in 8 s, clears out in 3
+      const want = (!inChamber && !closing && cyc > 22 && cyc < 36) ? 1 : 0;
+      const openRate = closing ? dt / 1.2 : dt / 3;
+      gateF += U().clamp(want - gateF, -openRate, dt / 8);   // closes in 8 s, clears in 3 (1.2 in a hurry)
       for (let i = 0; i < leaves.length; i++) {
         const L = leaves[i];
         _gp.set(L.x, 2.0, L.z);
@@ -749,8 +795,53 @@
       }
       gateMesh.instanceMatrix.needsUpdate = true;
       sigMat.color.setHex(gateF > 0.02 ? 0xff2a1e : 0x12ff4a).convertSRGBToLinear();
+
+      // ---------- THE THRESHOLD ----------
+      // The sill is the hinge of the whole race: canyon to horizon in one boat length. The fog
+      // ride-along is driven by the CAMERA, because it is a fact about where you are looking, and
+      // it must be right in the menu flythrough and in photo mode too. The base is re-read on any
+      // theme change and the multiplier returns to exactly 1, so nothing is left permanently bent.
+      if (scene.fog && RR.Theme && RR.Theme.mode !== fogMode) { fogMode = RR.Theme.mode; fogN0 = scene.fog.near; fogF0 = scene.fog.far; }
+      const camK = scene.fog ? U().smoothstep(SILL - 30, SILL + 130, RR.Engine.camera.position.x) : 0;
+      if (camK > 5e-4 || fogK > 5e-4) {
+        fogK = camK;
+        const fn = fogN0 * (1 + 0.42 * camK), ff = fogF0 * (1 + 0.55 * camK);
+        scene.fog.near = fn; scene.fog.far = ff;
+        if (RR.Water && RR.Water.material) {
+          const wu = RR.Water.material.uniforms;
+          if (wu.uFogNear) wu.uFogNear.value = fn;
+          if (wu.uFogFar) wu.uFogFar.value = ff;
+        }
+      }
+      // and the one-shot beat, on the boat, the first time it clears the sill eastbound
+      const pl = S && S.player && S.player.pos ? S.player.pos : null;
+      if (pl) {
+        const east = pl.x > SILL + 8;
+        if (wasEast === null) wasEast = east;                  // a race that starts out here is not a crossing
+        else if (east && !wasEast) {
+          if (RR.Feel && RR.Feel.dilate) RR.Feel.dilate(0.88, 300);
+          if (RR.Feel && RR.Feel.fovKick) RR.Feel.fovKick(6, 1800);   // requested of W2; silent until it lands
+          if (RR.Audio && RR.Audio.seagull) RR.Audio.seagull();
+          if (RR.FX && RR.FX.spray) for (let k = 0; k < 8; k++)       // gulls off the guide wall
+            RR.FX.spray(SILL + 6 + (rng() - 0.5) * 40, 3 + rng() * 4, RR.River.sillZ + (rng() - 0.5) * 60,
+              (rng() - 0.5) * 5, 3.5, (rng() - 0.5) * 5, 1, 3, 1);
+          wasEast = true;
+        } else if (pl.x < SILL - 30) wasEast = false;
+      } else wasEast = null;
     });
   };
+
+  // ---- the finish: the wheel answers ----------------------------------------------------------
+  LK._celeb = 0;
+  LK.celebrate = function (sec) { LK._celeb = Math.max(LK._celeb, sec || 6); };
+
+  // 1-based finishing position of the player this race, or 0 if there isn't one yet.
+  function placeOfPlayer() {
+    const S = RR.Race && RR.Race.state && RR.Race.state();
+    if (!S || !S.results) return 0;
+    for (let i = 0; i < S.results.length; i++) if (S.results[i].boat && S.results[i].boat.isPlayer) return i + 1;
+    return 0;
+  }
 
   RR.Lake = LK;
 })();

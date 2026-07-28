@@ -2,8 +2,18 @@
    bright bits, gaussian-blur them, and add them back for a golden-hour glow.
    Works in display (sRGB) space so the existing colour grade is preserved. */
 (function () {
-  const P = { enabled: true };
+  const P = { enabled: true, streaks: 1 };
   let sceneRT, brightRT, blurA, blurB, quad, cam, brightMat, blurMat, compMat, ready = false;
+
+  // The grade has two authors. theme.js owns the BASE (day/sunset/dusk/night), the salute chain
+  // owns a modulation on top of it, and neither may clobber the other — so the base is kept here
+  // and every uniform is recomposed from it. `tier` is the chain expressed as 0 (cold) .. 1 (x5,
+  // THE WAVE) .. 2 (x10, THE RUN); `speed` is 0..1 and drives the radial streaks.
+  const base = {
+    lift: [0.020, 0.026, 0.036], gamma: [0.98, 1.00, 1.02], gain: [1.03, 1.01, 0.99],
+    sat: 1.06, vig: 0.30, threshold: 0.80, strength: 0.55,
+  };
+  let tier = 0, tierTarget = 0, speed = 0, speedTarget = 0;
 
   const VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
   const BRIGHT = `
@@ -31,17 +41,31 @@
   const COMP = `
     uniform sampler2D tScene; uniform sampler2D tBloom; uniform float strength;
     uniform vec3 uLift, uGamma, uGain;
-    uniform float uSat, uVig;
+    uniform float uSat, uVig, uStreak;
     varying vec2 vUv;
     void main(){
-      vec3 c = texture2D(tScene, vUv).rgb + texture2D(tBloom, vUv).rgb * strength;
+      float r = clamp(length(vUv - 0.5) * 1.42, 0.0, 1.0);
+      vec3 bl = texture2D(tBloom, vUv).rgb * strength;
+      vec3 c = texture2D(tScene, vUv).rgb + bl;
+      // Speed. Six taps marching back toward the vanishing point — an object moving outward has
+      // its past positions nearer the centre, so that is the direction a motion blur samples.
+      // The middle third stays sharp: only the periphery tears, which is what the eye actually
+      // reads as 85 MPH. FOV alone reads as a lens change, not as velocity.
+      float sw = smoothstep(0.30, 1.0, r) * uStreak;
+      if (sw > 0.004) {
+        vec2 st = (vec2(0.5) - vUv) * (0.038 * sw);
+        vec2 uv = vUv;
+        vec3 acc = vec3(0.0);
+        for (int i = 0; i < 6; i++) { uv += st; acc += texture2D(tScene, uv).rgb; }
+        acc *= 1.0 / 6.0;
+        c = mix(c, acc + bl, sw * 0.80) + acc * (sw * 0.05);
+      }
       c = clamp(c, 0.0, 1.0);
       c = pow(c, uGamma);                       // per-channel gamma splits shadow/highlight hue
       c = c * uGain + uLift * (1.0 - c);
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
       c = mix(vec3(l), c, uSat);
-      float r = length(vUv - 0.5) * 1.42;
-      c *= 1.0 - uVig * pow(clamp(r, 0.0, 1.0), 2.4);
+      c *= 1.0 - uVig * pow(r, 2.4);
       gl_FragColor = vec4(c, 1.0);
     }`;
 
@@ -67,28 +91,70 @@
         uGain: { value: new THREE.Vector3(1.03, 1.01, 0.99) },
         uSat: { value: 1.06 },
         uVig: { value: 0.30 },
+        uStreak: { value: 0 },
       },
       vertexShader: VS, fragmentShader: COMP, depthTest: false, depthWrite: false,
     });
     window.addEventListener('resize', P.resize);
     ready = true;
+    applyGrade();
   };
 
-  // theme.js drives these per preset. Both are no-ops before init(), so load order can't throw.
-  P.setGrade = function (g) {
-    if (!ready || !g) return;
+  // A chain does not put a colour filter on Chicago — it tightens the picture. Contrast climbs,
+  // the lifted floor is pulled back down, saturation pinches and the vignette closes in, so at x5
+  // the city reads harder and narrower without ever reading as a different city. The x5 numbers
+  // (sat 1.06 -> 0.88, vignette 0.30 -> 0.44) are VISION's, exactly.
+  function applyGrade() {
+    if (!ready) return;
+    const t1 = tier < 1 ? tier : 1, t2 = tier > 1 ? tier - 1 : 0;
+    const k = t1 + t2 * 0.6;
     const u = compMat.uniforms;
-    if (g.lift) u.uLift.value.set(g.lift[0], g.lift[1], g.lift[2]);
-    if (g.gamma) u.uGamma.value.set(g.gamma[0], g.gamma[1], g.gamma[2]);
-    if (g.gain) u.uGain.value.set(g.gain[0], g.gain[1], g.gain[2]);
-    if (g.sat != null) u.uSat.value = g.sat;
-    if (g.vignette != null) u.uVig.value = g.vignette;
+    u.uLift.value.set(base.lift[0] * (1 - 0.35 * k), base.lift[1] * (1 - 0.35 * k), base.lift[2] * (1 - 0.22 * k));
+    u.uGamma.value.set(base.gamma[0] * (1 + 0.045 * k), base.gamma[1] * (1 + 0.038 * k), base.gamma[2] * (1 + 0.028 * k));
+    u.uGain.value.set(base.gain[0] * (1 + 0.045 * k), base.gain[1] * (1 + 0.014 * k), base.gain[2] * (1 - 0.020 * k));
+    u.uSat.value = base.sat * (1 - 0.170 * t1) * (1 - 0.060 * t2);
+    u.uVig.value = base.vig + 0.14 * t1 + 0.06 * t2;
+    brightMat.uniforms.threshold.value = base.threshold * (1 - 0.10 * k);
+    u.strength.value = base.strength * (1 + 0.30 * k);
+  }
+
+  // theme.js drives these per preset. Safe before init(): the base is remembered and applied
+  // the moment the uniforms exist, so load order can't throw and can't lose a preset.
+  P.setGrade = function (g) {
+    if (!g) return;
+    if (g.lift) base.lift = [g.lift[0], g.lift[1], g.lift[2]];
+    if (g.gamma) base.gamma = [g.gamma[0], g.gamma[1], g.gamma[2]];
+    if (g.gain) base.gain = [g.gain[0], g.gain[1], g.gain[2]];
+    if (g.sat != null) base.sat = g.sat;
+    if (g.vignette != null) base.vig = g.vignette;
+    applyGrade();
   };
   P.setBloom = function (b) {
-    if (!ready || !b) return;
-    if (b.threshold != null) brightMat.uniforms.threshold.value = b.threshold;
-    if (b.strength != null) compMat.uniforms.strength.value = b.strength;
+    if (!b) return;
+    if (b.threshold != null) base.threshold = b.threshold;
+    if (b.strength != null) base.strength = b.strength;
+    applyGrade();
   };
+
+  // ---- the two seams W1/W2 drive. Both are pure setters: cheap, clamped, never throw. ----
+
+  // n is the RAW salute chain (0, 1, 2, ...). x5 is THE WAVE, x10 is THE RUN and the ceiling.
+  P.setChainTier = function (n) {
+    const c = (+n > 0) ? +n : 0;
+    tierTarget = c >= 10 ? 2 : (c >= 5 ? 1 + (c - 5) * 0.2 : c * 0.2);
+  };
+  // n is normalised speed 0..1. A caller handing us m/s instead reveals itself the first time it
+  // goes above walking pace, and the unit is then LATCHED — otherwise an idling hull at 0.9 m/s
+  // would be read as a normalised 0.9 and streak the frame while sitting still.
+  let mps = false;
+  P.setSpeed = function (n) {
+    let v = +n;
+    if (!(v > 0)) v = 0;
+    if (v > 1.5) mps = true;
+    if (mps) v /= 58;                     // quickest hull in the game tops out at 61 m/s
+    speedTarget = v > 1 ? 1 : v;
+  };
+  P.chainTier = function () { return tier; };
 
   P.resize = function () {
     if (!ready) return;
@@ -106,6 +172,19 @@
 
   P.render = function (renderer, scene, camera) {
     if (!ready) { renderer.render(scene, camera); return; }
+
+    // Both of these are damped, never snapped. 6/s is a 400 ms settle, which is the number
+    // VISION gives for a chain break: the grade lets go over the same beat the music does.
+    const dt = Math.min(0.1, (RR.Engine && RR.Engine.rawDt) || 0.0167);
+    speed += (speedTarget - speed) * (1 - Math.exp(-9 * dt));
+    if (tier !== tierTarget) {
+      tier += (tierTarget - tier) * (1 - Math.exp(-6 * dt));
+      if (Math.abs(tierTarget - tier) < 0.0008) tier = tierTarget;
+      applyGrade();
+    }
+    // P.streaks is the autoQuality rung (engine.js drops it first, before pixel scale)
+    compMat.uniforms.uStreak.value = P.streaks > 0 ? speed * P.streaks : 0;
+
     renderer.setRenderTarget(sceneRT);
     renderer.clear();
     renderer.render(scene, camera);
