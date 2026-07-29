@@ -735,6 +735,15 @@
     netActive: () => !!(RR.Net && RR.Net.active),
     netRemotes: () => remotes.map((b) => ({ id: b.netId, name: b.displayName, x: +b.pos.x.toFixed(1), z: +b.pos.z.toFixed(1), finished: !!b.finished })),
     netPhase: () => (raceState ? raceState.phase : null),
+    netItems: () => !!(RR.Net && RR.Net.items && RR.Net.items()),
+    // power-ups over the wire: the crate table, who holds what, and the protocol trace both ways
+    puNet: () => (RR.Powerups && RR.Powerups.netDebug ? RR.Powerups.netDebug() : null),
+    puCrates: () => (RR.Powerups && RR.Powerups.crates
+      ? RR.Powerups.crates().map((c, i) => ({ i, x: +c.x.toFixed(1), z: +c.z.toFixed(1), d: Math.round(c.d), taken: !!c.taken }))
+      : []),
+    puFire: () => !!(RR.Powerups && RR.Powerups.use && RR.Powerups.use()),
+    // step the sim without handing the wheel to the warp autopilot (which would drive off a crate)
+    step: (sec) => RR.Engine.warp(sec == null ? 0.5 : sec),
     selfProgress: () => (player ? { routeD: Math.round(player.routeD), lap: player.lap, finished: !!player.finished } : null),
     warp: (sec) => {
       // during warp the AI takes the player's wheel so the sim actually progresses

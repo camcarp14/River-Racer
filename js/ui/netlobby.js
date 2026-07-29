@@ -27,6 +27,12 @@
   #net-ui .seat b{flex:1;font-weight:600} #net-ui .seat .tag{font-size:11px;opacity:.6;letter-spacing:.14em}
   #net-ui .host-badge{color:var(--gold);font-size:11px;letter-spacing:.14em}
   #net-ui .code{font-size:26px;letter-spacing:.28em;color:var(--chi-blue);font-family:var(--f-num);font-weight:700;text-align:center;margin:2px 0 2px}
+  #net-ui .mode{display:flex;align-items:center;gap:10px;margin:12px 0 2px;padding:9px 12px;background:var(--panel);border-radius:2px;box-shadow:inset 0 0 0 2px var(--rule-soft)}
+  #net-ui .mode b{flex:1;font-size:12px;letter-spacing:.14em;opacity:.75;font-weight:600}
+  #net-ui .mode .val{font-weight:700;letter-spacing:.16em;font-size:13px}
+  #net-ui .mode .val.on{color:var(--sign-green)} #net-ui .mode .val.off{color:var(--text-dim)}
+  #net-ui .mode button{margin:0;width:auto;padding:6px 12px;font-size:11px;letter-spacing:.14em}
+  #net-ui .note{font-size:11px;letter-spacing:.06em;opacity:.6;margin:4px 2px 0}
   #net-ui ol{margin:8px 0 0;padding:0;list-style:none}
   #net-ui ol li{display:flex;gap:12px;align-items:baseline;padding:8px 12px;margin:5px 0;background:var(--panel);border-radius:2px}
   #net-ui ol li .pl{font:400 1.35em/1 var(--f-display);color:var(--gold);width:26px}
@@ -105,30 +111,57 @@
     if (!RR.Net.active) return;
     // don't cover an in-progress race/results
     if (RR.Net.self()._finished) return;
+    // …and a peer arriving MID-RACE fires 'roster' at everyone still driving. The field is frozen
+    // at the flag, so a late arrival cannot join this race and must not throw the lobby back up
+    // over it either: they wait in their own lobby and ride in the next one.
+    if (RR.Net.started && RR.Net.started()) return;
     const roster = RR.Net.roster();
     const host = RR.Net.isHost();
     const me = RR.Net.self();
+    // THE ROOM HAS ONE MODE. One player with items off in a room with items on is a broken race, so
+    // the host's switch is the only one that counts and every seat is shown what it is set to. A
+    // guest whose own preference differs is told so plainly rather than being quietly overruled.
+    const items = RR.Net.items ? RR.Net.items() : true;
+    const myPref = !!(RR.Powerups && RR.Powerups.enabled && RR.Powerups.enabled());
+    // …and this seat may be the one that arrived mid-race. Its own flag never dropped, so without
+    // asking the room it would think it owned an idle lobby and start a race of one over the top
+    // of everybody else's.
+    const busy = !!(RR.Net.roomRacing && RR.Net.roomRacing());
     root.innerHTML = `<div class="np">
       <h2>LOBBY</h2><div class="sub">Room</div>
       <div class="code">${esc(RR.Net.room)}</div>
       <div class="sub" style="text-align:center">${roster.length} racer${roster.length === 1 ? '' : 's'} — starts at ${autoStart} or when the host begins</div>
       <div id="ne-seats"></div>
+      <div class="mode"><b>POWER-UPS</b><span class="val ${items ? 'on' : 'off'}" id="ne-mode">${items ? 'ON' : 'OFF'}</span>
+      ${host ? '<button class="ghost" id="ne-items">CHANGE</button>' : '<span class="tag">HOST&rsquo;S CALL</span>'}</div>
+      ${!host && myPref !== items ? `<div class="note">Your setting is ${myPref ? 'ON' : 'OFF'} — this room races with items ${items ? 'ON' : 'OFF'}.</div>` : ''}
       <label>YOUR BOAT</label><select id="ne-boat2">${boatOptions(me.boatIdx)}</select>
-      ${host ? '<button id="ne-start">START RACE</button>' : '<button disabled>Waiting for host to start…</button>'}
+      ${busy ? '<button disabled>Race in progress — you’re in the next one</button>'
+        : host ? '<button id="ne-start">START RACE</button>' : '<button disabled>Waiting for host to start…</button>'}
       <button class="ghost" id="ne-leave">Leave</button>
     </div>`;
     show();
     $('#ne-seats').innerHTML = roster.map((r) => `<div class="seat"><span class="dot"></span><b>${esc(r.name)}${r.isSelf ? ' (you)' : ''}</b><span class="tag">${esc(RR.Boats.CATALOG[r.boatIdx] ? RR.Boats.CATALOG[r.boatIdx].name : '')}</span>${r.id === minId(roster) ? '<span class="host-badge">HOST</span>' : ''}</div>`).join('');
     $('#ne-boat2').onchange = (e) => RR.Net.setBoat(parseInt(e.target.value, 10) || 0);
     $('#ne-leave').onclick = () => { RR.Net.leave(); hide(); };
-    if (host) $('#ne-start').onclick = () => RR.Net.startAsHost(RR.Menus.selection ? RR.Menus.selection().courseIdx : 0);
-    // auto-start when full (host fires it for everyone)
-    if (host && roster.length >= autoStart) RR.Net.startAsHost(RR.Menus.selection ? RR.Menus.selection().courseIdx : 0);
+    const itemsBtn = $('#ne-items');
+    // the host's switch IS the room's: flip it, re-publish it, and every lobby repaints
+    if (itemsBtn) itemsBtn.onclick = () => {
+      if (RR.Powerups && RR.Powerups.setEnabled) RR.Powerups.setEnabled(!myPref);
+      if (RR.Net.announce) RR.Net.announce();
+      renderWaiting();
+    };
+    if (host && !busy) $('#ne-start').onclick = () => RR.Net.startAsHost(RR.Menus.selection ? RR.Menus.selection().courseIdx : 0);
+    // Auto-start when full (host fires it for everyone) — but never off a room we have only half
+    // heard from: peer-join arrives before the hello that says whether a race is already running.
+    if (host && !busy && roster.length >= autoStart && (!RR.Net.heardAll || RR.Net.heardAll())) {
+      RR.Net.startAsHost(RR.Menus.selection ? RR.Menus.selection().courseIdx : 0);
+    }
   }
 
   function showResults(results) {
     root.innerHTML = `<div class="np">
-      <h2>RESULTS</h2><div class="sub">Room ${esc(RR.Net.room)}</div>
+      <h2>RESULTS</h2><div class="sub">Room ${esc(RR.Net.room)} — items ${RR.Net.items && RR.Net.items() ? 'on' : 'off'}</div>
       <ol>${results.map((r) => `<li class="${r.isSelf ? 'me' : ''}"><span class="pl">${r.place}</span><b>${esc(r.name)}</b><span class="tag">${esc(RR.Boats.CATALOG[r.boatIdx] ? RR.Boats.CATALOG[r.boatIdx].name : '')}</span><span class="tm">${fmt(r.time)}</span></li>`).join('')}</ol>
       ${RR.Net.isHost() ? '<button id="ne-again">RACE AGAIN</button>' : '<button disabled>Waiting for host…</button>'}
       <button class="ghost" id="ne-leave2">Leave</button>

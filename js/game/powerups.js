@@ -110,8 +110,11 @@
     enabled = !!on;
     try { if (RR.Progress && RR.Progress.set) RR.Progress.set('powerups', enabled); } catch (e) { /* fine */ }
     try { localStorage.setItem(SAVE_KEY, enabled ? '1' : '0'); } catch (e) { /* fine */ }
-    if (!enabled) dropEverything();
-    if (group) group.visible = enabled;
+    // Online this is only a PREFERENCE — the room's mode came down with the start flag and one
+    // player quietly switching items off mid-race is exactly the desync this whole file exists to
+    // stop. So the live race is left alone unless the room itself is running without items.
+    if (!itemsOn()) dropEverything();
+    if (group) group.visible = itemsOn();
     return enabled;
   };
   PU.toggle = function () { return PU.setEnabled(!PU.enabled()); };
@@ -123,6 +126,157 @@
     try { if (RR.Menus && RR.Menus.difficulty) return RR.Menus.difficulty(); } catch (e) { /* fine */ }
     return 1;
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // MULTIPLAYER AUTHORITY
+  //
+  // Three rules. Everything with net() in it below is one of them:
+  //
+  //   1. THE HOST OWNS THE CRATES AND EVERY DRAW. Placement is deterministic from the course seed,
+  //      so all clients build the same rows — but availability is not placement. Two boats abreast
+  //      through one crate can only be settled by one authority, and the draw is weighted by race
+  //      position, which only an authority knows for everybody. So a client CLAIMS; it never rolls.
+  //
+  //   2. THE VICTIM'S OWN CLIENT APPLIES THE PHYSICS. net.js's applyRemote interpolates remote
+  //      hulls from the wire; a shove written onto somebody else's boat fights that interpolation
+  //      and rubber-bands. So every client plays the visuals for every boat, and only the boat's
+  //      owner ever moves it. mine() is that line, and it is `true` for the whole field offline —
+  //      which is why single-player runs the identical code and cannot rot.
+  //
+  //   3. AIM BY ROUTE DISTANCE, NOT WORLD POSITION. At 14 Hz a target has moved by the time the
+  //      message lands; its arc length up the river has barely changed and every client agrees on
+  //      it. The torpedo already flew that way, so it is the one item latency costs nothing.
+  //
+  // Four message types, all carried by net.js and owned here:
+  //   pcl {c}                       client -> host   "I am through crate c"
+  //   pgr {c,w,i,n}                 host -> all      "w gets crate c, and the item is i"
+  //   pfr {w,i,n,x,z,h[,d,o,g]}     firer -> all     "w let item i go, from here, at these targets"
+  //   pht {k,f,v[,n,x,z]}           victim -> all    "it hit me" / "my shield ate it"
+  // ---------------------------------------------------------------------------------------------
+  // A boat is only inside a crate's grab radius for about two tenths of a second at racing speed,
+  // so an unanswered claim has to come round again INSIDE that window or it is simply lost. Three
+  // claims for one crate cost nothing — the host answers the first and the rest die in silence.
+  const CLAIM_RETRY = 0.4;
+  const HOLD_GRACE = 0.7;    // a local authoritative change outranks a 14 Hz report this much older
+  let grantSeq = 0, fireSeq = 0, netSeen = Object.create(null), netLog = [];
+
+  function net() { return !!(S && S.mp && RR.Net && RR.Net.active); }
+  function myId() { return net() && RR.Net.self ? RR.Net.self().id : null; }
+  function isHost() { return net() && RR.Net.isHost(); }
+  // The one line the whole design hangs on: offline this client owns the entire field, online it
+  // owns exactly one hull.
+  function mine(b) { return !net() || b === S.player; }
+  function netIdOf(b) { return !b ? null : b === S.player ? myId() : (b.netId || null); }
+  function boatById(id) {
+    if (!id || !S) return null;
+    if (id === myId()) return S.player;
+    for (const b of S.boats) if (b.netId === id) return b;
+    return null;                    // a peer who joined mid-race, or one that was never in this one
+  }
+  function trace(dir, m) {
+    netLog.push(dir + m.t + ' ' + JSON.stringify(m));
+    if (netLog.length > 80) netLog.shift();
+  }
+  function send(m) { if (net() && RR.Net.send) { trace('> ', m); RR.Net.send(m); } }
+  // duplicate suppression, one flat table: a grant or a hit replayed is a no-op, never a second one
+  function once(key) { if (netSeen[key]) return false; netSeen[key] = 1; return true; }
+  function netReset() { grantSeq = 0; fireSeq = 0; netSeen = Object.create(null); netLog = []; }
+
+  // net.js hands every pcl/pgr/pfr/pht straight here.
+  PU.onNet = function (t, from, m) {
+    if (!m || !net() || !active()) return;
+    trace('< ', m);
+    if (t === 'pcl') resolveClaim(from, m.c | 0);
+    else if (t === 'pgr') applyGrant(m);
+    else if (t === 'pfr') applyFire(from, m);
+    else if (t === 'pht') applyHit(m);
+  };
+
+  // ---- the host's side of a crate -------------------------------------------------------------
+  function resolveClaim(fromId, idx) {
+    if (!isHost()) return;                    // not my job; the lowest id in the room answers
+    const c = crates[idx];
+    if (!c || c.taken) return;                // a claim for a crate already taken dies in silence:
+    const b = boatById(fromId);               // first claim wins, and the loser sees the grant land
+    if (!b || b.finished) return;             // a peer with no boat in THIS race gets no crates
+    if (st(b).held) return;                   // a full slot never eats a crate, wherever it is
+    const it = rollFor(b);                    // the draw is position-weighted — hence host-only
+    const m = { t: 'pgr', c: idx, w: fromId, i: it.id, n: ++grantSeq };
+    send(m);
+    applyGrant(m);
+  }
+
+  function applyGrant(m) {
+    const idx = m.c | 0, c = crates[idx];
+    if (!c) return;
+    if ((m.n | 0) > grantSeq) grantSeq = m.n | 0;   // a promoted host carries on the old numbering
+    if (!once('g' + idx + ':' + (m.n | 0))) return; // a duplicate grant changes nothing
+    if (c.taken) return;                            // two hosts for one frame: the first one stands
+    c.taken = true; c.t = K.RESPAWN; c.claimT = 0;
+    popRing(c.x, 0.5, c.z, 6, 0x6ff0ff);
+    if (RR.FX && RR.FX.spray) RR.FX.spray(c.x, 1.0, c.z, 0, 4.5, 0, 12, 4.0, 1.2);
+    const b = boatById(m.w), it = PU.byId(m.i);
+    if (!b || !it) return;              // a grant to somebody who has left still spends the crate —
+    const s = st(b);                    // leaving it standing would hand the next boat a free one
+    s.held = it;
+    s.roll = b === S.player ? K.ROLL_T : 0;   // the slot only spins for the player who has to read it
+    s.aiPatience = null;
+    s.stamp = RR.Engine.time();
+    if (b === S.player) {
+      if (RR.Audio && RR.Audio.checkpoint) RR.Audio.checkpoint();
+      if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.12);
+    }
+  }
+
+  // ---- an incoming shot -----------------------------------------------------------------------
+  function applyFire(fromId, m) {
+    const b = boatById(m.w || fromId);
+    const it = PU.byId(m.i);
+    if (!b || !it) return;                                  // a fire from a peer who is not in this
+    if (!once('f' + (m.w || fromId) + ':' + (m.n | 0))) return;  // race is dropped, never drawn
+    const s = st(b);
+    s.held = null; s.roll = 0; s.stamp = RR.Engine.time();
+    launch(b, it, m, null);
+  }
+
+  function applyHit(m) {
+    if (m.k === 'sh') {
+      if (!isFinite(m.x) || !isFinite(m.z)) return;   // never feed a malformed packet to a matrix
+      // A shield ate something. Everybody pops the burst; only the boat that ran into it moves.
+      popRing(m.x, 0.9, m.z, 13, 0x7ec8e3);
+      popWall(m.x, m.z, 14, 0x9fe8ff);
+      if (RR.FX && RR.FX.detonation) RR.FX.detonation(m.x, 0.5, m.z, 0.9);
+      const vb = boatById(m.v);
+      if (vb) { const s = st(vb); s.shield = 0; s.stamp = RR.Engine.time(); }
+      if (m.f && m.f === myId()) bounceOff(S.player, m.x, m.z, vb);
+      return;
+    }
+    if (m.k === 'tp') {
+      const p = torpByKey(m.f, m.n | 0);
+      if (!p) return;                        // already gone here: it expired, or it hit us first
+      detonate(p, boatById(m.v), !!m.b);
+      const i = torps.indexOf(p);
+      if (i >= 0) torps.splice(i, 1);
+    }
+  }
+
+  function torpByKey(oid, seq) {
+    for (const p of torps) if (p.oid === oid && p.seq === seq) return p;
+    return null;
+  }
+
+  function bounceOff(b, x, z, src) {
+    if (!b || b.finished) return;
+    const dx = b.pos.x - x, dz = b.pos.z - z;
+    const d = Math.max(1e-3, Math.hypot(dx, dz));
+    b.vel.x += (dx / d) * K.SHIELD_BOUNCE;
+    b.vel.z += (dz / d) * K.SHIELD_BOUNCE;
+    b.bumpRecover = Math.max(b.bumpRecover || 0, 0.8);
+    land(b, src, 'BOUNCED OFF A SHIELD', 0.9, 0.75, 200);
+  }
+
+  const rd = (v) => Math.round(v * 10) / 10;
+  const rd3 = (v) => Math.round(v * 1000) / 1000;
 
   // ---------------------------------------------------------------------------------------------
   // Scene objects. Seven instanced meshes and one screen quad, built once per race, torn down with
@@ -142,7 +296,9 @@
   // GULL_MAX victims × 16 birds each — sized so the fourth victim is not the one that silently
   // gets no flock.
   const MAX_SLICK = 18, MAX_DYE = 10, MAX_RING = 10, MAX_AURA = 8, MAX_GULL = 64,
-        MAX_WALL = 4, MAX_TORP = 4;
+        // six torpedoes, not four: online every client flies EVERY boat's fish, and a full room is
+        // six boats. Overflowing the pool would drop a projectile on one screen and not another.
+        MAX_WALL = 4, MAX_TORP = 6;
 
   const tint = (geo, hex) => (RR.City && RR.City.tintGeom ? RR.City.tintGeom(geo, hex) : geo);
   const merge = (list) => (RR.City && RR.City.mergeGeoms ? RR.City.mergeGeoms(list) : list[0]);
@@ -521,7 +677,8 @@
         const cx = pt.x + pt.tz * off, cz = pt.z - pt.tx * off;
         const wq = RR.River.waterQuery(cx, cz, null);
         if (!wq || wq.clear < 4.5) continue;      // a crate you cannot reach is worse than no crate
-        out.push({ x: cx, z: cz, d: pt.d, t: 0, spin: rng() * 6.283, seed: rng() * 6.283, taken: false });
+        // claimT: online, how long this client waits for the host's answer before claiming again
+        out.push({ x: cx, z: cz, d: pt.d, t: 0, spin: rng() * 6.283, seed: rng() * 6.283, taken: false, claimT: 0 });
       }
     }
     return out;
@@ -574,6 +731,8 @@
       turbo: 0, slamCd: 0,
       seed: (seedTick = (seedTick + 2.399963) % 6.283),
       baseMass: b.mass || 1,
+      stamp: -1e9,                           // when this client last changed the slot on authority
+
       aiHold: 0, aiPatience: null, aiCheck: 0, seekX: 0, seekZ: 0, seekT: 0,
     });
   }
@@ -649,17 +808,16 @@
     const s = st(b);
     if (s.shield <= 0) return false;
     s.shield = 0;
+    s.stamp = RR.Engine.time();
     popRing(b.pos.x, b.pos.y + 0.8, b.pos.z, 13, 0x7ec8e3);
     popWall(b.pos.x, b.pos.z, 14, 0x9fe8ff);
     if (RR.FX && RR.FX.detonation) RR.FX.detonation(b.pos.x, b.pos.y + 0.5, b.pos.z, 0.9);
-    if (from && from !== b && !from.finished) {
-      const dx = from.pos.x - b.pos.x, dz = from.pos.z - b.pos.z;
-      const d = Math.max(1e-3, Math.hypot(dx, dz));
-      from.vel.x += (dx / d) * K.SHIELD_BOUNCE;
-      from.vel.z += (dz / d) * K.SHIELD_BOUNCE;
-      from.bumpRecover = Math.max(from.bumpRecover || 0, 0.8);
-      land(from, b, 'BOUNCED OFF A SHIELD', 0.9, 0.75, 200);
+    // Online a block is news twice over: the room needs the burst where it happened, and the boat
+    // that ran into it needs the shove — which only ITS client is allowed to apply.
+    if (net() && b === S.player) {
+      send({ t: 'pht', k: 'sh', f: netIdOf(from), v: myId(), x: rd(b.pos.x), z: rd(b.pos.z) });
     }
+    if (from && from !== b && !from.finished && mine(from)) bounceOff(from, b.pos.x, b.pos.z, b);
     if (b.isPlayer) {
       chip(b, 'item', 'SHIELD BLOCKED IT', 1500);
       if (RR.Audio && RR.Audio.thud) RR.Audio.thud(0.7);
@@ -669,12 +827,14 @@
     return true;
   }
 
+  // Who is up the road, by ARC LENGTH — the one measure of "ahead" that survives a 14 Hz feed.
+  // Remote boats count: online they are the entire field.
   function ahead(b, range) {
     const out = [];
-    const mine = b.routeD || 0;
+    const mineD = b.routeD || 0;
     for (const o of S.boats) {
-      if (o === b || o.finished || o.remote) continue;
-      const gapM = (o.routeD || 0) - mine;
+      if (o === b || o.finished) continue;
+      const gapM = (o.routeD || 0) - mineD;
       if (gapM > 2 && gapM < range) out.push({ o, gapM });
     }
     out.sort((a, c) => a.gapM - c.gapM);
@@ -682,37 +842,81 @@
   }
 
   let lastFireT = -1e9;
+
+  // Pulling the trigger. Everything the shot needs is decided ONCE, here, by the boat that fired —
+  // origin, heading, targets, the torpedo's launch point on the route — and then replayed
+  // identically everywhere by launch(). The origin travels with it because a remote hull is
+  // interpolated and lags: draw the muzzle at the firer's own reported water or one shot becomes
+  // two. Offline the message is built and consumed on the spot, so the same path is exercised.
   function fire(b) {
     const s = st(b);
     const it = s.held;
     if (!it || s.roll > 0) return false;
     s.held = null;
-    const fx = Math.sin(b.heading), fz = Math.cos(b.heading);
+    s.stamp = RR.Engine.time();
+
+    const m = { t: 'pfr', w: netIdOf(b), i: it.id, n: ++fireSeq,
+      x: rd(b.pos.x), z: rd(b.pos.z), h: rd3(b.heading) };
+    let victims = null;
+    if (it.id === 'gulls') {
+      victims = ahead(b, K.GULL_RANGE).slice(0, K.GULL_MAX).map((e) => e.o);
+    } else if (it.id === 'torpedo') {
+      const list = ahead(b, K.TORP_RANGE);
+      victims = list.length ? [list[0].o] : [];      // whoever is next up the road; see reTarget
+      const route = S.route;
+      if (route) {
+        const d0 = U().clamp(b.routeD || 0, 0, route.len - 1);
+        U().pathAt(route, d0, TPT);
+        m.d = rd(d0);
+        m.o = rd((b.pos.x - TPT.x) * TPT.tz - (b.pos.z - TPT.z) * TPT.tx);
+      }
+    }
+    if (victims && net()) m.g = victims.map(netIdOf).filter(Boolean);
+    if (net()) send(m);
+    launch(b, it, m, victims);
+    if (b.isPlayer) lastFireT = RR.Engine.time();
+    if (useHook) useHook(b, it);
+    return true;
+  }
+
+  // The shot itself, run by EVERY client for EVERY boat. Visuals are unconditional; anything that
+  // moves a hull is gated on mine() — offline that is the whole field, online it is only ever this
+  // client's own boat. `victims` is the firer's own resolved list; a receiver passes null and the
+  // ids on the wire are resolved instead.
+  function launch(b, it, m, victims) {
+    const s = st(b);
+    const own = mine(b);
+    const ox = m.x != null ? m.x : b.pos.x, oz = m.z != null ? m.z : b.pos.z;
+    const hd = m.h != null ? m.h : b.heading;
+    const fx = Math.sin(hd), fz = Math.cos(hd);
 
     if (it.id === 'turbo') {
       // A LIGHT-OFF, not a nudge. The instant kick is more than twice what it was, and behind it
       // sits three seconds of sustained thrust that holds the hull at 55% over her rated top end —
       // physics.js's 6 m/s² blow-off pulls against it the whole time, which is what makes the run
       // feel like something straining rather than a number being set.
-      b.boostEnergy = 1;
-      b.boostFull = 1.35;
-      b.boostKickT = 1.5;
       s.turbo = K.TURBO_T;
-      const sp = Math.hypot(b.vel.x, b.vel.z), cap = (b.spec.top || 40) * K.TURBO_TOP;
-      if (sp < cap) {
-        const add = Math.min(K.TURBO_KICK, cap - sp);
-        b.vel.x += fx * add; b.vel.z += fz * add;
+      b.turboFlame = 1;                            // the burn is a visual: every client lights it
+      if (own) {
+        b.boostEnergy = 1;
+        b.boostFull = 1.35;
+        b.boostKickT = 1.5;
+        const sp = Math.hypot(b.vel.x, b.vel.z), cap = (b.spec.top || 40) * K.TURBO_TOP;
+        if (sp < cap) {
+          const add = Math.min(K.TURBO_KICK, cap - sp);
+          b.vel.x += fx * add; b.vel.z += fz * add;
+        }
       }
-      popRing(b.pos.x, 0.4, b.pos.z, 15, 0x25ff7a);
-      popWall(b.pos.x, b.pos.z, 13, 0x8dffc0);
+      popRing(ox, 0.4, oz, 15, 0x25ff7a);
+      popWall(ox, oz, 13, 0x8dffc0);
       if (RR.FX) {
-        const ex = b.pos.x - fx * b.radius * 1.5, ez = b.pos.z - fz * b.radius * 1.5;
+        const ex = ox - fx * b.radius * 1.5, ez = oz - fz * b.radius * 1.5;
         if (RR.FX.burn) RR.FX.burn(ex, b.pos.y + 0.6, ez, -fx * 26, 2.5, -fz * 26, 46, 9);
         if (RR.FX.spray) {
           RR.FX.spray(ex, b.pos.y + 0.3, ez, -b.vel.x * 0.35, 6.0, -b.vel.z * 0.35, 40, 9.0, 2.4);
           for (let i = 0; i < 2; i++) {
             const side = i ? 1 : -1;
-            RR.FX.spray(b.pos.x + fz * side * b.radius, b.pos.y + 0.3, b.pos.z - fx * side * b.radius,
+            RR.FX.spray(ox + fz * side * b.radius, b.pos.y + 0.3, oz - fx * side * b.radius,
               fz * side * 13, 4.5, -fx * side * 13, 14, 5.0, 1.8);
           }
         }
@@ -723,9 +927,9 @@
 
     } else if (it.id === 'fender') {
       s.shield = K.SHIELD_T;
-      popRing(b.pos.x, b.pos.y + 0.6, b.pos.z, 12, 0x7ec8e3);
-      popWall(b.pos.x, b.pos.z, 11, 0x9fe8ff);
-      if (RR.FX && RR.FX.spray) RR.FX.spray(b.pos.x, b.pos.y + 0.5, b.pos.z, 0, 5.0, 0, 30, 6.5, 1.6);
+      popRing(ox, b.pos.y + 0.6, oz, 12, 0x7ec8e3);
+      popWall(ox, oz, 11, 0x9fe8ff);
+      if (RR.FX && RR.FX.spray) RR.FX.spray(ox, b.pos.y + 0.5, oz, 0, 5.0, 0, 30, 6.5, 1.6);
       chip(b, 'item', 'SHIELD UP', 1600);
       recoil(b, 0.3, 0.85, 200);
       if (b.isPlayer && RR.Audio && RR.Audio.checkpoint) RR.Audio.checkpoint();
@@ -733,10 +937,10 @@
     } else if (it.id === 'deepdish') {
       s.heavy = K.HEAVY_T;
       s.slamCd = 0;
-      b.mass = s.baseMass * K.HEAVY_MASS;
-      popRing(b.pos.x, 0.4, b.pos.z, 16, 0xffb03a);
-      popWall(b.pos.x, b.pos.z, 15, 0xffa03a);
-      if (RR.FX && RR.FX.detonation) RR.FX.detonation(b.pos.x, 0.3, b.pos.z, 1.1);
+      if (own) b.mass = s.baseMass * K.HEAVY_MASS;   // mass is physics; the ring is not
+      popRing(ox, 0.4, oz, 16, 0xffb03a);
+      popWall(ox, oz, 15, 0xffa03a);
+      if (RR.FX && RR.FX.detonation) RR.FX.detonation(ox, 0.3, oz, 1.1);
       chip(b, 'item', 'DEEP DISH — YOU ARE HEAVY NOW', 1800);
       recoil(b, 0.7, 0.72, 300);
       if (b.isPlayer && RR.Audio && RR.Audio.thud) RR.Audio.thud(0.9);
@@ -748,18 +952,18 @@
       for (let i = 0; i < K.SLICK_N; i++) {
         const off = (i - (K.SLICK_N - 1) / 2) * K.SLICK_SPREAD;
         const back = b.radius + 3.5 + Math.abs(off) * 0.35;
-        const dx = b.pos.x - fx * back + lx * off, dz = b.pos.z - fz * back + lz * off;
+        const dx = ox - fx * back + lx * off, dz = oz - fz * back + lz * off;
         if (slicks.length >= MAX_SLICK) slicks.shift();
         slicks.push({ x: dx, z: dz, r: K.SLICK_R, t: K.SLICK_T, arm: K.DROP_ARM, owner: b });
         if (RR.FX && RR.FX.spray) RR.FX.spray(dx, 0.4, dz, lx * off * 0.4, 2.4, lz * off * 0.4, 16, 4.0, 1.6, 2);
       }
-      popRing(b.pos.x - fx * 6, 0.35, b.pos.z - fz * 6, 16, 0x7a5aa8);
+      popRing(ox - fx * 6, 0.35, oz - fz * 6, 16, 0x7a5aa8);
       chip(b, 'item', 'OIL SLICK ASTERN', 1400);
       recoil(b, 0.22, 0, 0);
       if (b.isPlayer && RR.Audio && RR.Audio.splash) RR.Audio.splash(0.4);
 
     } else if (it.id === 'dye') {
-      const dx = b.pos.x - fx * (b.radius + 4.5), dz = b.pos.z - fz * (b.radius + 4.5);
+      const dx = ox - fx * (b.radius + 4.5), dz = oz - fz * (b.radius + 4.5);
       if (dyes.length >= MAX_DYE) dyes.shift();
       dyes.push({ x: dx, z: dz, r: K.DYE_R0, t: K.DYE_T, life: K.DYE_T, arm: K.DROP_ARM, owner: b });
       if (RR.FX && RR.FX.dyeBurst) {
@@ -772,12 +976,15 @@
       if (b.isPlayer && RR.Audio && RR.Audio.splash) RR.Audio.splash(0.8);
 
     } else if (it.id === 'bowwave') {
+      // The blast is measured from the firer's reported water on every client; who it MOVES is
+      // decided one hull at a time, by the client that owns that hull.
       let hits = 0;
       for (const o of S.boats) {
         if (o === b || o.finished) continue;
-        const dx = o.pos.x - b.pos.x, dz = o.pos.z - b.pos.z;
+        const dx = o.pos.x - ox, dz = o.pos.z - oz;
         const d2 = dx * dx + dz * dz;
         if (d2 > K.WAVE_R * K.WAVE_R || d2 < 1e-4) continue;
+        if (!mine(o)) continue;
         if (consumeShield(o)) continue;
         const d = Math.sqrt(d2), k = 1 - d / K.WAVE_R;
         o.vel.x += (dx / d) * K.WAVE_PUSH * k;
@@ -789,35 +996,41 @@
         land(o, b, 'SHOCKWAVE', 1.2 * k, 0.7, 220);
         hits++;
       }
-      b.vel.x += fx * K.WAVE_SELF; b.vel.z += fz * K.WAVE_SELF;
-      popRing(b.pos.x, 0.35, b.pos.z, K.WAVE_R, 0x9fe8ff);
-      popWall(b.pos.x, b.pos.z, K.WAVE_R, 0x9fe8ff);
+      if (own) { b.vel.x += fx * K.WAVE_SELF; b.vel.z += fz * K.WAVE_SELF; }
+      popRing(ox, 0.35, oz, K.WAVE_R, 0x9fe8ff);
+      popWall(ox, oz, K.WAVE_R, 0x9fe8ff);
       if (RR.FX) {
-        if (RR.FX.detonation) RR.FX.detonation(b.pos.x, 0.4, b.pos.z, 1.0);
+        if (RR.FX.detonation) RR.FX.detonation(ox, 0.4, oz, 1.0);
         if (RR.FX.spray) {
           for (let i = 0; i < 16; i++) {
             const a = (i / 16) * 6.283;
-            RR.FX.spray(b.pos.x + Math.sin(a) * 4, 0.5, b.pos.z + Math.cos(a) * 4,
+            RR.FX.spray(ox + Math.sin(a) * 4, 0.5, oz + Math.cos(a) * 4,
               Math.sin(a) * 22, 4.0, Math.cos(a) * 22, 8, 5.0, 2.0);
           }
         }
       }
+      // online the firer cannot count its own hits — every victim is somebody else's arithmetic
       chip(b, 'item', hits ? 'SHOCKWAVE — HIT ' + hits : 'SHOCKWAVE', 1400);
       recoil(b, 0.85, 0.5, 280);
       if (b.isPlayer && RR.Audio && RR.Audio.splash) RR.Audio.splash(1.0);
 
     } else if (it.id === 'gulls') {
-      const list = ahead(b, K.GULL_RANGE).slice(0, K.GULL_MAX);
+      // The flock is aimed by ROUTE DISTANCE and the list travels with the shot, so every client
+      // puts the birds on the same four boats. Only each victim's own client pays for them.
+      const list = victims || (m.g || []).map(boatById);
       let hits = 0;
-      for (const e of list) {
-        if (consumeShield(e.o)) continue;
-        st(e.o).gulls = K.GULL_T;
+      for (const o of list) {
+        if (!o || o.finished) continue;
+        if (mine(o) && consumeShield(o)) continue;
+        const so = st(o);
+        so.gulls = K.GULL_T;
+        if (mine(o)) so.stamp = RR.Engine.time();
         hits++;
         // the flock ARRIVES: a burst of white over the wheelhouse on the frame it lands, so a
         // rival two hundred metres up the road visibly disappears into birds
-        if (RR.FX && RR.FX.spray) RR.FX.spray(e.o.pos.x, e.o.pos.y + 3.4, e.o.pos.z, 0, 1.5, 0, 20, 7.0, 1.2, 3);
-        popRing(e.o.pos.x, e.o.pos.y + 0.5, e.o.pos.z, 8, 0xf2f6f8);
-        land(e.o, b, 'GULLS ON YOU', 0.7, 0.8, 220);
+        if (RR.FX && RR.FX.spray) RR.FX.spray(o.pos.x, o.pos.y + 3.4, o.pos.z, 0, 1.5, 0, 20, 7.0, 1.2, 3);
+        popRing(o.pos.x, o.pos.y + 0.5, o.pos.z, 8, 0xf2f6f8);
+        land(o, b, 'GULLS ON YOU', 0.7, 0.8, 220);
       }
       if (RR.Audio && RR.Audio.seagull) RR.Audio.seagull();
       chip(b, 'item', hits ? 'GULL SWARM — HIT ' + hits : 'GULL SWARM — NOBODY AHEAD', 1600);
@@ -827,33 +1040,37 @@
       // Fired UP THE ROUTE, not across open water: it advances in arc length and only slides
       // sideways to match its target, so it follows every bend of the river, never leaves the
       // channel, and cannot clip a wall. It is also the one item that reaches the leader from last
-      // place, which is exactly the job the draw table gives it.
-      const list = ahead(b, K.TORP_RANGE);
-      const target = list.length ? list[0].o : null;      // whoever is next up the road; see reTarget
+      // place, which is exactly the job the draw table gives it — and the one item a 14 Hz feed
+      // costs nothing, because arc length is the number that is still true when the message lands.
+      const target = victims ? (victims[0] || null) : (m.g && m.g.length ? boatById(m.g[0]) : null);
       const route = S.route;
       if (route) {
-        U().pathAt(route, U().clamp(b.routeD || 0, 0, route.len - 1), TPT);
-        const off = (b.pos.x - TPT.x) * TPT.tz - (b.pos.z - TPT.z) * TPT.tx;
+        const d0 = m.d != null ? m.d : U().clamp(b.routeD || 0, 0, route.len - 1);
+        let off = m.o;
+        if (off == null) {
+          U().pathAt(route, U().clamp(d0, 0, route.len - 1), TPT);
+          off = (ox - TPT.x) * TPT.tz - (oz - TPT.z) * TPT.tx;
+        }
         if (torps.length >= MAX_TORP) torps.shift();
-        torps.push({ d: (b.routeD || 0) + b.radius + 2, off, x: b.pos.x, z: b.pos.z,
+        torps.push({ d: d0 + b.radius + 2, off, x: ox, z: oz,
           hx: fx, hz: fz, life: K.TORP_LIFE, arm: K.TORP_ARM, acc: 0, reT: 0, owner: b, target,
+          // every client runs the same projectile; this pair names it, so the hit the victim
+          // declares takes the right one out of the water everywhere
+          oid: m.w || null, seq: m.n | 0,
           // the warning latch lives on the PROJECTILE, never on the victim: one that expires
           // harmlessly must not leave a boat permanently un-warnable about the next one
           warned: !!(target && target.isPlayer) });
       }
-      popRing(b.pos.x + fx * 5, 0.4, b.pos.z + fz * 5, 12, 0xff5a3a);
+      popRing(ox + fx * 5, 0.4, oz + fz * 5, 12, 0xff5a3a);
       if (RR.FX) {
-        if (RR.FX.burn) RR.FX.burn(b.pos.x + fx * 5, b.pos.y + 0.5, b.pos.z + fz * 5, fx * 20, 2, fz * 20, 26, 7);
-        if (RR.FX.spray) RR.FX.spray(b.pos.x + fx * 5, 0.4, b.pos.z + fz * 5, fx * 16, 4.5, fz * 16, 26, 6.0, 2.0);
+        if (RR.FX.burn) RR.FX.burn(ox + fx * 5, b.pos.y + 0.5, oz + fz * 5, fx * 20, 2, fz * 20, 26, 7);
+        if (RR.FX.spray) RR.FX.spray(ox + fx * 5, 0.4, oz + fz * 5, fx * 16, 4.5, fz * 16, 26, 6.0, 2.0);
       }
       if (target && target.isPlayer) chip(target, 'bad', 'TORPEDO INCOMING — ' + nameOf(b), 2200);
       chip(b, 'item', target ? 'TORPEDO AWAY — ' + nameOf(target) : 'TORPEDO — NOBODY AHEAD', 1700);
       recoil(b, 0.55, 0.6, 260);
       if (b.isPlayer && RR.Audio && RR.Audio.airhorn) RR.Audio.airhorn();
     }
-    if (b.isPlayer) lastFireT = RR.Engine.time();
-    if (useHook) useHook(b, it);
-    return true;
   }
   PU.onUse = function (fn) { useHook = fn; };
   // Seconds since the PLAYER last let an item go, or effectively forever. Published rather than
@@ -866,11 +1083,13 @@
   // ---------------------------------------------------------------------------------------------
   function collect(dt) {
     const route = S.route;
+    const online = net();
     for (let i = 0; i < crates.length; i++) {
       const c = crates[i];
+      if (c.claimT > 0) c.claimT -= dt;
       if (c.taken) {
         c.t -= dt;
-        if (c.t <= 0) { c.taken = false; c.t = 0; }
+        if (c.t <= 0) { c.taken = false; c.t = 0; c.claimT = 0; }
         continue;
       }
       for (const b of S.boats) {
@@ -882,6 +1101,16 @@
         if (dd < -70 || dd > 70) continue;
         const reach = b.radius + K.CRATE_R + (b.isPlayer ? 0 : K.AI_REACH);
         if (U().dist2(b.pos.x, b.pos.z, c.x, c.z) > reach * reach) continue;
+        if (online) {
+          // Online a client never decides it got the crate and never rolls the item: it CLAIMS,
+          // and the host answers with a grant naming both. The retry window covers a lost claim
+          // and the two frames it takes the next-lowest id to inherit a host that just left.
+          if (c.claimT > 0) break;
+          c.claimT = CLAIM_RETRY;
+          if (isHost()) resolveClaim(myId(), i);
+          else send({ t: 'pcl', c: i });
+          break;
+        }
         c.taken = true; c.t = K.RESPAWN;
         give(b, rollFor(b), !b.isPlayer);
         popRing(c.x, 0.5, c.z, 6, 0x6ff0ff);
@@ -895,10 +1124,15 @@
     }
   }
 
+  // Every running effect, ticked for EVERY boat so the auras and the burn read the same on every
+  // screen — but with each write that moves a hull gated on own. Offline own is true throughout and
+  // this is byte-for-byte the old behaviour; online a remote hull is driven only by applyRemote,
+  // and a shove written here would be a fight with the interpolator, not a power-up.
   function applyEffects(dt, t) {
     for (const b of S.boats) {
       const s = b._pu;
       if (!s) continue;
+      const own = mine(b);
       if (s.roll > 0) s.roll = Math.max(0, s.roll - dt);
       if (s.slamCd > 0) s.slamCd -= dt;
       if (s.turbo > 0) {
@@ -906,12 +1140,12 @@
         // The sustained half of the item. Hold the burn hot so effects.js keeps the flame lit and
         // the rooster tail running, and push towards the raised ceiling every frame — physics.js
         // is bleeding her back down at 6 m/s² the whole time, so this is a fight, not an assignment.
-        b.boostHeat = Math.max(b.boostHeat || 0, 0.95);
+        if (own) b.boostHeat = Math.max(b.boostHeat || 0, 0.95);
         b.turboFlame = 1;
         const fx = Math.sin(b.heading), fz = Math.cos(b.heading);
         const cap = (b.spec.top || 40) * K.TURBO_TOP;
         const sp = Math.hypot(b.vel.x, b.vel.z);
-        if (sp < cap) {
+        if (own && sp < cap) {
           const add = Math.min(K.TURBO_ACC * dt, cap - sp);
           b.vel.x += fx * add; b.vel.z += fz * add;
         }
@@ -928,7 +1162,7 @@
         // …and the prop wash reads on the RECEIVING end: anybody you go past at this speed gets
         // shoved off their line by the water you just moved.
         for (const o of S.boats) {
-          if (o === b || o.finished) continue;
+          if (o === b || o.finished || !mine(o)) continue;
           const dx = o.pos.x - b.pos.x, dz = o.pos.z - b.pos.z;
           const d2 = dx * dx + dz * dz;
           if (d2 > 196 || d2 < 1e-4) continue;               // 14 m
@@ -942,27 +1176,29 @@
       if (s.shield > 0) {
         s.shield -= dt;
         // the shield eats one real impact as well as one item — that is what makes it worth holding
-        if ((b.bumpRecover || 0) > 0 && (b.crashTimer || 0) > 0.2) { b.bumpRecover = 0; consumeShield(b); }
+        if (own && (b.bumpRecover || 0) > 0 && (b.crashTimer || 0) > 0.2) { b.bumpRecover = 0; consumeShield(b); }
       }
       if (s.heavy > 0) {
         s.heavy -= dt;
-        if (s.heavy <= 0) b.mass = s.baseMass;
+        if (s.heavy <= 0) { if (own) b.mass = s.baseMass; }
         else {
           // the trade, honoured without touching physics.js: heavy runs 7% short of her top end
           const cap = (b.spec.top || 40) * K.HEAVY_TOP;
           const sp = Math.hypot(b.vel.x, b.vel.z);
-          if (sp > cap) {
+          if (own && sp > cap) {
             const k = Math.max(cap / sp, 1 - (6.0 * dt) / sp);
             b.vel.x *= k; b.vel.z *= k;
           }
-          bulldoze(b, dt);
+          bulldoze(b, dt);          // runs on every client; only owned VICTIMS are actually moved
         }
       }
       if (s.spin > 0) {
         s.spin -= dt;
-        b.angVel = s.spinDir * K.SPIN_W;
-        const k = Math.exp(-K.SPIN_DRAG * dt);
-        b.vel.x *= k; b.vel.z *= k;
+        if (own) {
+          b.angVel = s.spinDir * K.SPIN_W;
+          const k = Math.exp(-K.SPIN_DRAG * dt);
+          b.vel.x *= k; b.vel.z *= k;
+        }
         // a hull going round backwards throws water off the whole of one side
         if (RR.FX && RR.FX.spray && Math.random() < dt * 26) {
           const a = Math.random() * 6.283;
@@ -972,15 +1208,17 @@
       }
       if (s.blind > 0) {
         s.blind -= dt;
-        const k = Math.exp(-K.DYE_DRAG * dt);       // forty pounds of powder is thick water
-        b.vel.x *= k; b.vel.z *= k;
+        if (own) {
+          const k = Math.exp(-K.DYE_DRAG * dt);     // forty pounds of powder is thick water
+          b.vel.x *= k; b.vel.z *= k;
+        }
       }
       if (s.gulls > 0) {
         s.gulls -= dt;
         // Birds are not scenery: they cost you the top of the rev range, whoever you are.
         const cap = (b.spec.top || 40) * K.GULL_TOP;
         const sp = Math.hypot(b.vel.x, b.vel.z);
-        if (sp > cap) {
+        if (own && sp > cap) {
           const k = Math.max(cap / sp, 1 - (9.0 * dt) / sp);
           b.vel.x *= k; b.vel.z *= k;
         }
@@ -989,7 +1227,7 @@
       // enough — but gulls fighting for the helm is the whole reason the item is worth drawing, so
       // the player gets a real shove on the heading too, small enough to catch and correct.
       const w = (s.blind > 0 ? 0.95 : 0) + (s.gulls > 0 ? 0.85 : 0);
-      if (w > 0) {
+      if (own && w > 0) {
         const amp = b.isPlayer ? (s.gulls > 0 ? K.GULL_WHEEL : 0) : w;
         if (amp > 0) b.heading = U().wrapAngle(b.heading + Math.sin(t * 4.7 + s.seed) * amp * dt);
         if (!b.isPlayer) {
@@ -1011,26 +1249,30 @@
   function crushR(b) { return (b.radius || 3) * 9.0; }
   function bulldoze(b, dt) {
     const rr = crushR(b);
+    const heavyOwned = mine(b);
     for (const o of S.boats) {
       if (o === b || o.finished) continue;
       const dx = o.pos.x - b.pos.x, dz = o.pos.z - b.pos.z;
       const d2 = dx * dx + dz * dz;
       if (d2 > rr * rr || d2 < 1e-4) continue;
       const so = st(o);
+      const own = mine(o);                   // the hull being run over decides that it was
       if (so.slamCd > 0) {
         const d = Math.sqrt(d2);
-        o.vel.x += (dx / d) * 70 * dt; o.vel.z += (dz / d) * 70 * dt;
-        b.bumpRecover = 0;
+        if (own) { o.vel.x += (dx / d) * 70 * dt; o.vel.z += (dz / d) * 70 * dt; }
+        if (heavyOwned) b.bumpRecover = 0;
         continue;
       }
-      if (consumeShield(o, b)) { so.slamCd = K.SLAM_CD; continue; }
+      if (own && consumeShield(o, b)) { so.slamCd = K.SLAM_CD; continue; }
       const d = Math.sqrt(d2);
       const fx = Math.sin(b.heading), fz = Math.cos(b.heading);
-      o.vel.x += (dx / d) * K.SLAM_PUSH; o.vel.z += (dz / d) * K.SLAM_PUSH;
-      o.angVel += (dx * fz - dz * fx > 0 ? 1 : -1) * K.SLAM_SPIN;
-      o.bumpRecover = Math.max(o.bumpRecover || 0, 1.1);
-      so.slamCd = K.SLAM_CD;
-      b.bumpRecover = 0;                     // the heavy one is not rattled by the light one
+      if (own) {
+        o.vel.x += (dx / d) * K.SLAM_PUSH; o.vel.z += (dz / d) * K.SLAM_PUSH;
+        o.angVel += (dx * fz - dz * fx > 0 ? 1 : -1) * K.SLAM_SPIN;
+        o.bumpRecover = Math.max(o.bumpRecover || 0, 1.1);
+      }
+      so.slamCd = K.SLAM_CD;                 // the beat is spent on every screen, hit or witness
+      if (heavyOwned) b.bumpRecover = 0;     // the heavy one is not rattled by the light one
       popRing(o.pos.x, o.pos.y + 0.5, o.pos.z, 12, 0xffb03a);
       if (RR.FX && RR.FX.detonation) RR.FX.detonation(o.pos.x, o.pos.y + 0.3, o.pos.z, 0.85);
       land(o, b, 'RUN OVER BY DEEP DISH', 1.5, 0.66, 220);
@@ -1047,7 +1289,7 @@
       p.t -= dt; p.arm -= dt;
       if (p.t <= 0) { slicks.splice(i, 1); continue; }
       for (const b of S.boats) {
-        if (b.finished || b.remote) continue;
+        if (b.finished || !mine(b)) continue;    // your oil, but MY spin-out to declare
         if (b === p.owner && p.arm > 0) continue;
         const s = st(b);
         if (s.spin > 0) continue;
@@ -1056,6 +1298,7 @@
         if (consumeShield(b)) { p.t = 0; break; }
         s.spin = K.SPIN_T;
         s.spinDir = (b.visRoll || 0) >= 0 ? 1 : -1;
+        s.stamp = RR.Engine.time();
         p.t = Math.min(p.t, 0.35);           // a slick is spent on the boat that found it
         popRing(b.pos.x, 0.35, b.pos.z, 14, 0x7a5aa8);
         if (RR.FX && RR.FX.spray) {
@@ -1073,13 +1316,14 @@
       if (p.t <= 0) { dyes.splice(i, 1); continue; }
       p.r = U().lerp(K.DYE_R0, K.DYE_R1, Math.min(1, (1 - p.t / p.life) * 2.2));
       for (const b of S.boats) {
-        if (b.finished || b.remote) continue;
+        if (b.finished || !mine(b)) continue;
         if (b === p.owner && p.arm > 0) continue;
         if (U().dist2(b.pos.x, b.pos.z, p.x, p.z) > p.r * p.r) continue;
         const s = st(b);
         if (s.shield > 0) { consumeShield(b); continue; }
         if (s.blind <= 0) land(b, p.owner, 'BLINDED BY GREEN DYE', 0.45, 0.8, 200);
         s.blind = K.BLIND_T;
+        s.stamp = RR.Engine.time();
       }
       if (RR.FX && RR.FX.dyeBurst && Math.random() < dt * 14) {
         RR.FX.dyeBurst(p.x + (Math.random() - 0.5) * p.r, 0.6 + Math.random() * 2,
@@ -1119,7 +1363,7 @@
         p.reT = 0.25;
         let best = 1e9, pick = null;
         for (const b of S.boats) {
-          if (b === p.owner || b.finished || b.remote) continue;
+          if (b === p.owner || b.finished) continue;
           const gapM = (b.routeD || 0) - p.d;
           if (gapM > 1 && gapM < best) { best = gapM; pick = b; }
         }
@@ -1156,9 +1400,12 @@
           -p.hx * 10, 7.5, -p.hz * 10, Math.min(4, n), 3.2, 2.2, 3);   // the rooster tail on top
       }
 
+      // THE HIT IS THE VICTIM'S CALL. Everybody flies the same fish — same arc length, same speed —
+      // but only the client that owns a hull is allowed to say the fish found it, and it then tells
+      // the room so the projectile leaves the water everywhere at once.
       let hit = null;
       for (const b of S.boats) {
-        if (b.finished || b.remote) continue;
+        if (b.finished || !mine(b)) continue;
         if (b === p.owner && p.arm > 0) continue;
         const rr = K.TORP_R + b.radius;
         if (U().dist2(b.pos.x, b.pos.z, p.x, p.z) > rr * rr) continue;
@@ -1170,11 +1417,18 @@
         p.warned = true;
         chip(tgt, 'bad', 'TORPEDO INCOMING — ' + nameOf(p.owner), 1800);
       }
-      if (hit) { detonate(p, hit); torps.splice(i, 1); }
+      if (hit) {
+        // whether the shield ate it is decided here too, and travels with the claim — otherwise the
+        // shooter's screen would say HIT while the victim's said BLOCKED
+        const blocked = st(hit).shield > 0;
+        if (net()) send({ t: 'pht', k: 'tp', f: p.oid, n: p.seq, v: netIdOf(hit), b: blocked ? 1 : 0 });
+        detonate(p, hit, blocked);
+        torps.splice(i, 1);
+      }
     }
   }
 
-  function detonate(p, victim) {
+  function detonate(p, victim, blocked) {
     popRing(p.x, 0.4, p.z, 26, 0xff5a3a);
     popRing(p.x, 0.4, p.z, 16, 0xffd0a0);
     popWall(p.x, p.z, 24, 0xcfe8ff);
@@ -1183,20 +1437,23 @@
       if (RR.FX.burn) RR.FX.burn(p.x, 1.2, p.z, 0, 9, 0, victim ? 40 : 18, 12);
     }
     if (!victim) return;
+    // credit is owed on every screen, including the shooter's — who learns it from the victim
+    if (!blocked && p.owner && p.owner.isPlayer) {
+      chip(p.owner, 'item', 'TORPEDO HIT — ' + nameOf(victim), 1800);
+      if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.3);
+    }
+    if (!mine(victim)) return;               // somebody else's hull: their client moves it, not ours
     if (consumeShield(victim)) return;
     const s = st(victim);
     s.spin = K.SPIN_T * 1.3;
     s.spinDir = (victim.visRoll || 0) >= 0 ? 1 : -1;
+    s.stamp = RR.Engine.time();
     victim.vel.x *= K.TORP_SLOW; victim.vel.z *= K.TORP_SLOW;
     victim.vel.x += p.hx * 9; victim.vel.z += p.hz * 9;      // and a shove down the road with it
     victim.angVel += s.spinDir * 4.0;
     victim.bumpRecover = Math.max(victim.bumpRecover || 0, 1.6);
     land(victim, p.owner, 'TORPEDO HIT', 1.6, 0.5, 340);
     if (victim.isPlayer && RR.Audio && RR.Audio.thud) RR.Audio.thud(1.0);
-    if (p.owner && p.owner.isPlayer) {
-      chip(p.owner, 'item', 'TORPEDO HIT — ' + nameOf(victim), 1800);
-      if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.3);
-    }
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1488,11 +1745,18 @@
   // ---------------------------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------------------------
-  // Items are a RACE feature. The Architecture Tour is a ride, a time trial is a record against a
-  // ghost that never had them, and multiplayer has no authority to agree on who got shoved — those
-  // three run clean.
+  // Items are a RACE feature. The Architecture Tour is a ride and a time trial is a record against
+  // a ghost that never had them, so those two run clean. Multiplayer used to be on that list
+  // because nothing could agree on who got shoved; the host now can, so it races with items on.
+  //
+  // Which switch decides is the whole of rule 4: offline it is yours, online it is the HOST'S, and
+  // it is frozen at the flag so nobody can change the rules of a race already running.
+  function itemsOn() {
+    if (net()) { try { return !!RR.Net.items(); } catch (e) { return true; } }
+    return PU.enabled();
+  }
   function active() {
-    return !!(S && group && PU.enabled() && crates.length && !S.tour && !S.timeTrial && !S.mp);
+    return !!(S && group && itemsOn() && crates.length && !S.tour && !S.timeTrial);
   }
   PU.active = active;
 
@@ -1514,10 +1778,12 @@
   PU.buildForRace = function (state) {
     PU.clear();
     // A ride and a record run never get crates at all, so they do not even pay to build them.
-    // (Multiplayer is only known AFTER start() returns, so it is caught by active() instead and
-    // the built crates simply stay hidden.)
+    // Multiplayer DOES: placement is seeded from the course alone, so every client in the room
+    // lays out the identical rows without a single byte crossing the wire. Only availability is
+    // negotiated — that is what the host is for.
     if (!state || state.tour || state.timeTrial || !RR.Engine.scene) return;
     S = state;
+    netReset();
     drawRng = U().mulberry((((state.courseIdx | 0) * 2654435761) ^ 0x85EBCA6B) >>> 0);
     crates = planCrates(state);
     buildScene(crates.length);
@@ -1539,6 +1805,7 @@
     crates = []; slicks = []; dyes = []; rings = []; walls = []; torps = [];
     S = null; keyWas = false; lastFireT = -1e9;
     lastHit.label = ''; lastHit.from = ''; lastHit.t = -1e9;
+    netReset();
   };
 
   // race.js calls this once per frame with the live race state.
@@ -1629,6 +1896,74 @@
   PU.lastHit = function () {
     return { label: lastHit.label, from: lastHit.from, ago: RR.Engine.time() - lastHit.t };
   };
+  // ---------------------------------------------------------------------------------------------
+  // The two ends of the position feed. A boat's own client is the only authority on what is running
+  // on it, and net.js's 'pos' message is already that boat talking about itself — so the item state
+  // rides there rather than in messages of its own. It also self-heals: a lost grant or a lost fire
+  // is corrected within one 14 Hz tick instead of leaving a phantom item in a rival's slot forever.
+  // ---------------------------------------------------------------------------------------------
+  PU.netState = function (b) {
+    const s = b && b._pu;
+    if (!s || !active()) return null;
+    const u = {};
+    let n = 0;
+    if (s.shield > 0) { u.s = rd(s.shield); n++; }
+    if (s.heavy > 0) { u.hv = rd(s.heavy); n++; }
+    if (s.spin > 0) { u.sp = rd(s.spin); n++; }
+    if (s.blind > 0) { u.bl = rd(s.blind); n++; }
+    if (s.gulls > 0) { u.gl = rd(s.gulls); n++; }
+    if (s.turbo > 0) { u.tb = rd(s.turbo); n++; }
+    if (s.held) { u.hi = s.held.id; n++; }    // published through the spin: the roll is a HUD beat
+    return n ? u : null;                       // nothing running — and an absent u IS the all-clear
+  };
+
+  PU.applyNetState = function (b, u) {
+    if (!S || !group || !b) return;
+    const s = st(b);
+    // Anything this client changed on authority in the last breath outranks a packet that was
+    // already in the air when it happened — otherwise a grant flickers off and back on again.
+    const fresh = RR.Engine.time() - (s.stamp || -1e9) < HOLD_GRACE;
+    // rising edges are free per-victim FX: no message says "the birds got him", the feed does
+    if (u && u.gl > 0 && s.gulls <= 0) {
+      if (RR.FX && RR.FX.spray) RR.FX.spray(b.pos.x, b.pos.y + 3.4, b.pos.z, 0, 1.5, 0, 20, 7.0, 1.2, 3);
+      popRing(b.pos.x, b.pos.y + 0.5, b.pos.z, 8, 0xf2f6f8);
+    }
+    if (u && u.sp > 0 && s.spin <= 0) popRing(b.pos.x, 0.35, b.pos.z, 14, 0x7a5aa8);
+    // While fresh, a report may only RAISE a timer. A fire message and a position packet cross in
+    // the air constantly — 70 ms of feed is always describing a boat as it was before the shot —
+    // and letting the older one win is how a SHIELD or a DEEP DISH blinks out on the frame it lit.
+    s.shield = pick(s.shield, u && u.s > 0 ? u.s : 0, fresh);
+    s.heavy = pick(s.heavy, u && u.hv > 0 ? u.hv : 0, fresh);
+    s.spin = pick(s.spin, u && u.sp > 0 ? u.sp : 0, fresh);
+    s.blind = pick(s.blind, u && u.bl > 0 ? u.bl : 0, fresh);
+    s.gulls = pick(s.gulls, u && u.gl > 0 ? u.gl : 0, fresh);
+    s.turbo = pick(s.turbo, u && u.tb > 0 ? u.tb : 0, fresh);
+    b.turboFlame = s.turbo > 0 ? 1 : 0;
+    if (!fresh) { s.held = u && u.hi ? PU.byId(u.hi) : null; s.roll = 0; }
+  };
+  function pick(cur, rep, fresh) { return fresh && cur > rep ? cur : rep; }
+
+  // Everything the network side is doing, for the two-client harness and for a bug report from a
+  // real race: who is host, what the room agreed, which crates are down, who holds what, and the
+  // last eighty protocol lines in and out.
+  PU.netDebug = function () {
+    if (!S) return null;
+    return {
+      online: net(), self: myId(), host: net() ? RR.Net.hostId() : null, isHost: isHost(),
+      items: itemsOn(), active: active(), phase: S.phase,
+      crates: crates.length,
+      taken: crates.reduce((n, c) => n + (c.taken ? 1 : 0), 0),
+      held: S.boats.map((b) => ({ id: netIdOf(b), name: nameOf(b), self: b === S.player,
+        item: b._pu && b._pu.held ? b._pu.held.id : null,
+        shield: b._pu ? +(b._pu.shield || 0).toFixed(1) : 0,
+        spin: b._pu ? +(b._pu.spin || 0).toFixed(1) : 0,
+        gulls: b._pu ? +(b._pu.gulls || 0).toFixed(1) : 0,
+        heavy: b._pu ? +(b._pu.heavy || 0).toFixed(1) : 0 })),
+      torps: torps.map((p) => ({ oid: p.oid, seq: p.seq, d: Math.round(p.d) })),
+      log: netLog.slice(),
+    };
+  };
+
   PU.debug = function () {
     return {
       enabled: PU.enabled(), active: active(),
