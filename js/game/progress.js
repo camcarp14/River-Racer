@@ -182,7 +182,9 @@
   };
 
   // ---------- the opening ----------
-  // THE FIRST BRIDGE runs once and thereafter lives in the menu. W7 reads and sets this.
+  // The scripted cold open was removed; nothing calls these any more. They stay only because
+  // `seenOpening` is already written into saved profiles, and changing the save-record shape to
+  // delete one dead boolean is a worse trade than leaving it.
   P.seenOpening = function () { return !!load().seenOpening; };
   P.setSeenOpening = function (v) { return P.set('seenOpening', v !== false); };
 

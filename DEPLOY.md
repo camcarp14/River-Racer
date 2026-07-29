@@ -20,7 +20,7 @@ You're deploying a plain static site (no build step, no backend). Any of these w
 
 ### Option A — Cloudflare Pages (recommended, from your GitHub repo)
 1. Go to <https://dash.cloudflare.com> → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**.
-2. Pick this repository and the `claude/river-racer-game-aouxv8` branch.
+2. Pick this repository and the `claude/river-racer-enhancement-stvbxs` branch.
 3. Build settings: **Framework preset = None**, **Build command = (leave blank)**, **Build output directory = `/`**.
 4. **Save and Deploy.** You get a URL like `https://river-racer.pages.dev`.
 
@@ -29,7 +29,7 @@ You're deploying a plain static site (no build step, no backend). Any of these w
 2. Go to <https://app.netlify.com/drop> and drag the folder in. You get a URL instantly.
 
 ### Option C — GitHub Pages
-1. Repo → **Settings → Pages** → Source = **Deploy from a branch** → branch `claude/river-racer-game-aouxv8`, folder `/ (root)` → **Save**.
+1. Repo → **Settings → Pages** → Source = **Deploy from a branch** → branch `claude/river-racer-enhancement-stvbxs`, folder `/ (root)` → **Save**.
 2. Your URL is `https://<you>.github.io/<repo>/`.
 
 > After deploying, open the URL and confirm the game loads and you see a **▸ PLAY ONLINE**

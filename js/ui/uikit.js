@@ -131,54 +131,163 @@
 /* ========================================================== THE ITEM SLOT ====*/
 /* Items are the answer to "so it's not just whoever gets out first", so what you are holding has
    to be readable at eighty miles an hour in the corner of the eye — the same lesson the boost
-   meter taught when it was a six-pixel hairline. It takes the bottom centre, and it is built out
-   of the same municipal parts as everything else: a squared plate, a street blade under it. */
-#item-slot{position:absolute;left:50%;bottom:1.15em;transform:translateX(-50%);text-align:center;
-  white-space:nowrap;opacity:0;transition:opacity var(--t-std) var(--e-out);--item:#7EC8E3}
+   meter taught when it was a six-pixel hairline.
+   The old slot was a flat square with a glyph in it, and it failed three ways at once: an empty
+   one and a full one looked identical, nothing showed the spin stopping, and it never said which
+   key fires the thing it was holding. This is a SOCKET instead — header rail, recessed well with
+   corner brackets, key rail across the foot — and the three states differ in frame colour, well
+   glow, icon and words simultaneously, so peripheral vision gets four chances to read it.
+   Same municipal parts as everything else: squared corners, 2 px rules, a street blade under it. */
+#item-slot{position:absolute;left:50%;bottom:1.0em;transform:translateX(-50%);text-align:center;
+  white-space:nowrap;opacity:0;transition:opacity var(--t-std) var(--e-out);
+  --item:#7EC8E3;--edge:rgba(159,195,214,.28)}
 #item-slot.on{opacity:1}
-#item-lab{font:700 .68em/1 var(--f-ui);letter-spacing:.40em;text-indent:.40em;color:var(--chi-blue);
-  text-shadow:0 1px 2px #000,0 0 .45em #000,0 0 1em rgba(0,0,0,.95);margin-bottom:.4em}
-#item-box{position:relative;width:6.1em;height:6.1em;margin:0 auto;border-radius:3px;
-  background:var(--panel-hi);box-shadow:inset 0 0 0 2px var(--rule-soft),0 .25em 1.5em rgba(0,0,0,.55);
+/* the brackets take the item's own colour the moment there is an item; empty they are grey wire */
+#item-slot.held,#item-slot.roll{--edge:var(--item)}
+
+#item-box{position:relative;width:7.2em;height:8.2em;margin:0 auto;border-radius:3px;
+  background:linear-gradient(180deg,rgba(14,50,70,.94),rgba(4,18,27,.94));
+  box-shadow:inset 0 0 0 2px var(--rule-soft),inset 0 1px 0 rgba(255,255,255,.13),
+    0 .3em 1.5em rgba(0,0,0,.62);
   transition:box-shadow var(--t-std) var(--e-out)}
-/* the same 6 % light band the position plate carries, so the two plates read as one system */
-#item-box::before{content:"";position:absolute;inset:0;pointer-events:none;border-radius:3px;
-  background:linear-gradient(180deg,rgba(126,200,227,.14) 0 6%,transparent 6%)}
-#item-icon{position:absolute;left:9%;top:9%;width:82%;height:82%}
-#item-slot.held #item-box{box-shadow:inset 0 0 0 2px var(--item),0 0 1.5em rgba(0,0,0,.6)}
-/* the spin: 0.85 s of a slot machine, and the plate strobes with it */
-#item-slot.roll #item-box{animation:itemroll 150ms steps(1) infinite}
-@keyframes itemroll{0%{box-shadow:inset 0 0 0 2px var(--gold),0 0 1.2em rgba(255,200,87,.55)}
-                    50%{box-shadow:inset 0 0 0 2px #fff,0 0 1.6em rgba(255,255,255,.5)}}
-#item-key{position:absolute;right:-.36em;bottom:-.36em;padding:.3em .52em;border-radius:2px;
-  background:var(--gold);color:var(--ink-900);font:700 .66em/1 var(--f-ui);letter-spacing:.14em;
-  opacity:0;transition:opacity var(--t-micro) linear}
-#item-slot.held #item-key{opacity:1;animation:itemkey 1.05s ease-in-out infinite}
+#item-slot.held #item-box{box-shadow:inset 0 0 0 2px var(--item),inset 0 1px 0 rgba(255,255,255,.16),
+  0 .3em 1.5em rgba(0,0,0,.62),0 0 1.5em -.25em var(--item)}
+
+/* Rail heights are percentages of the BOX, never ems: both rails set their own font-size, and an
+   em height on those would resolve against that instead. Same trap the timer offsets document. */
+#item-head{position:absolute;left:0;right:0;top:0;height:16.5%;display:flex;align-items:center;
+  justify-content:center;border-radius:3px 3px 0 0;background:rgba(126,200,227,.13);
+  box-shadow:inset 0 -1px 0 var(--rule-soft);
+  font:700 .56em/1 var(--f-ui);letter-spacing:.36em;text-indent:.36em;color:var(--chi-blue)}
+#item-well{position:absolute;left:5.3%;right:5.3%;top:18.4%;bottom:22.6%;overflow:hidden;
+  border-radius:2px;box-shadow:inset 0 .14em .5em rgba(0,0,0,.78),inset 0 0 0 1px rgba(255,255,255,.05);
+  background:radial-gradient(ellipse at 50% 34%,rgba(126,200,227,.06),rgba(2,10,16,.55) 72%)}
+/* four corner brackets, drawn as eight one-shot gradients so the well reads as something that
+   HOLDS a thing rather than a swatch of dark paint */
+#item-well::before,#item-well::after{content:"";position:absolute;inset:.2em;pointer-events:none}
+#item-well::before{background:
+  linear-gradient(var(--edge),var(--edge)) 0 0/.62em 2px no-repeat,
+  linear-gradient(var(--edge),var(--edge)) 0 0/2px .62em no-repeat,
+  linear-gradient(var(--edge),var(--edge)) 100% 0/.62em 2px no-repeat,
+  linear-gradient(var(--edge),var(--edge)) 100% 0/2px .62em no-repeat}
+#item-well::after{background:
+  linear-gradient(var(--edge),var(--edge)) 0 100%/.62em 2px no-repeat,
+  linear-gradient(var(--edge),var(--edge)) 0 100%/2px .62em no-repeat,
+  linear-gradient(var(--edge),var(--edge)) 100% 100%/.62em 2px no-repeat,
+  linear-gradient(var(--edge),var(--edge)) 100% 100%/2px .62em no-repeat}
+#item-glow{position:absolute;inset:0;pointer-events:none;opacity:0;
+  background:radial-gradient(circle at 50% 50%,var(--item),transparent 64%);
+  transition:opacity var(--t-std) var(--e-out)}
+#item-slot.held #item-glow{opacity:.24}
+#item-slot.roll #item-glow{opacity:.15}
+#item-icon{position:absolute;left:50%;top:50%;height:84%;width:auto;transform:translate(-50%,-50%)}
+#item-slot.empty #item-icon{opacity:.62}
+#item-ring{position:absolute;left:50%;top:50%;width:3.4em;height:3.4em;border-radius:50%;
+  border:3px solid var(--item);pointer-events:none;opacity:0;
+  transform:translate(-50%,-50%) scale(.25)}
+
+/* the foot rail is where the fire key lives, because "how do I use this" is a question about the
+   thing in the box and the answer belongs ON the box */
+#item-foot{position:absolute;left:0;right:0;bottom:0;height:20.7%;display:flex;align-items:center;
+  justify-content:center;gap:.5em;border-radius:0 0 3px 3px;background:rgba(0,0,0,.34);
+  box-shadow:inset 0 1px 0 var(--rule-soft);
+  font:700 .60em/1 var(--f-ui);letter-spacing:.26em;text-indent:.26em;color:var(--text-mute)}
+#item-slot.held #item-foot{background:rgba(255,200,87,.10);color:var(--gold)}
+#item-slot.roll #item-foot::after{content:"\\2022 \\2022 \\2022";letter-spacing:.14em;color:var(--chi-blue)}
+#item-key{display:none;padding:.30em .48em;border-radius:2px;background:var(--gold);
+  color:var(--ink-900);font:700 1em/1 var(--f-ui);letter-spacing:.06em;text-indent:0}
+#item-slot.held #item-key{display:inline-block;animation:itemkey 1.05s ease-in-out infinite}
 @keyframes itemkey{50%{box-shadow:0 0 .85em rgba(255,200,87,.95)}}
+
+/* the spin: 0.85 s of a slot machine. The plate strobes, and the icon SCROLLS through the well
+   with the faces changing under it — a face swap on a stationary icon reads as a glitch. */
+#item-slot.roll #item-box{animation:itemroll 150ms steps(1) infinite}
+@keyframes itemroll{
+  0%{box-shadow:inset 0 0 0 2px var(--gold),inset 0 1px 0 rgba(255,255,255,.16),0 0 1.4em rgba(255,200,87,.55)}
+  50%{box-shadow:inset 0 0 0 2px #fff,inset 0 1px 0 rgba(255,255,255,.16),0 0 1.7em rgba(255,255,255,.5)}}
+#item-slot.roll #item-icon{animation:itemreel 143ms linear infinite}
+@keyframes itemreel{0%{transform:translate(-50%,-80%);opacity:.5}
+                    55%{transform:translate(-50%,-50%);opacity:1}
+                    100%{transform:translate(-50%,-28%);opacity:.5}}
+/* the LOCK — the one moment a pickup is allowed to be loud */
+#item-slot.lock #item-box{animation:itemlock 620ms var(--e-out)}
+@keyframes itemlock{0%{transform:scale(1.14)}42%{transform:scale(.98)}100%{transform:scale(1)}}
+#item-slot.lock #item-ring{animation:itemring 520ms var(--e-out)}
+@keyframes itemring{0%{transform:translate(-50%,-50%) scale(.25);opacity:1}
+                    100%{transform:translate(-50%,-50%) scale(2.5);opacity:0}}
+#item-slot.lock #item-name{animation:bladepop 420ms var(--e-pop)}
+@keyframes bladepop{0%{transform:scale(.8)}60%{transform:scale(1.05)}100%{transform:scale(1)}}
+/* and the FIRE — the well blows out white, so an emptied slot is an event and not an absence */
+#item-slot.fired #item-glow{animation:itemfire 340ms var(--e-out)}
+@keyframes itemfire{0%{opacity:.85}100%{opacity:0}}
+
 /* the name rides a street blade — the same green, and the same white inset rule, as every
-   Chicago corner sign and as the lap line in the opposite corner */
-#item-name{margin-top:.44em;display:inline-block;padding:.42em .82em;border-radius:2px;
-  font:700 .74em/1 var(--f-ui);letter-spacing:.18em;color:#fff;background:var(--sign-green);
-  box-shadow:inset 0 0 0 2px #fff,0 .18em .8em rgba(0,0,0,.5)}
-#item-slot.empty #item-name{background:var(--panel);color:var(--text-mute);
-  box-shadow:inset 0 0 0 2px var(--rule-soft)}
+   Chicago corner sign and as the lap line in the opposite corner. box-sizing + min-width keeps a
+   one-word item ("TURBO") exactly as wide as the socket above it instead of shrink-wrapping. */
+#item-name{margin-top:.55em;display:inline-block;box-sizing:border-box;min-width:9.72em;
+  padding:.42em .82em;border-radius:2px;
+  font:700 .74em/1 var(--f-ui);letter-spacing:.18em;text-indent:.18em;color:#fff;
+  background:var(--sign-green);box-shadow:inset 0 0 0 2px #fff,0 .18em .8em rgba(0,0,0,.5);
+  transition:background var(--t-micro) linear,color var(--t-micro) linear}
+#item-slot.empty #item-name{background:var(--panel-hi);color:var(--text-dim);
+  box-shadow:inset 0 0 0 2px var(--rule-soft),0 .18em .8em rgba(0,0,0,.5)}
+#item-slot.roll #item-name{background:var(--ink-700);color:var(--gold);
+  box-shadow:inset 0 0 0 2px var(--gold),0 .18em .8em rgba(0,0,0,.5)}
+/* one plain line of what the thing does, for the first few seconds after it locks — long enough
+   to read once, gone before it becomes furniture. It sits over open water, so it carries its own
+   plate: dim text on a sunlit river is not text. :empty drops the plate rather than leaving a
+   grey tab hanging under the blade with nothing in it. */
+/* display:table, not inline-block: #item-name is inline-block and #item-slot is nowrap, so an
+   inline-block sub line lands on the SAME LINE as the blade. table shrink-wraps like inline-block
+   but is block-level, and margin:auto centres it. */
+#item-sub{display:table;margin:.45em auto 0;min-height:1.25em;padding:.3em .7em;border-radius:2px;
+  background:var(--panel-hi);box-shadow:inset 0 0 0 1px var(--rule-soft);
+  font:700 .62em/1.25 var(--f-ui);letter-spacing:.14em;color:var(--text);
+  text-shadow:0 1px 3px rgba(0,0,0,.9)}
+#item-sub:empty{background:none;box-shadow:none;padding:.3em 0}
 /* what is running on you right now, and how much of it is left */
-#item-pips{display:flex;justify-content:center;gap:.3em;margin-top:.42em;min-height:1.75em}
+#item-pips{display:flex;justify-content:center;gap:.3em;margin-top:.38em;min-height:1.35em}
 .pip{display:none;padding:.32em .5em .28em;border-radius:2px;background:var(--panel-hi);
   box-shadow:inset 0 0 0 1px currentColor;font:700 .58em/1 var(--f-ui);letter-spacing:.14em}
 .pip.on{display:block}
 .pip i{display:block;height:2px;margin-top:.36em;background:currentColor;width:100%}
-.pip[data-k=shield]{color:var(--chi-blue)} .pip[data-k=heavy]{color:#FFB03A}
-.pip[data-k=spin]{color:var(--chi-red)}    .pip[data-k=blind]{color:#2ECC71}
-.pip[data-k=gulls]{color:#F2F6F8}          .pip[data-k=gale]{color:#BFE6FF}
+.pip[data-k=turbo]{color:#25FF7A}          .pip[data-k=shield]{color:var(--chi-blue)}
+.pip[data-k=heavy]{color:#FFB03A}          .pip[data-k=spin]{color:var(--chi-red)}
+.pip[data-k=blind]{color:#2ECC71}          .pip[data-k=gulls]{color:#F2F6F8}
+@media (prefers-reduced-motion:reduce){
+  #item-slot.roll #item-box,#item-slot.roll #item-icon,#item-slot.held #item-key,
+  #item-slot.lock #item-box,#item-slot.lock #item-ring,#item-slot.lock #item-name{animation:none}}
+
+/* -------------------------------------------------- the incoming-torpedo call */
+/* The torpedo runs up the river from astern, where the player has nothing to look at, and it is
+   the one item that reaches the leader from last place. This is the only warning there is, and it
+   counts down — which turns "should I spend the shield" into a decision with a clock on it.
+   The offsets are pre-divided by this element's own .74em type, per the em trap noted above. */
+#incoming{position:absolute;right:2.196em;bottom:23.51em;display:flex;align-items:center;gap:.6em;
+  padding:.5em .85em;border-radius:2px;background:var(--chi-red);color:#fff;pointer-events:none;
+  font:700 .74em/1 var(--f-ui);letter-spacing:.18em;white-space:nowrap;
+  box-shadow:inset 0 0 0 2px #fff,0 .25em 1.2em rgba(239,51,64,.5);
+  opacity:0;transform:translateX(1.2em);
+  transition:opacity var(--t-std) var(--e-out),transform var(--t-std) var(--e-out)}
+#incoming.on{opacity:1;transform:none}
+#incoming .star6{width:.8em;height:.8em;background:currentColor;flex:0 0 auto}
+#incoming b{font-family:var(--f-num);font-variant-numeric:tabular-nums;letter-spacing:.02em}
+#incoming b::after{content:"s"}
+#incoming.near{animation:incbeat .38s steps(1) infinite}
+@keyframes incbeat{50%{background:#fff;color:var(--chi-red);
+  box-shadow:inset 0 0 0 2px var(--chi-red),0 .25em 1.2em rgba(239,51,64,.5)}}
+@media (prefers-reduced-motion:reduce){#incoming.near{animation:none}}
 
 /* The callout. Three registers, because the player is asking three different questions: gold =
-   you did that, flag red = that was done to you, flag blue = the fender ate it. Solid plate and
+   you did that, flag red = that was done to you, flag blue = the shield ate it. Solid plate and
    ink text, never coloured text on the water — that is unreadable over sunlit limestone. */
-/* 6.7em of THIS element's 2.05em type = 13.7em of the HUD's, which clears the slot below it.
-   The em trap again: an offset on an element that sets its own font-size resolves against that. */
-#item-call{position:absolute;left:50%;bottom:6.7em;transform:translateX(-50%);opacity:0;
+/* 7.2em of THIS element's 2.05em type = 14.76em of the HUD's, which clears the taller socket
+   below it. The em trap again: an offset on an element that sets its own font-size resolves
+   against that. Slot stack, in HUD ems: 1.0 bottom + 1.73 pips + 1.06 sub + 1.85 blade + 8.2 box
+   = 13.84, so the plate sits just under an em clear of the top of the socket. */
+#item-call{position:absolute;left:50%;bottom:7.2em;transform:translateX(-50%);opacity:0;
   padding:.2em .64em;border-radius:2px;white-space:nowrap;
+  max-width:44vw;overflow:hidden;text-overflow:ellipsis;
   font:400 2.05em/1 var(--f-display);letter-spacing:.05em;
   color:var(--ink-900);background:var(--gold);
   box-shadow:inset 0 0 0 2px rgba(255,255,255,.85),0 .3em 1.6em rgba(0,0,0,.55)}
@@ -322,8 +431,8 @@
     linear-gradient(180deg,transparent 0 16.6%,rgba(126,200,227,.13) 16.6% 33.3%,
     transparent 33.3% 66.6%,rgba(126,200,227,.13) 66.6% 83.3%,transparent 83.3%)}
 #menu.title-screen{padding:1.5vh 0}
-/* Eight rows is the worst case — CONTINUE at the top, THE FIRST BRIDGE at the bottom — and the
-   whole screen has to survive a 1280x720 window, so the title scales off the SHORT axis too. */
+/* The list grows and shrinks with what the save file has unlocked, and the whole screen has to
+   survive a 1280x720 window at its longest, so the title scales off the SHORT axis too. */
 #menu.title-screen{font-size:clamp(10.5px,min(1.05vw,1.82vh),16px)}
 #menu.title-screen #title{font:400 clamp(40px,min(7.2vw,10.2vh),104px)/.90 var(--f-display)}
 #menu.title-screen .stars{margin-bottom:1.0vh}

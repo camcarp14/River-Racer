@@ -20,6 +20,11 @@
   R.sillX = 2015;
   R.sillZ = -62;
 
+  // The lock corridor: navigable half-width and wall half-thickness at station s, metres along
+  // the chamber axis from the lock point. Built in init() from the SAME numbers lake.js builds
+  // the concrete from, so the water and the walls can never disagree. See R.lockClear.
+  R.lock = null;
+
   R.init = function () {
     const C = window.CHICAGO;
     for (const key in C.paths) {
@@ -36,6 +41,68 @@
     const lq = U().pathNearest(R.paths.main, lk.x, lk.z);
     R.sillX = lk.x + lq.tx * (lk.len - 60);
     R.sillZ = lk.z + lq.tz * (lk.len - 60);
+
+    // ---- Chicago Harbor Lock: the one pinch on the course that no other query can see ----
+    // lake.js lays the chamber walls 8 m thick on ±(w/2 + 4) and flares a 3.2 m guide wall out to
+    // ±(w/2 + 11) sixty metres past each sill. Mirror that here as [station, half-width, wall
+    // half-thickness]: half-width is the concrete face, and the half-thickness is how far past it
+    // this corridor is allowed to reach. Beyond that a hull is behind the wall rather than through
+    // it, and pulling it back into the chamber would be the very teleport this exists to stop —
+    // out there the wall capsules lake.js registers eject it the other way.
+    const CH0 = -60, CH1 = -60 + lk.len;             // the two gate sills, in chamber stations
+    const HW = lk.w / 2;                             // 12.2 m: the real 80 ft clear width
+    const ROOT = HW + 4 - 1.6, TIP = HW + 11 - 1.6;  // guide-wall inner face at root and tip
+    R.lock = {
+      x: lk.x, z: lk.z, tx: lq.tx, tz: lq.tz, px: -lq.tz, pz: lq.tx,
+      prof: [
+        [CH0 - 110, 40, 0],       // open water — never tighter than the channel already is
+        [CH0 - 80, TIP, 1.6],     // west guide-wall tip, flaring in to its root…
+        [CH0 - 26, ROOT, 1.6],
+        [CH0 - 20, HW, 4],        // …and the last 6 m steps onto the chamber face, which really
+        [CH1 + 20, HW, 4],        // does stand 2.4 m proud of the guide wall behind it.
+        [CH1 + 26, ROOT, 1.6],
+        [CH1 + 80, TIP, 1.6],
+        [CH1 + 110, 40, 0],
+      ],
+    };
+
+    // The baked lakeGuide leaves the lock through the north chamber wall. Its first two control
+    // points run 5.9° north of the chamber axis, so by the east sill the centreline — the line the
+    // AI steers and the line the route is measured along — is 11.7 m off the axis in a chamber
+    // that is 12.2 m to the wall, and 17 m off it (three metres inside concrete) by the far end.
+    // chicago.js is generated and frozen, so re-anchor the approach here: down the axis to the
+    // east sill, out to the guide-wall tips, then back onto the surveyed lake track.
+    const L = R.lock, at = (s, o) => [L.x + L.tx * s + L.px * (o || 0), L.z + L.tz * s + L.pz * (o || 0)];
+    const sill = at(CH1), tip = at(CH1 + 80);
+    R.paths.lakeGuide = U().resamplePath([
+      [lk.x, lk.z, HW], [sill[0], sill[1], HW], [tip[0], tip[1], TIP],
+      ...C.paths.lakeGuide.slice(2),
+    ], 8);
+    R.paths.lakeGuide.name = 'lakeGuide';
+  };
+
+  // Signed clearance to the lock corridor at (x,z), or null when the point is nowhere near it.
+  // Writes the push normal into `out` (which the caller owns).
+  R.lockClear = function (x, z, out) {
+    const L = R.lock;
+    if (!L) return null;
+    const dx = x - L.x, dz = z - L.z;
+    const s = dx * L.tx + dz * L.tz;
+    const p = L.prof;
+    if (s <= p[0][0] || s >= p[p.length - 1][0]) return null;
+    let i = 1;
+    while (i < p.length - 1 && s > p[i][0]) i++;
+    const f = (s - p[i - 1][0]) / (p[i][0] - p[i - 1][0]);
+    const guard = U().lerp(p[i - 1][2], p[i][2], f);
+    if (guard <= 0) return null;
+    const o = dx * L.px + dz * L.pz;
+    const clear = U().lerp(p[i - 1][1], p[i][1], f) - Math.abs(o);
+    if (clear < -guard) return null;                 // behind the wall, not through it
+    if (out) {
+      const sgn = o >= 0 ? -1 : 1;                   // normal points back down the chamber
+      out.nx = L.px * sgn; out.nz = L.pz * sgn;
+    }
+    return clear;
   };
 
   // Is (x,z) in the open lake basin?
@@ -45,7 +112,7 @@
 
   // Signed clearance to navigable water: positive = inside water, negative = on land.
   // Also returns push normal toward water. Checks all channels + lake basin.
-  const tmp = {};
+  const tmp = {}, lockN = { nx: 0, nz: 0 };
   R.waterQuery = function (x, z, hintObj) {
     let best = null;
     for (const key in R.paths) {
@@ -70,6 +137,16 @@
         tmp.nx = (m === dW) ? 1 : (m === dE) ? -1 : 0;
         tmp.nz = (m === dN) ? 1 : (m === dS) ? -1 : 0;
       }
+    }
+    // Every query above answers "how much room is there" by taking the WIDEST channel under the
+    // hull, which is the right answer everywhere except inside a lock: the chamber is 24.4 m of
+    // concrete box standing in a basin the lake query calls ninety metres wide, and the lakeGuide
+    // tube laid over it is wider still. Here the TIGHTEST constraint has to win, or the walls are
+    // scenery — which is exactly what they were.
+    const lc = R.lockClear(x, z, lockN);
+    if (lc !== null && (!best || lc < best.clear)) {
+      best = tmp; tmp.clear = lc; tmp.path = 'lock'; tmp.q = null;   // a chamber has no current
+      tmp.nx = lockN.nx; tmp.nz = lockN.nz;
     }
     return best;
   };

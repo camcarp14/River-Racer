@@ -47,11 +47,11 @@
     ['DYEING THE WATER GREEN…', () => { RR.HUD.init(); RR.Minimap.init(); }],
   ];
 
-  // THE COLD OPEN, first move: the load is a boat ride. The render loop and the menu flythrough
-  // start as soon as there is a river and a sky to fly over — three steps in — so the last two
-  // thirds of the build happen behind a live shot of Chicago assembling itself, with the progress
-  // bar reduced to a hairline along the bottom of it. Before that the veil holds, because an empty
-  // blue void is not a boat ride.
+  // The load is a boat ride. The render loop and the menu flythrough start as soon as there is a
+  // river and a sky to fly over — three steps in — so the last two thirds of the build happen
+  // behind a live shot of Chicago assembling itself, with the progress bar reduced to a hairline
+  // along the bottom of it. Before that the veil holds, because an empty blue void is not a boat
+  // ride.
   const RIDE_AT = 3;                        // river + sky/water + city are up
   function startRide() {
     if (booted !== 1) return;
@@ -118,41 +118,7 @@
     const load = $('loading');
     if (load) { load.classList.add('gone'); setTimeout(() => { load.style.display = 'none'; }, 500); }
     mode = 'menu';
-
-    // THE FIRST BRIDGE. opening.js drives itself, but the two things it cannot do for itself —
-    // start a race and get back to the title — belong to this file, so they are handed over once.
-    if (RR.Opening && RR.Opening.attach) {
-      RR.Opening.attach({
-        startRace: () => startRace(0, 0, false, null, false, false, true),
-        toMenu: () => { quitToTitle(); if (RR.Menus.showTitle) RR.Menus.showTitle(); },
-      });
-      if (RR.Opening.shouldRun && RR.Opening.shouldRun()) {
-        RR.Menus.hide();
-        if (RR.Audio.setMusic) RR.Audio.setMusic(false);
-        RR.Opening.start();
-      }
-    }
     window.RRTest.ready = true;
-  }
-
-  // ---------- the attract loop ----------
-  // Twenty seconds of nothing on the title screen and the AI takes THE FIRST BRIDGE out for a run.
-  // It is the cold open with the prompts off and a pilot at the wheel, so it costs one timer.
-  const ATTRACT_S = 20;
-  let idleT = 0;
-  function pokeIdle() { idleT = 0; }
-  window.addEventListener('keydown', pokeIdle);
-  window.addEventListener('pointerdown', pokeIdle);
-  window.addEventListener('pointermove', pokeIdle);
-  function attractTick(dt) {
-    if (mode !== 'menu' || !RR.Menus.screen || RR.Menus.screen() !== 'title') { idleT = 0; return; }
-    if (!RR.Opening || !RR.Opening.start || !RR.Opening.shouldRun || RR.Opening.active()) { idleT = 0; return; }
-    idleT += dt;
-    if (idleT < ATTRACT_S) return;
-    idleT = 0;
-    RR.Menus.hide();
-    if (RR.Audio.setMusic) RR.Audio.setMusic(false);
-    RR.Opening.start({ attract: true });
   }
 
   // ---------- multiplayer wiring (dormant unless a room is joined) ----------
@@ -269,12 +235,12 @@
     const crew = player.mesh.userData.crew;
     if (crew && crew.skipper) crew.skipper.visible = !on;
     if (RR.HUD.flash) RR.HUD.flash(on ? 'YOU HAVE THE WHEEL' : 'THE SKIPPER HAS THE WHEEL');
-    if (RR.HUD.chip) RR.HUD.chip('near', on ? 'ALL THIRTY METRES OF HER — W/S/A/D' : 'DOCENT TOUR RESUMED', 3000);
+    if (RR.HUD.chip) RR.HUD.chip('near', on ? 'YOU ARE STEERING — W A S D' : 'THE SKIPPER IS STEERING AGAIN', 3000);
     // Steering her yourself is the whole point of the secret, so that is what unlocks her. From
     // here on she is in the ride picker — announced on a chip of her own, since flash() shows
     // one line at a time and that line belongs to the handover.
     if (on && RR.Boats.unlock && RR.Boats.unlock('tourboat') && RR.HUD.chip) {
-      RR.HUD.chip('gold', 'WACKER BELLE UNLOCKED · SHE IS IN THE RIDE PICKER NOW', 8000);
+      RR.HUD.chip('gold', 'WACKER BELLE UNLOCKED · PICK HER IN THE RIDE LIST', 8000);
     }
     RR.Audio.airhorn();
     RR.Camera.kick(0.3);
@@ -282,10 +248,7 @@
   }
 
   // roster (multiplayer) = [{id, name, boatIdx, isSelf}] sorted identically on every client
-  function startRace(courseIdx, vehicleIdx, timeTrial, roster, tourMode, cupRound, opening) {
-    // A real race replacing the cold open must not bounce the player back to the title; the
-    // opening lets go quietly and this race owns the screen from here.
-    if (!opening && RR.Opening && RR.Opening.abort) RR.Opening.abort();
+  function startRace(courseIdx, vehicleIdx, timeTrial, roster, tourMode, cupRound) {
     clearBoats();
     if (RR.HUD.resetSession) RR.HUD.resetSession();
     if (RR.Feel && RR.Feel.cancelFinale) RR.Feel.cancelFinale();   // a finish beat must not open over a new race
@@ -309,7 +272,7 @@
       }
       player = boats.find((b) => b.isPlayer) || boats[0];
     } else {
-      const N = (timeTrial || tourMode || opening) ? 1 : 6;
+      const N = (timeTrial || tourMode) ? 1 : 6;
       // one-design racing: every rival runs the SAME hull as you (fair fight, pure skill),
       // each in its own livery so you can tell the field apart at speed
       const LIVERY = [0xd8dce0, 0x2f8f4f, 0x8a2fb0, 0xe07820, 0x16303f];
@@ -331,11 +294,8 @@
       player = boats[0];
     }
 
-    // THE FIRST BRIDGE is not a mode: it is this race with the rivals off, the ghost off and the
-    // countdown skipped, because the boat has to be moving the instant the player touches a key.
-    raceState = RR.Race.start(courseIdx, boats, player, { timeTrial: opening ? false : !!timeTrial, tour: !!tourMode });
+    raceState = RR.Race.start(courseIdx, boats, player, { timeTrial: !!timeTrial, tour: !!tourMode });
     raceState.mp = mp;
-    if (opening) { raceState.opening = true; raceState.phase = 'racing'; }
 
     pilots = [];
     docent = null;
@@ -371,7 +331,7 @@
       const cupDiff = isCupRound && RR.Race.cupDifficulty ? RR.Race.cupDifficulty() : null;
       const diff = cupDiff != null ? cupDiff : (RR.Menus && RR.Menus.difficulty ? RR.Menus.difficulty() : 1);
       // the item brain plays at the round's difficulty too — mid-cup the menu's current setting is
-      // the wrong number, and a rival who throws a gale like a novice in the final is not a rival
+      // the wrong number, and a rival who fires a torpedo like a novice in the final is not a rival
       if (RR.Powerups && RR.Powerups.setDifficulty) RR.Powerups.setDifficulty(diff);
       for (let i = 1; i < boats.length; i++) {
         const p = RR.AI.createPilot(boats[i], { path: raceState.route }, i - 1, diff);
@@ -411,9 +371,7 @@
     // THE BUOY RULE. race.js pays the gate itself now — between the buoys 0.10-0.26 by line
     // quality and clean-gate streak, outside them 0.06 — so the flat +0.45 that used to live here
     // is gone. All this adds is the tell: a clean line reads +BOOST, a wide one reads WIDE.
-    // The cold open stays quiet: it is teaching one thing at a time and the gate is not it.
     RR.Race.onCheckpoint = (n, total, gate) => {
-      if (opening) return;
       const clean = !gate || gate.clean;
       RR.HUD.checkpointFlash(n, total); RR.Audio.checkpoint();
       if (!player) return;
@@ -425,7 +383,6 @@
     // race.js already pays the boost, kicks the camera and rings the chime; all this adds is the
     // gate's name, so the player learns WHICH line paid.
     RR.Race.onBoostGate = (gate) => {
-      if (opening) return;
       if (gate && gate.name && RR.HUD.chip) RR.HUD.chip('near', String(gate.name).toUpperCase() + ' +BOOST', 1300);
     };
     RR.Race.onPlayerFinish = (pos, time) => {
@@ -458,7 +415,7 @@
     if (tourMode) {
       tourCam = 0;
       if (RR.Camera.lookReset) RR.Camera.lookReset(true);   // never board with the last run's head angle
-      if (RR.HUD.chip) RR.HUD.chip('near', 'C: SEAT · DRAG OR ←→ TO LOOK AROUND · SPACE: DOCENT · F ×5: THE WHEEL', 7000);
+      if (RR.HUD.chip) RR.HUD.chip('near', 'C: CHANGE SEAT · DRAG OR ←→ TO LOOK · SPACE: ABOUT THIS BUILDING · F ×5: TAKE THE WHEEL', 7000);
     }
     mode = 'race';
   }
@@ -467,7 +424,6 @@
     mode = 'menu';
     if (RR.Feel && RR.Feel.cancelFinale) RR.Feel.cancelFinale();
     RR.Engine.timeScale = 1;
-    idleT = 0;                                        // don't hand the wheel straight back to the AI
     docent = null; tourDriving = false;
     RR.Input.onFTap = null; RR.Input.onFiveF = null;
     RR.HUD.show(false);
@@ -515,9 +471,6 @@
     // both of these used to fall through into the pause branch in the SAME event: leaving photo
     // mode, or menus.js resuming from pause, sets mode='race' and the next line re-paused you.
     if (e.code === 'Escape' && mode === 'photo') togglePhotoMode();
-    // ESC skips the cold open at any point, and skipping counts as having seen it — a run you
-    // walked out of should still put THE FIRST BRIDGE in the menu rather than ambush you again.
-    else if (e.code === 'Escape' && RR.Opening && RR.Opening.active && RR.Opening.active()) RR.Opening.skip();
     else if (e.code === 'Escape' && mode === 'race' && !e.defaultPrevented) {
       mode = 'paused'; RR.Engine.timeScale = 0; RR.Menus.showPause();
     }
@@ -574,7 +527,6 @@
       const main = RR.River.paths.main;
       if (main) RR.Camera.flyover(dt, main);
       RR.Race.animateGates && raceState && RR.Race.animateGates(t);
-      attractTick(RR.Engine.rawDt || dt);       // wall clock: an idle timer must not care about timeScale
       return;
     }
     if (showBoat) { RR.Engine.scene.remove(showBoat); showBoat = null; showIdx = -1; }   // never leak into a race
@@ -585,22 +537,15 @@
 
     RR.Input.update(dt);
     RR.Race.update(dt);
-    // Two workstreams, two shapes: opening.js reads the held pickup straight off the hull as
-    // `boat.item`, powerups.js keeps it in a slot of its own and hands it over through held().
-    // One assignment is the whole adapter, and gluing two files together without editing either
-    // is what this one is for. held() waits for the roll to land, which is also when the cold
-    // open should be naming the thing.
+    // powerups.js keeps the pickup in a slot of its own; anything that wants to know what the
+    // player is holding reads it off the hull. held() waits for the roll to land.
     if (RR.Powerups && RR.Powerups.held) player.item = RR.Powerups.held();
 
     const racing = raceState.phase !== 'countdown';
 
-    // player — or, on the Architecture Tour until you have taken the wheel, the skipper; or, in the
-    // attract loop, the pilot opening.js has at the wheel until the first key is pressed
+    // player — or, on the Architecture Tour until you have taken the wheel, the skipper
     let pc;
-    const oc = RR.Opening && RR.Opening.control ? RR.Opening.control() : null;
-    if (oc) {
-      pc = oc;
-    } else if (raceState.tour && !tourDriving && docent) {
+    if (raceState.tour && !tourDriving && docent) {
       RR.AI.update(docent, dt, t, player.routeD);
       docent.ctl.boost = false;                       // she does not have a boost button
       pc = docent.ctl;
@@ -830,32 +775,14 @@
     night: (m) => { if (RR.Theme) RR.Theme.apply(typeof m === 'string' ? m : (m ? 'night' : 'day')); },
     // hold full quality (disable adaptive downgrade) — used by visual tests on the software renderer
     pinQuality: () => { RR.Engine.setAutoQuality(false); if (RR.Reflect) RR.Reflect.enabled = true; if (RR.Post) RR.Post.enabled = true; },
-    // THE FIRST BRIDGE runs on a fresh save, which means a harness that wants the TITLE SCREEN has
-    // to say so — the cold open is on screen the moment the world is ready, by design.
-    skipOpening: () => {
-      if (RR.Progress && RR.Progress.setSeenOpening) RR.Progress.setSeenOpening(true);
-      if (RR.Opening && RR.Opening.active && RR.Opening.active()) RR.Opening.skip();
-      // No opening to skip (a tour or a race is up): go out the front door. Setting mode='menu'
-      // by hand leaves RR.Race.state() truthy on the title screen, which re-satisfies the `live`
-      // guard in bridges.js and puts the ambient tender's horn back under the title music — the
-      // exact bug already fixed once.
-      else { quitToTitle(); if (RR.Menus.showTitle) RR.Menus.showTitle(); }
-      idleT = 0;
+    // A fresh boot already lands on the title screen, so this is only a way BACK to it from a race
+    // or a tour. Setting mode='menu' by hand would leave RR.Race.state() truthy on the title
+    // screen, which re-satisfies the `live` guard in bridges.js and puts the ambient tender's horn
+    // back under the title music — so it goes out the front door instead.
+    toTitle: () => {
+      quitToTitle();
+      if (RR.Menus.showTitle) RR.Menus.showTitle();
       return true;
-    },
-    // THE FIRST BRIDGE, on demand: the cold open, and the same run with the AI at the wheel
-    opening: (attract) => {
-      RR.Menus.hide();
-      if (RR.Audio.setMusic) RR.Audio.setMusic(false);
-      return !!(RR.Opening && RR.Opening.start && RR.Opening.start({ attract: !!attract }));
-    },
-    openingState: () => {
-      const d = RR.Opening && RR.Opening.detail ? RR.Opening.detail() : null;
-      return {
-        active: !!(d && d.live), attract: !!(d && d.attract), ended: d ? d.ended : null,
-        routeD: player ? Math.round(player.routeD) : 0, item: d ? d.item : null,
-        beat: d ? d.beat : -1, ending: d ? d.ending : 0, age: d ? d.age : 0,
-      };
     },
     getState: () => ({
       scene: mode === 'menu' ? 'menu' : mode === 'results' ? 'results' : 'race',
@@ -866,6 +793,9 @@
       fps: RR.Engine.fps(),
     }),
   };
+  // The scripted cold open is gone and a fresh save now boots straight to the title, so there is
+  // nothing left to skip. Harness scripts that still ask for it get the way back to the title.
+  window.RRTest.skipOpening = window.RRTest.toTitle;
 
   function bootOnce() { if (!booted) { booted = 1; boot(); } }
   window.addEventListener('DOMContentLoaded', bootOnce);

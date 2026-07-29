@@ -288,7 +288,25 @@
     if (clear < 0) {
       boat.pos.x += wq.nx * -clear;
       boat.pos.z += wq.nz * -clear;
-      P.bounce(boat, wq.nx, wq.nz, 0.28);                 // concrete quay: dead
+      // The lock is the one 'bank' that is a genuine wall — eight metres of Corps of Engineers
+      // concrete with a timber rub strip bolted to it — so it throws you back a little harder
+      // than a sheet-pile quay does. The graze is still cheap: P.bounce scales everything by how
+      // squarely you hit, which is what keeps a 24 m chamber passable at racing pace.
+      P.bounce(boat, wq.nx, wq.nz, wq.path === 'lock' ? 0.36 : 0.28);
+    }
+    // Obstacles are capsules a couple of metres thick and dt can reach 50 ms on a bad frame, which
+    // at speed is a stride long enough to step straight over a pier or a guide wall. When the step
+    // gets that long, sweep the midpoint first: cheap, and it is the difference between a wall and
+    // a wall that mostly works.
+    const stepLen = Math.hypot(boat.vel.x + boat.flowX, boat.vel.z + boat.flowZ) * dt;
+    if (stepLen > 1.2) {
+      const mid = RR.River.hitObstacle(boat.pos.x - boat.vel.x * dt * 0.5, boat.pos.z - boat.vel.z * dt * 0.5,
+        boat.radius * 0.55);
+      if (mid) {
+        boat.pos.x += mid.nx * mid.pen - boat.vel.x * dt * 0.5;
+        boat.pos.z += mid.nz * mid.pen - boat.vel.z * dt * 0.5;
+        P.bounce(boat, mid.nx, mid.nz, 0.40);
+      }
     }
     const ob = RR.River.hitObstacle(boat.pos.x, boat.pos.z, boat.radius * 0.55);
     if (ob) {

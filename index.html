@@ -101,12 +101,11 @@
   #loading .fill { width: 0%; height: 100%; background: var(--chi-blue); transition: width .2s; }
   #loading .msg { font-size: 12px; letter-spacing: 4px; color: var(--chi-blue); }
 
-  /* ---------- THE COLD OPEN ----------
+  /* ---------- THE LOAD ----------
      uikit.js injects its stylesheet at script-eval time, so it lands AFTER this block and wins
-     every tie. The handful of rules below that re-dress ITS widgets therefore carry !important;
-     everything under #opening is ours alone and does not need it. */
+     every tie. The rules below re-dress ITS widgets and therefore carry !important.
 
-  /* The load is a boat ride: the menu flythrough is on screen from frame one and the progress
+     The load is a boat ride: the menu flythrough is on screen from frame one and the progress
      bar is a hairline along the bottom of it, not a wall in front of it. The veil only covers
      the first three build steps — while there is genuinely nothing out there to look at. */
   #loading { background: transparent !important; justify-content: flex-end !important;
@@ -118,56 +117,6 @@
   #loading > * { position: relative; }
   #loading .bar { width: min(44vw, 520px) !important; height: 2px !important; border-radius: 0 !important; }
   #loading.gone { opacity: 0; }
-
-  /* The opening's own layer. It sits over the HUD and under the fade, and it is the only DOM the
-     cold open writes — hud.js and menus.js are never touched. */
-  #opening { position: fixed; inset: 0; z-index: 12; pointer-events: none; display: none;
-             font-family: "Arial Narrow", "Helvetica Neue", Helvetica, Arial, sans-serif; }
-  #opening.on { display: block; }
-  /* The prompt lives in the TOP third. The bottom of the screen is the speedo, the item slot and
-     the landmark name, and a teaching line laid across the very widget it is teaching you to read
-     is worse than no teaching line at all. In lean mode the top strip is empty, so it is free. */
-  #open-line { position: absolute; left: 50%; top: 8.5vh; transform: translate(-50%, -14px);
-               display: flex; align-items: center; gap: .8em; white-space: nowrap;
-               opacity: 0; transition: opacity .28s ease, transform .28s cubic-bezier(.16,1,.3,1); }
-  #open-sub { position: absolute; left: 50%; top: 14.6vh; transform: translateX(-50%);
-              font: 700 clamp(9px,.85vw,12px)/1 inherit; letter-spacing: .34em; color: #9FC3D6;
-              text-align: center; white-space: nowrap; opacity: 0; transition: opacity .28s ease .06s;
-              text-shadow: 0 2px 12px rgba(4,18,27,.95); }
-  #opening.line-on #open-line { opacity: 1; transform: translate(-50%, 0); }
-  #opening.line-on #open-sub { opacity: 1; }
-  /* an instruction fades IN deliberately and OUT smartly: the moment you have obeyed it, it is
-     already competing with the payoff for the same two hundred milliseconds */
-  #opening:not(.line-on) #open-line, #opening:not(.line-on) #open-sub { transition-duration: .13s; transition-delay: 0s; }
-  #open-key { font: 700 clamp(13px,1.35vw,18px)/1 inherit; letter-spacing: .18em; color: #04121b;
-              background: var(--gold); padding: .5em .8em; }
-  #open-txt { font: 700 clamp(17px,2.1vw,29px)/1 inherit; letter-spacing: .26em; color: #fff;
-              text-shadow: 0 2px 18px rgba(4,18,27,.95); }
-
-  /* the word for what just happened, in the opening's own voice */
-  #open-word { position: absolute; left: 50%; top: 27%; transform: translate(-50%, 10px) scale(.94);
-               font: 700 clamp(30px,5vw,72px)/1 "Haettenschweiler", "Arial Narrow Bold", Impact, sans-serif;
-               letter-spacing: .06em; color: var(--gold); text-shadow: 0 4px 30px rgba(4,18,27,.9);
-               opacity: 0; transition: opacity .18s ease, transform .4s cubic-bezier(.2,2.2,.4,1); }
-  #opening.word-on #open-word { opacity: 1; transform: translate(-50%, 0) scale(1); }
-
-  /* and the title lands over a live shot of the lake, never over a black screen */
-  #open-title { position: absolute; inset: 0; display: flex; flex-direction: column;
-                align-items: center; justify-content: center; gap: .5em; text-align: center;
-                opacity: 0; transition: opacity 1.1s ease; }
-  #opening.title-on #open-title { opacity: 1; }
-  #open-title .t { font: 400 clamp(44px,8vw,116px)/.90 "Haettenschweiler", "Arial Narrow Bold", Impact, sans-serif;
-                   letter-spacing: .005em; color: #fff; text-shadow: 0 6px 40px rgba(4,18,27,.85); }
-  #open-title .s { font: 700 clamp(11px,1.35vw,17px)/1 inherit; letter-spacing: .62em; color: var(--gold); }
-  #open-title .tally { font: 700 clamp(11px,1.3vw,16px)/1 inherit; letter-spacing: .40em; color: #9FC3D6;
-                       margin-top: 1.4em; }
-  #open-title .tally:empty { display: none; }
-
-  /* the lean HUD: the cold open has no rivals, no timer and no map, so it shows none of them.
-     What it keeps is the speedo. (The item slot hides itself here too — powerups.js holds the
-     items out of the cold open, so hud.js never turns the slot on.) */
-  #hud.lean #race-info, #hud.lean #timer, #hud.lean #gaps, #hud.lean #minimap,
-  #hud.lean #boost-hint, #hud.lean #ticker, #hud.lean #checkpoint-flash { display: none !important; }
 </style>
 </head>
 <body>
@@ -180,14 +129,6 @@
 <div id="hud"></div>
 
 <div id="menu"></div>
-
-<!-- THE FIRST BRIDGE. opening.js owns every node in here and nothing outside it. -->
-<div id="opening">
-  <div id="open-line"><b id="open-key"></b><span id="open-txt"></span></div>
-  <div id="open-sub"></div>
-  <div id="open-word"></div>
-  <div id="open-title"><div class="t">RIVER<br>RACER</div><div class="s">CHICAGO · LAKE MICHIGAN</div><div class="tally" id="open-tally"></div></div>
-</div>
 
 <div id="fade"></div>
 
@@ -237,7 +178,6 @@
 <script src="js/net/transport-mock.js"></script>
 <script src="js/net/transport-trystero.js"></script>
 <script src="js/ui/netlobby.js"></script>
-<script src="js/game/opening.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

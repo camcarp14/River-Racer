@@ -59,9 +59,6 @@
     try { localStorage.setItem('rr_last', JSON.stringify(rec)); } catch (e) { /* fine */ }
     if (RR.Progress && RR.Progress.set) RR.Progress.set('last', rec);
   }
-  function seenOpening() {
-    try { return !!((RR.Progress && RR.Progress.get ? RR.Progress.get() : {}) || {}).seenOpening; } catch (e) { return false; }
-  }
 
   // ---------- title ----------
   function showTitle() {
@@ -73,8 +70,8 @@
       : cup.done ? 'CHAMPIONSHIP · FINAL'
         : 'CHAMPIONSHIP · ROUND ' + Math.min(rounds, cup.round + 1) + '/' + rounds;
 
-    // The list is built, not written out, because CONTINUE and THE FIRST BRIDGE come and go and
-    // data-i indices have to stay in step with the action array.
+    // The list is built, not written out, because CONTINUE comes and goes and data-i indices have
+    // to stay in step with the action array.
     const rows = [], acts = [];
     const last = lastRun();
     const openCup = cup && !cup.done;
@@ -91,11 +88,6 @@
     rows.push('ARCHITECTURE TOUR');       acts.push(() => { tourMode = true; showVehicles({ tour: true }); });
     rows.push('MULTIPLAYER');             acts.push(() => { if (RR.NetUI && RR.NetUI.openEntry) RR.NetUI.openEntry(); });
     rows.push('HOW TO PLAY');             acts.push(showHelp);
-    // the cold open runs once on its own; after that it is a thing you can go back and play
-    if (RR.Opening && RR.Opening.start && seenOpening()) {
-      rows.push('THE FIRST BRIDGE');
-      acts.push(() => { MENU.hide(); if (RR.Audio && RR.Audio.setMusic) RR.Audio.setMusic(false); RR.Opening.start(); });
-    }
 
     html(`
       <div class="stars">${STAR_CAPS.map((c) => '<div class="starcol">' + STAR + '<span>' + c + '</span></div>').join('')}</div>
@@ -144,19 +136,19 @@
         <div style="margin-top:.85em;text-wrap:balance"><b>GAMEPAD</b> — LEFT STICK steer · RT throttle ·
           LT brake · A throttle · X boost · B fire item · LB look astern</div>
         <div style="margin-top:.5em;text-wrap:balance"><b>ARCHITECTURE TOUR</b> — <b>F</b>×5 take the wheel ·
-          <b>SPACE</b> docent · <b>C</b> walk the boat · DRAG or RIGHT STICK to look around</div>
+          <b>SPACE</b> about this building · <b>C</b> change seat · DRAG or RIGHT STICK to look around</div>
         <div style="margin-top:.9em;line-height:1.75">
-          <b>SHIFT</b> is boost: the meter is the outer ring of the dial, the two
-          <span style="color:#EF3340">red</span> segments at the bottom are the reserve the engine
-          will not light below, and above <span style="color:#FFC857">PRIME</span> it pays 15% more.<br>
-          <b>E</b> or <b>SPACE</b> fires what you are holding. Run through one of the gold
-          <span style="color:#FFC857">CRATES</span> in the channel and the slot spins you an item —
-          the leader draws a <b>FENDER</b> and something to hide behind, the tail of the field draws
-          the <b>GALE</b> and the <b>GULL SWARM</b>. <b>I</b> turns the whole thing off.<br>
+          <b>SHIFT</b> is boost. The meter is the outer ring of the dial. The two
+          <span style="color:#EF3340">red</span> segments at the bottom are a reserve the engine
+          will not burn, and above <span style="color:#FFC857">PRIME</span> boost is 15% stronger.<br>
+          Drive into a gold <span style="color:#FFC857">CRATE</span> in the channel and the slot
+          spins you an item. <b>E</b> or <b>SPACE</b> fires it. What you can draw depends on your
+          position: out front you get <b>SHIELD</b> and things to drop behind you, at the back you
+          get <b>TORPEDO</b>, <b>GULL SWARM</b> and <b>SHOCKWAVE</b>. <b>I</b> turns items off.<br>
           Thread the checkpoint buoys — <span style="color:#EF3340">red LEFT</span>,
           <span style="color:#3ED17E">green RIGHT</span>. Gold gates off the racing line pay boost.
-          The bascule bridges lift and fall on the tender's own cycle all day, the way the real ones
-          do: if a span is coming down as you reach it, that is the river's business, not yours.
+          The nine bascule bridges raise and lower on their own all day, like the real ones do.
+          A raised span gives you more clearance, not less — you can always get under.
         </div>
       </div>
       <div class="menu-list" style="margin-top:.9em"><div class="menu-item sel" data-i="0">BACK</div></div>
@@ -374,9 +366,9 @@
   let difficulty = (() => { try { return parseFloat(localStorage.getItem('rr_diff')) || 1; } catch (e) { return 1; } })();
   MENU.difficulty = () => difficulty;
   const DIFFS = [
-    { name: 'ROOKIE', v: 0.7, desc: 'Rivals cruise the scenic route. A friendly Sunday on the river.' },
-    { name: 'SKIPPER', v: 1.0, desc: 'A fair fight from Wolf Point to the lighthouse.' },
-    { name: 'LEGEND', v: 1.45, desc: 'They run the perfect line, never lift, and show no mercy.' },
+    { name: 'ROOKIE', v: 0.7, desc: 'Rivals go slow and make mistakes. Good for learning the river.' },
+    { name: 'SKIPPER', v: 1.0, desc: 'An even match. Rivals race hard but still get things wrong.' },
+    { name: 'LEGEND', v: 1.45, desc: 'Rivals hold the perfect line, never lift, and never make a mistake.' },
   ];
   function showDifficulty() {
     screen = 'difficulty';
@@ -412,7 +404,7 @@
       </div>`;
     }).join('');
     html(`
-      <div id="select-title">PICK YOUR WATER</div>
+      <div id="select-title">PICK YOUR COURSE</div>
       <div id="select-sub">←→ SELECT · ENTER RACE · BKSP BACK</div>
       <div id="cards">${cards}</div>
     `);
@@ -659,7 +651,7 @@
     const nextRound = board.current >= 0 ? board.rounds[board.current] : null;
     const justRan = fresh >= 0 ? board.rounds[fresh] : null;
     const kicker = board.done
-      ? 'FOUR ROUNDS · ONE RIVER · THE CHAMPIONSHIP IS DECIDED'
+      ? 'ALL ' + board.total + ' ROUNDS RUN · FINAL STANDINGS'
       : justRan
         ? `ROUND ${fresh + 1} OF ${board.total} COMPLETE · <b>${up(justRan.name)}</b>` +
           (nextRound ? ` &nbsp;·&nbsp; <span class="nx">NEXT: ${up(nextRound.name)}</span>` : '')
@@ -738,8 +730,8 @@
         <b style="color:#FFC857">I</b> power-ups on / off<br>
         <b>B·Q</b> look astern · <b>C</b> camera · <b>[ ]</b> shot · <b>P</b> photo · <b>N</b> time of day ·
         <b>G</b> green river · <b>R</b> reset<br>
-        <b>M</b> sound · <b>ESC</b> resume · TOUR — <b>F</b>×5 take the wheel · <b>SPACE</b> docent ·
-        <b>C</b> walk the boat
+        <b>M</b> sound · <b>ESC</b> resume · TOUR — <b>F</b>×5 take the wheel ·
+        <b>SPACE</b> about this building · <b>C</b> change seat
       </div>
     `);
     bindClicks([() => { MENU.hide(); if (MENU.onResume) MENU.onResume(); },
@@ -838,7 +830,7 @@
     const on = puOn();
     row.classList.toggle('off', !on);
     row.innerHTML = `${CRATE}<b>POWER-UPS ${on ? 'ON' : 'OFF'}</b><i>PRESS I</i>`;
-    row.title = on ? 'Race without items (I)' : 'Put the crates back in the channel (I)';
+    row.title = on ? 'Turn power-ups off (I)' : 'Turn power-ups on (I)';
   }
   function bindPowerupRow() {
     const row = $('pu-row');

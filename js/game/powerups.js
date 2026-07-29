@@ -4,9 +4,14 @@
    The problem this solves is stated exactly: "so it's not just whoever gets out first." A lead in
    this game used to be arithmetic — the AI's rubber band is deliberately tiny at SKIPPER and
    exactly zero at LEGEND (ai.js), so once a boat was clear it stayed clear. Items are the other
-   half of that answer: the leader draws a FENDER and something to hide behind, the tail draws the
-   GALE and the GULLS. Nothing here makes a bad line fast. Everything here makes a lead a thing you
-   have to keep holding.
+   half of that answer: the leader draws a SHIELD and something to hide behind, the tail draws the
+   TORPEDO and the GULLS. Nothing here makes a bad line fast. Everything here makes a lead a thing
+   you have to keep holding.
+
+   Every item obeys the same three rules, because "it changes a number" is not a power-up:
+     SEE   — geometry or particles in the world, at a size you cannot miss from the chase camera.
+     FEEL  — RR.Camera.kick and a beat of RR.Feel.dilate on the frame it lands.
+     READ  — the boat it lands ON gets a plate naming the item and who threw it. See land().
 
    All of it is self-contained. race.js calls buildForRace / update / clear; a later agent hangs the
    HUD slot and the settings switch off the read-only API at the bottom. The AI's item brain lives
@@ -25,23 +30,32 @@
   // 'burst' goes off around you, 'ahead' reaches up the road at the people beating you.
   //
   // front / mid / back are the DRAW WEIGHTS at 1st, mid-field and last. See rollFor().
+  //
+  // NAMES AND BLURBS ARE PLAIN. Every one of them says what the thing does to whom, in words you
+  // would use out loud. GALE OFF THE LAKE is gone: its effect was a sideways nudge you could not
+  // see and could not name, and a power-up you cannot perceive is not a power-up. The TORPEDO
+  // replaces it in the same slot in the draw table — the tail's big swing at whoever is winning.
   PU.ITEMS = [
     { id: 'turbo', name: 'TURBO', short: 'TURBO', kind: 'self', color: 0x25ff7a, glyph: '»',
-      blurb: 'Full tank and a shove.', front: 30, mid: 26, back: 20 },
-    { id: 'fender', name: 'FENDER', short: 'FENDER', kind: 'self', color: 0x7ec8e3, glyph: '◌',
-      blurb: 'Eats the next hit or hazard.', front: 40, mid: 20, back: 8 },
-    { id: 'slick', name: 'WAKE SLICK', short: 'SLICK', kind: 'drop', color: 0x2a3c4e, glyph: '≈',
-      blurb: 'Dumped astern. Whoever finds it, spins.', front: 26, mid: 22, back: 10 },
-    { id: 'dye', name: 'RIVER DYE', short: 'DYE', kind: 'drop', color: 0x2ecc71, glyph: '◉',
-      blurb: 'The St Patrick’s green, in their eyes.', front: 16, mid: 20, back: 12 },
+      blurb: 'Huge speed burst for 3 seconds.', front: 30, mid: 26, back: 18 },
+    // id stays 'fender' — hud.js and the saved-preference path key off ids, and renaming a key to
+    // match a label is how you break a save file for a caption.
+    { id: 'fender', name: 'SHIELD', short: 'SHIELD', kind: 'self', color: 0x7ec8e3, glyph: '◌',
+      // It blocks items and one hard wall crash, but NOT a plain boat-to-boat ram — physics only
+      // sets crashTimer on wall contact. Say what it does rather than what the name implies.
+      blurb: 'Blocks the next item that hits you.', front: 40, mid: 20, back: 6 },
+    { id: 'slick', name: 'OIL SLICK', short: 'OIL SLICK', kind: 'drop', color: 0x2a3c4e, glyph: '≈',
+      blurb: 'Drops 3 slicks behind you. They spin out.', front: 26, mid: 22, back: 10 },
+    { id: 'dye', name: 'GREEN DYE', short: 'GREEN DYE', kind: 'drop', color: 0x2ecc71, glyph: '◉',
+      blurb: 'Green cloud astern. Blinds anyone in it.', front: 16, mid: 20, back: 12 },
     { id: 'deepdish', name: 'DEEP DISH', short: 'DEEP DISH', kind: 'self', color: 0xffb03a, glyph: '●',
-      blurb: 'You get heavy. They get moved.', front: 4, mid: 26, back: 20 },
-    { id: 'bowwave', name: 'BOW WAVE', short: 'BOW WAVE', kind: 'burst', color: 0x9fe8ff, glyph: '(',
-      blurb: 'Shoves everyone alongside off their line.', front: 2, mid: 20, back: 24 },
+      blurb: 'You turn heavy and smash boats aside.', front: 4, mid: 26, back: 20 },
+    { id: 'bowwave', name: 'SHOCKWAVE', short: 'SHOCKWAVE', kind: 'burst', color: 0x9fe8ff, glyph: '(',
+      blurb: 'Blast of water throws nearby boats away.', front: 2, mid: 20, back: 24 },
     { id: 'gulls', name: 'GULL SWARM', short: 'GULLS', kind: 'ahead', color: 0xf2f6f8, glyph: '^',
-      blurb: 'A flock, over whoever is beating you.', front: 0, mid: 12, back: 26 },
-    { id: 'gale', name: 'GALE OFF THE LAKE', short: 'GALE', kind: 'ahead', color: 0xbfe6ff, glyph: '≫',
-      blurb: 'One gust. Everyone ahead loses their line.', front: 0, mid: 6, back: 30 },
+      blurb: 'Birds mob the 4 boats ahead of you.', front: 0, mid: 12, back: 26 },
+    { id: 'torpedo', name: 'TORPEDO', short: 'TORPEDO', kind: 'ahead', color: 0xff5a3a, glyph: '➤',
+      blurb: 'Homes up the river and wipes out the leader.', front: 0, mid: 4, back: 34 },
   ];
   const BY_ID = {};
   for (const it of PU.ITEMS) BY_ID[it.id] = it;
@@ -56,15 +70,20 @@
     AI_REACH: 4.5,                          // a rival reaches further; aiSteer() is the honest version
     RESPAWN: 7.0,
     ROLL_T: 0.85,                           // how long the slot spins before it locks (player only)
-    SHIELD_T: 12.0,
-    HEAVY_T: 7.0, HEAVY_MASS: 3.4, HEAVY_TOP: 0.93,
-    SPIN_T: 0.95, SPIN_W: 3.0, SPIN_DRAG: 1.15,
-    SLICK_T: 14.0, SLICK_R: 5.6, DROP_ARM: 0.9,
-    DYE_T: 8.0, DYE_R0: 5.0, DYE_R1: 13.0, BLIND_T: 1.0,
-    GULL_T: 3.0, GULL_RANGE: 240, GULL_MAX: 3,
-    GALE_T: 1.2, GALE_ACC: 7.4, GALE_RANGE: 900,
-    WAVE_R: 26, WAVE_PUSH: 9.5, WAVE_SELF: 3.2,
-    TURBO_KICK: 7.0,
+    SHIELD_T: 12.0, SHIELD_BOUNCE: 22,      // what the blocked boat gets thrown back with
+    HEAVY_T: 8.0, HEAVY_MASS: 6.0, HEAVY_TOP: 0.97,
+    // The one-shot hit DEEP DISH lands per victim. SLAM_CD is a DRAMA budget as much as a balance
+    // one: the slam is worth a beat of slow motion, and at 0.7 s a heavy boat sitting on top of you
+    // for its whole eight seconds could spend a third of them in slow motion.
+    SLAM_PUSH: 21, SLAM_SPIN: 3.2, SLAM_CD: 1.1,
+    SPIN_T: 1.6, SPIN_W: 5.5, SPIN_DRAG: 1.9,
+    SLICK_T: 14.0, SLICK_R: 7.0, SLICK_N: 3, SLICK_SPREAD: 9.0, DROP_ARM: 0.9,
+    DYE_T: 10.0, DYE_R0: 8.0, DYE_R1: 17.0, BLIND_T: 2.2, DYE_DRAG: 0.55,
+    GULL_T: 4.5, GULL_RANGE: 320, GULL_MAX: 4, GULL_TOP: 0.80, GULL_WHEEL: 0.5,
+    TORP_SPD: 62, TORP_LIFE: 7.0, TORP_RANGE: 520, TORP_R: 4.6, TORP_TRACK: 2.6,
+    TORP_SLOW: 0.40, TORP_ARM: 0.35,
+    WAVE_R: 34, WAVE_PUSH: 26, WAVE_SELF: 8.0, WAVE_SPIN: 2.6,
+    TURBO_T: 3.0, TURBO_KICK: 16.0, TURBO_ACC: 26, TURBO_TOP: 1.55, TURBO_WASH: 13,
   };
   PU.K = K;
 
@@ -111,14 +130,19 @@
   // planar water reflection.
   // ---------------------------------------------------------------------------------------------
   let group = null, crateIM = null, haloIM = null, slickIM = null, dyeIM = null,
-      fenderIM = null, heavyIM = null, ringIM = null, gullIM = null, galeMesh = null,
-      overlay = null, overlayMat = null;
-  let crates = [], slicks = [], dyes = [], rings = [];
+      fenderIM = null, bubbleIM = null, heavyIM = null, crushIM = null, ringIM = null,
+      wallIM = null, gullIM = null, torpIM = null, overlay = null, overlayMat = null;
+  let crates = [], slicks = [], dyes = [], rings = [], walls = [], torps = [];
   let S = null, drawRng = null, useHook = null;
   const M4 = new THREE.Matrix4(), Q0 = new THREE.Quaternion(), V3 = new THREE.Vector3(), SC = new THREE.Vector3();
   const UP = new THREE.Vector3(0, 1, 0);
   const HIDE = new THREE.Matrix4().makeScale(0, 0, 0);
-  const MAX_SLICK = 14, MAX_DYE = 10, MAX_RING = 8, MAX_AURA = 8, MAX_GULL = 24;
+  const TPT = {}, PPT = {};                    // pathAt scratch — no allocation in update()
+  const C0 = new THREE.Color();
+  // GULL_MAX victims × 16 birds each — sized so the fourth victim is not the one that silently
+  // gets no flock.
+  const MAX_SLICK = 18, MAX_DYE = 10, MAX_RING = 10, MAX_AURA = 8, MAX_GULL = 64,
+        MAX_WALL = 4, MAX_TORP = 4;
 
   const tint = (geo, hex) => (RR.City && RR.City.tintGeom ? RR.City.tintGeom(geo, hex) : geo);
   const merge = (list) => (RR.City && RR.City.mergeGeoms ? RR.City.mergeGeoms(list) : list[0]);
@@ -205,35 +229,55 @@
     });
   }
 
-  // streaks of ruffled water, feathered to nothing at every edge so the patch has no border
-  function gustTex() {
-    return U().canvasTexture(256, 128, (c, w, h) => {
-      c.clearRect(0, 0, w, h);
-      c.strokeStyle = 'rgba(10,26,34,1)';
-      c.lineCap = 'round';
-      const rnd = U().mulberry(0x51ce);
-      // opaque strokes: the patch alpha is the PRODUCT of the stroke, the feather and the material
-      // opacity, so faint strokes multiply out to nothing at all
-      for (let i = 0; i < 420; i++) {
-        const y = rnd() * h, x = rnd() * w, len = 14 + rnd() * 74;
-        c.globalAlpha = 0.55 + rnd() * 0.45;
-        c.lineWidth = 1.2 + rnd() * 3.4;
-        c.beginPath(); c.moveTo(x, y); c.lineTo(x + len, y + (rnd() - 0.5) * 4); c.stroke();
-      }
-      c.globalAlpha = 1;
-      // feather: multiply the whole patch by a soft-edged ellipse, so the gust has no border
-      c.globalCompositeOperation = 'destination-in';
-      c.save();
-      c.translate(w / 2, h / 2);
-      c.scale(1, h / w);
-      const g = c.createRadialGradient(0, 0, 4, 0, 0, w / 2);
-      g.addColorStop(0.00, 'rgba(0,0,0,1)');
-      g.addColorStop(0.62, 'rgba(0,0,0,0.86)');
-      g.addColorStop(1.00, 'rgba(0,0,0,0)');
-      c.fillStyle = g;
-      c.beginPath(); c.arc(0, 0, w / 2, 0, 6.283); c.fill();
-      c.restore();
-    });
+  // THE SHOCKWAVE WALL. A ring painted on the water is a decal and reads as one; what says "a wall
+  // of water just left me and it is coming for you" is a surface with HEIGHT that you watch pass
+  // under your own bow. Open cylinder, faded out at the top so it has no rim up there, scaled
+  // outward each frame — one instanced draw for every wave in flight.
+  function wallGeom() {
+    const g = new THREE.CylinderGeometry(1, 1, 1, 40, 4, true);
+    g.translate(0, 0.5, 0);
+    return fadeUp(g, 0, 1, 1);
+  }
+
+  // THE SHIELD BUBBLE. Additive on the BACK side only: you see the far wall of the shell through
+  // your own boat, which domes the hull instead of frosting it, and the vertex ramp puts the light
+  // in a band at the waterline where a bubble is thickest end-on.
+  function bubbleGeom() {
+    const g = new THREE.SphereGeometry(1, 16, 12);
+    const pos = g.attributes.position, n = pos.count;
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const f = Math.pow(1 - Math.abs(pos.getY(i)), 0.65);
+      col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = 0.25 + f * 0.75;
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return g;
+  }
+
+  // THE TORPEDO. Not a grey tube — from twenty metres astern a tube is a stick. What reads at
+  // range is the FOAM: a flat white arrowhead skimming the surface, with a dark body just visible
+  // in the middle of it and a churned collar at the tail. Built pointing +z, the same axis the
+  // boats use for forward.
+  function torpGeom() {
+    const parts = [];
+    const foam = new THREE.ConeGeometry(2.6, 8.0, 10);
+    foam.rotateX(Math.PI / 2);                 // tip to +z
+    foam.scale(1, 0.16, 1);                    // flattened onto the water
+    foam.translate(0, 0.10, 1.2);
+    parts.push(tint(foam, 0xf2fbff));
+    const body = new THREE.CylinderGeometry(0.52, 0.62, 3.0, 8);
+    body.rotateX(Math.PI / 2);
+    body.translate(0, 0.55, 0);
+    parts.push(tint(body, 0x27333f));
+    const nose = new THREE.ConeGeometry(0.55, 1.3, 8);
+    nose.rotateX(Math.PI / 2);
+    nose.translate(0, 0.55, 2.1);
+    parts.push(tint(nose, 0xff5a3a));          // the one hot colour on it, so you can tell the end
+    const collar = new THREE.TorusGeometry(1.15, 0.22, 5, 14);
+    collar.rotateX(-Math.PI / 2);
+    collar.translate(0, 0.24, -1.9);
+    parts.push(tint(collar, 0xdff2ff));
+    return merge(parts);
   }
 
   // A bare white quad orbiting a hull reads as a floating strip of paper. A herring gull is two
@@ -269,6 +313,20 @@
     return m;
   }
 
+  // Per-instance tint, so a ring is the COLOUR of the thing that made it: green for a TURBO, orange
+  // for DEEP DISH, red for a torpedo going off. Half of "what just hit me" is answered before you
+  // have read a single word. Written linear on purpose — this project keeps three's colour
+  // management in legacy mode (see city.js), so nothing converts it for us.
+  function tintable(m) {
+    for (let i = 0; i < m.count; i++) m.setColorAt(i, C0.setRGB(1, 1, 1));
+    if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    return m;
+  }
+  function setTint(m, i, hex) {
+    if (!m.instanceColor) return;
+    m.setColorAt(i, C0.setHex(hex).convertSRGBToLinear());
+  }
+
   function buildScene(nCrates) {
     group = new THREE.Group();
     group.name = 'RR_POWERUPS';
@@ -292,8 +350,11 @@
       new THREE.MeshBasicMaterial({ map: slickTex(), transparent: true, opacity: 0.95,
         depthWrite: false, side: THREE.DoubleSide }), MAX_SLICK, 2);
 
+    // Thirty per cent, not forty-six: at the size the cloud grew to, a half-opaque dome reads as a
+    // wall of green GLASS rather than as something you can charge through. The particles carry the
+    // density now — the shell only has to say where the edge is.
     dyeIM = instanced(new THREE.SphereGeometry(1, 14, 10),
-      new THREE.MeshBasicMaterial({ color: 0x2ecc71, transparent: true, opacity: 0.46,
+      new THREE.MeshBasicMaterial({ color: 0x2ecc71, transparent: true, opacity: 0.30,
         depthWrite: false, side: THREE.DoubleSide }), MAX_DYE, 3);
 
     // A FENDER is a rubber ring bolted round a hull — so it is drawn as one. (It started life as a
@@ -302,42 +363,47 @@
     const torus = new THREE.TorusGeometry(1, 0.075, 6, 26);
     torus.rotateX(-Math.PI / 2);
     fenderIM = instanced(torus,
-      new THREE.MeshBasicMaterial({ color: 0x2fc9ff, transparent: true, opacity: 0.34,
+      new THREE.MeshBasicMaterial({ color: 0x2fc9ff, transparent: true, opacity: 0.40,
         blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), MAX_AURA, 3);
+    bubbleIM = instanced(bubbleGeom(),
+      new THREE.MeshBasicMaterial({ color: 0x2fc9ff, vertexColors: true, transparent: true,
+        opacity: 0.30, blending: THREE.AdditiveBlending, depthWrite: false,
+        side: THREE.BackSide }), MAX_AURA, 3);
     // Additive over sunlit water clips to white long before it clips to orange, so the alpha here
     // is what carries the COLOUR, not the brightness: at 0.85 the heavy ring read as a white hoop
-    // and nobody could tell it from a fender at a glance.
+    // and nobody could tell it from the shield at a glance.
     const heavy = new THREE.TorusGeometry(1, 0.17, 6, 26);
     heavy.rotateX(-Math.PI / 2);
     heavyIM = instanced(heavy,
       new THREE.MeshBasicMaterial({ color: 0xff7a00, transparent: true, opacity: 0.42,
         blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), MAX_AURA, 3);
+    // DEEP DISH's crush zone, painted flat on the water and sized to the radius that actually
+    // bulldozes. A weapon whose reach nobody can see is a weapon nobody dodges — this is the ring
+    // rivals are supposed to stay out of, so it is drawn at exactly the size it bites at.
+    const crush = new THREE.RingGeometry(0.90, 1.0, 40);
+    crush.rotateX(-Math.PI / 2);
+    crushIM = instanced(crush,
+      new THREE.MeshBasicMaterial({ color: 0xff8a12, transparent: true, opacity: 0.24,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), MAX_AURA, 3);
 
-    const ringGeo = new THREE.RingGeometry(0.82, 1.0, 26);
+    const ringGeo = new THREE.RingGeometry(0.82, 1.0, 44);
     ringGeo.rotateX(-Math.PI / 2);
-    ringIM = instanced(ringGeo,
-      new THREE.MeshBasicMaterial({ color: 0xcfefff, transparent: true, opacity: 0.7,
-        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), MAX_RING, 3);
+    ringIM = tintable(instanced(ringGeo,
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), MAX_RING, 3));
+
+    wallIM = tintable(instanced(wallGeom(),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, transparent: true,
+        opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false,
+        side: THREE.DoubleSide }), MAX_WALL, 3));
 
     gullIM = instanced(new THREE.PlaneGeometry(2.2, 1.1),
       new THREE.MeshBasicMaterial({ map: gullTex(), side: THREE.DoubleSide,
         transparent: true, opacity: 0.96, depthWrite: false }), MAX_GULL, 4);
 
-    // THE CAT'S PAW. A gust on water is not spindrift — spindrift is what the gust throws off the
-    // top. What you actually SEE, and what every sailor on this lake reads a squall by, is a dark
-    // ruffled patch racing across the surface ahead of it. Without this the item was a scatter of
-    // white dots on a pale green river and read as nothing at all.
-    const paw = new THREE.PlaneGeometry(1, 1);
-    paw.rotateX(-Math.PI / 2);
-    const gtex = gustTex();
-    gtex.wrapS = THREE.RepeatWrapping;
-    galeMesh = new THREE.Mesh(paw, new THREE.MeshBasicMaterial({
-      map: gtex, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
-    galeMesh.frustumCulled = false;
-    galeMesh.renderOrder = 2;
-    galeMesh.layers.set(1);
-    galeMesh.visible = false;
-    group.add(galeMesh);
+    torpIM = instanced(torpGeom(),
+      new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.94,
+        depthWrite: false, side: THREE.DoubleSide }), MAX_TORP, 3);
 
     buildOverlay();
   }
@@ -463,8 +529,8 @@
 
   // ---------------------------------------------------------------------------------------------
   // THE DRAW. Weighted by race position: 1st gets a FENDER and something to hide behind, last gets
-  // the GALE. Interpolated through a mid-field control point so DEEP DISH and BOW WAVE — the items
-  // that only mean anything in traffic — peak where the traffic is.
+  // the TORPEDO. Interpolated through a mid-field control point so DEEP DISH and SHOCKWAVE — the
+  // items that only mean anything in traffic — peak where the traffic is.
   // ---------------------------------------------------------------------------------------------
   function weightAt(it, p) {
     return p < 0.5 ? U().lerp(it.front, it.mid, p * 2) : U().lerp(it.mid, it.back, (p - 0.5) * 2);
@@ -505,7 +571,7 @@
     return b._pu || (b._pu = {
       held: null, roll: 0,
       shield: 0, heavy: 0, spin: 0, spinDir: 1, blind: 0, gulls: 0,
-      gale: 0, galeX: 0, galeZ: 0,
+      turbo: 0, slamCd: 0,
       seed: (seedTick = (seedTick + 2.399963) % 6.283),
       baseMass: b.mass || 1,
       aiHold: 0, aiPatience: null, aiCheck: 0, seekX: 0, seekZ: 0, seekT: 0,
@@ -530,23 +596,75 @@
     rings.push({ x, y, z, r0: 2.0, r1: r, t: 0, life: 0.55, color });
   }
 
+  function popWall(x, z, r, color) {
+    if (!wallIM) return;
+    if (walls.length >= MAX_WALL) walls.shift();
+    walls.push({ x, z, r0: 3, r1: r, h: 4.2, t: 0, life: 0.75, color });
+  }
+
   function chip(b, kind, text, ms) {
     if (!b.isPlayer || !RR.HUD || !RR.HUD.chip) return;
     RR.HUD.chip(kind, text, ms == null ? 1500 : ms);
   }
 
-  // Every hostile effect asks first. A FENDER is only worth holding if it eats the thing you were
-  // afraid of, so it eats ALL of them — one each.
-  function consumeShield(b) {
+  // ai.js names every rival (boat.pilotName); multiplayer names them too (boat.displayName).
+  // "GULLS" on its own does not tell you a race story. "GULLS — LOU CANAL" does.
+  function nameOf(b) {
+    if (!b) return 'A RIVAL';
+    if (b.isPlayer) return 'YOU';
+    return b.displayName || b.pilotName || 'A RIVAL';
+  }
+
+  // THE RECEIVING END, in one place. Nothing hostile lands anywhere in this file without going
+  // through here, so the victim ALWAYS gets the same three signals: a plate that names the item and
+  // who threw it, a jolt in the chair, and a beat of slow motion. Rivals get the world FX only —
+  // they have no chair and no screen — which is why the camera work is gated on isPlayer.
+  const lastHit = { label: '', from: '', t: -1e9 };
+  function land(victim, from, label, kick, dilScale, dilMs) {
+    if (!victim) return;
+    chip(victim, 'bad', from && from !== victim ? label + ' — ' + nameOf(from) : label, 1900);
+    if (!victim.isPlayer) return;
+    // The HUD raises its own plate off the rising edge of status(), and a generic "SPUN OUT" is
+    // exactly the thing the owner cannot read. This is the attribution, published, so the plate can
+    // say what hit you and who threw it instead.
+    lastHit.label = label;
+    lastHit.from = from && from !== victim ? nameOf(from) : '';
+    lastHit.t = RR.Engine.time();
+    if (kick && RR.Camera && RR.Camera.kick) RR.Camera.kick(kick);
+    if (dilScale && RR.Feel && RR.Feel.dilate) RR.Feel.dilate(dilScale, dilMs || 220);
+  }
+
+  // The firing end. Same idea: the boat that pulled the trigger feels it too, or the item is
+  // something that happened to other people.
+  function recoil(b, kick, dilScale, dilMs) {
+    if (!b.isPlayer) return;
+    if (kick && RR.Camera && RR.Camera.kick) RR.Camera.kick(kick);
+    if (dilScale && RR.Feel && RR.Feel.dilate) RR.Feel.dilate(dilScale, dilMs || 220);
+  }
+
+  // Every hostile effect asks first, and the answer is a bubble bursting: a wall of water off the
+  // hull, a white ring, and — new — whatever was doing the hitting gets thrown back off it. A
+  // shield that only deletes an event still feels like nothing happened.
+  function consumeShield(b, from) {
     const s = st(b);
     if (s.shield <= 0) return false;
     s.shield = 0;
-    popRing(b.pos.x, b.pos.y + 0.8, b.pos.z, 5.5, 0x7ec8e3);
-    if (RR.FX && RR.FX.spray) RR.FX.spray(b.pos.x, b.pos.y + 0.7, b.pos.z, 0, 3.2, 0, 10, 4.5, 1.1);
+    popRing(b.pos.x, b.pos.y + 0.8, b.pos.z, 13, 0x7ec8e3);
+    popWall(b.pos.x, b.pos.z, 14, 0x9fe8ff);
+    if (RR.FX && RR.FX.detonation) RR.FX.detonation(b.pos.x, b.pos.y + 0.5, b.pos.z, 0.9);
+    if (from && from !== b && !from.finished) {
+      const dx = from.pos.x - b.pos.x, dz = from.pos.z - b.pos.z;
+      const d = Math.max(1e-3, Math.hypot(dx, dz));
+      from.vel.x += (dx / d) * K.SHIELD_BOUNCE;
+      from.vel.z += (dz / d) * K.SHIELD_BOUNCE;
+      from.bumpRecover = Math.max(from.bumpRecover || 0, 0.8);
+      land(from, b, 'BOUNCED OFF A SHIELD', 0.9, 0.75, 200);
+    }
     if (b.isPlayer) {
-      chip(b, 'item', 'FENDER TOOK IT', 1400);
-      if (RR.Audio && RR.Audio.thud) RR.Audio.thud(0.35);
-      if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.16);
+      chip(b, 'item', 'SHIELD BLOCKED IT', 1500);
+      if (RR.Audio && RR.Audio.thud) RR.Audio.thud(0.7);
+      if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.5);
+      if (RR.Feel && RR.Feel.dilate) RR.Feel.dilate(0.7, 200);
     }
     return true;
   }
@@ -572,55 +690,86 @@
     const fx = Math.sin(b.heading), fz = Math.cos(b.heading);
 
     if (it.id === 'turbo') {
+      // A LIGHT-OFF, not a nudge. The instant kick is more than twice what it was, and behind it
+      // sits three seconds of sustained thrust that holds the hull at 55% over her rated top end —
+      // physics.js's 6 m/s² blow-off pulls against it the whole time, which is what makes the run
+      // feel like something straining rather than a number being set.
       b.boostEnergy = 1;
-      b.boostFull = 1.15;                    // physics.js pays 15% more off a full tank
-      b.boostKickT = 0.55;
-      const sp = Math.hypot(b.vel.x, b.vel.z), cap = (b.spec.top || 40) * 1.25;
+      b.boostFull = 1.35;
+      b.boostKickT = 1.5;
+      s.turbo = K.TURBO_T;
+      const sp = Math.hypot(b.vel.x, b.vel.z), cap = (b.spec.top || 40) * K.TURBO_TOP;
       if (sp < cap) {
         const add = Math.min(K.TURBO_KICK, cap - sp);
         b.vel.x += fx * add; b.vel.z += fz * add;
       }
-      popRing(b.pos.x, 0.4, b.pos.z, 9, 0x25ff7a);
-      if (RR.FX && RR.FX.spray) RR.FX.spray(b.pos.x - fx * b.radius * 1.4, b.pos.y + 0.3, b.pos.z - fz * b.radius * 1.4,
-        -b.vel.x * 0.3, 3.4, -b.vel.z * 0.3, 22, 5.5, 1.6);
-      if (b.isPlayer) {
-        chip(b, 'item', 'TURBO', 1400);
-        if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.34);
-        if (RR.Audio && RR.Audio.boostGate) RR.Audio.boostGate();
+      popRing(b.pos.x, 0.4, b.pos.z, 15, 0x25ff7a);
+      popWall(b.pos.x, b.pos.z, 13, 0x8dffc0);
+      if (RR.FX) {
+        const ex = b.pos.x - fx * b.radius * 1.5, ez = b.pos.z - fz * b.radius * 1.5;
+        if (RR.FX.burn) RR.FX.burn(ex, b.pos.y + 0.6, ez, -fx * 26, 2.5, -fz * 26, 46, 9);
+        if (RR.FX.spray) {
+          RR.FX.spray(ex, b.pos.y + 0.3, ez, -b.vel.x * 0.35, 6.0, -b.vel.z * 0.35, 40, 9.0, 2.4);
+          for (let i = 0; i < 2; i++) {
+            const side = i ? 1 : -1;
+            RR.FX.spray(b.pos.x + fz * side * b.radius, b.pos.y + 0.3, b.pos.z - fx * side * b.radius,
+              fz * side * 13, 4.5, -fx * side * 13, 14, 5.0, 1.8);
+          }
+        }
       }
+      chip(b, 'item', 'TURBO', 1400);
+      recoil(b, 0.75, 0.55, 240);
+      if (b.isPlayer && RR.Audio && RR.Audio.boostGate) RR.Audio.boostGate();
 
     } else if (it.id === 'fender') {
       s.shield = K.SHIELD_T;
-      if (b.isPlayer) {
-        chip(b, 'item', 'FENDER UP', 1600);
-        if (RR.Audio && RR.Audio.checkpoint) RR.Audio.checkpoint();
-      }
+      popRing(b.pos.x, b.pos.y + 0.6, b.pos.z, 12, 0x7ec8e3);
+      popWall(b.pos.x, b.pos.z, 11, 0x9fe8ff);
+      if (RR.FX && RR.FX.spray) RR.FX.spray(b.pos.x, b.pos.y + 0.5, b.pos.z, 0, 5.0, 0, 30, 6.5, 1.6);
+      chip(b, 'item', 'SHIELD UP', 1600);
+      recoil(b, 0.3, 0.85, 200);
+      if (b.isPlayer && RR.Audio && RR.Audio.checkpoint) RR.Audio.checkpoint();
 
     } else if (it.id === 'deepdish') {
       s.heavy = K.HEAVY_T;
+      s.slamCd = 0;
       b.mass = s.baseMass * K.HEAVY_MASS;
-      popRing(b.pos.x, 0.4, b.pos.z, 7, 0xffb03a);
-      if (b.isPlayer) {
-        chip(b, 'item', 'DEEP DISH · YOU ARE THE HEAVY ONE', 1800);
-        if (RR.Audio && RR.Audio.thud) RR.Audio.thud(0.55);
-      }
+      popRing(b.pos.x, 0.4, b.pos.z, 16, 0xffb03a);
+      popWall(b.pos.x, b.pos.z, 15, 0xffa03a);
+      if (RR.FX && RR.FX.detonation) RR.FX.detonation(b.pos.x, 0.3, b.pos.z, 1.1);
+      chip(b, 'item', 'DEEP DISH — YOU ARE HEAVY NOW', 1800);
+      recoil(b, 0.7, 0.72, 300);
+      if (b.isPlayer && RR.Audio && RR.Audio.thud) RR.Audio.thud(0.9);
 
     } else if (it.id === 'slick') {
-      const dx = b.pos.x - fx * (b.radius + 3.5), dz = b.pos.z - fz * (b.radius + 3.5);
-      if (slicks.length >= MAX_SLICK) slicks.shift();
-      slicks.push({ x: dx, z: dz, r: K.SLICK_R, t: K.SLICK_T, arm: K.DROP_ARM, owner: b });
-      if (RR.FX && RR.FX.spray) RR.FX.spray(dx, 0.4, dz, 0, 1.6, 0, 14, 3.2, 1.2, 2);
-      if (b.isPlayer) chip(b, 'item', 'SLICK ASTERN', 1400);
+      // Three patches, laid across the lane astern. One 5.6 m disc on a 60 m channel was a thing
+      // you drove past; a 25 m wide field of oil is a thing you have to pick a way through.
+      const lx = fz, lz = -fx;                     // the beam, for the fan
+      for (let i = 0; i < K.SLICK_N; i++) {
+        const off = (i - (K.SLICK_N - 1) / 2) * K.SLICK_SPREAD;
+        const back = b.radius + 3.5 + Math.abs(off) * 0.35;
+        const dx = b.pos.x - fx * back + lx * off, dz = b.pos.z - fz * back + lz * off;
+        if (slicks.length >= MAX_SLICK) slicks.shift();
+        slicks.push({ x: dx, z: dz, r: K.SLICK_R, t: K.SLICK_T, arm: K.DROP_ARM, owner: b });
+        if (RR.FX && RR.FX.spray) RR.FX.spray(dx, 0.4, dz, lx * off * 0.4, 2.4, lz * off * 0.4, 16, 4.0, 1.6, 2);
+      }
+      popRing(b.pos.x - fx * 6, 0.35, b.pos.z - fz * 6, 16, 0x7a5aa8);
+      chip(b, 'item', 'OIL SLICK ASTERN', 1400);
+      recoil(b, 0.22, 0, 0);
+      if (b.isPlayer && RR.Audio && RR.Audio.splash) RR.Audio.splash(0.4);
 
     } else if (it.id === 'dye') {
       const dx = b.pos.x - fx * (b.radius + 4.5), dz = b.pos.z - fz * (b.radius + 4.5);
       if (dyes.length >= MAX_DYE) dyes.shift();
       dyes.push({ x: dx, z: dz, r: K.DYE_R0, t: K.DYE_T, life: K.DYE_T, arm: K.DROP_ARM, owner: b });
-      if (RR.FX && RR.FX.dyeBurst) RR.FX.dyeBurst(dx, 0.8, dz, 34);
-      if (b.isPlayer) {
-        chip(b, 'item', 'RIVER DYE · GREEN ASTERN', 1500);
-        if (RR.Audio && RR.Audio.splash) RR.Audio.splash(0.5);
+      if (RR.FX && RR.FX.dyeBurst) {
+        RR.FX.dyeBurst(dx, 0.8, dz, 70);
+        RR.FX.dyeBurst(dx, 3.2, dz, 50);
       }
+      popRing(dx, 0.35, dz, 18, 0x2ecc71);
+      chip(b, 'item', 'GREEN DYE ASTERN', 1500);
+      recoil(b, 0.3, 0, 0);
+      if (b.isPlayer && RR.Audio && RR.Audio.splash) RR.Audio.splash(0.8);
 
     } else if (it.id === 'bowwave') {
       let hits = 0;
@@ -633,28 +782,29 @@
         const d = Math.sqrt(d2), k = 1 - d / K.WAVE_R;
         o.vel.x += (dx / d) * K.WAVE_PUSH * k;
         o.vel.z += (dz / d) * K.WAVE_PUSH * k;
-        o.angVel += (dx * fz - dz * fx > 0 ? 1 : -1) * 0.9 * k;
-        o.bumpRecover = Math.max(o.bumpRecover || 0, 0.30 + k * 0.5);
-        if (o.isPlayer) {
-          chip(o, 'bad', 'BOW WAVE', 1300);
-          if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.4 * k);
-        }
+        o.angVel += (dx * fz - dz * fx > 0 ? 1 : -1) * K.WAVE_SPIN * k;
+        o.bumpRecover = Math.max(o.bumpRecover || 0, 0.5 + k * 0.7);
+        if (RR.FX && RR.FX.spray) RR.FX.spray(o.pos.x, o.pos.y + 0.4, o.pos.z,
+          (dx / d) * 9, 5.0, (dz / d) * 9, 18, 5.5, 1.8);
+        land(o, b, 'SHOCKWAVE', 1.2 * k, 0.7, 220);
         hits++;
       }
       b.vel.x += fx * K.WAVE_SELF; b.vel.z += fz * K.WAVE_SELF;
       popRing(b.pos.x, 0.35, b.pos.z, K.WAVE_R, 0x9fe8ff);
-      if (RR.FX && RR.FX.spray) {
-        for (let i = 0; i < 7; i++) {
-          const a = (i / 7) * 6.283;
-          RR.FX.spray(b.pos.x + Math.sin(a) * 3, 0.5, b.pos.z + Math.cos(a) * 3,
-            Math.sin(a) * 12, 2.6, Math.cos(a) * 12, 4, 3.4, 1.5);
+      popWall(b.pos.x, b.pos.z, K.WAVE_R, 0x9fe8ff);
+      if (RR.FX) {
+        if (RR.FX.detonation) RR.FX.detonation(b.pos.x, 0.4, b.pos.z, 1.0);
+        if (RR.FX.spray) {
+          for (let i = 0; i < 16; i++) {
+            const a = (i / 16) * 6.283;
+            RR.FX.spray(b.pos.x + Math.sin(a) * 4, 0.5, b.pos.z + Math.cos(a) * 4,
+              Math.sin(a) * 22, 4.0, Math.cos(a) * 22, 8, 5.0, 2.0);
+          }
         }
       }
-      if (b.isPlayer) {
-        chip(b, 'item', hits ? 'BOW WAVE ×' + hits : 'BOW WAVE', 1400);
-        if (RR.Audio && RR.Audio.splash) RR.Audio.splash(0.85);
-        if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.28);
-      }
+      chip(b, 'item', hits ? 'SHOCKWAVE — HIT ' + hits : 'SHOCKWAVE', 1400);
+      recoil(b, 0.85, 0.5, 280);
+      if (b.isPlayer && RR.Audio && RR.Audio.splash) RR.Audio.splash(1.0);
 
     } else if (it.id === 'gulls') {
       const list = ahead(b, K.GULL_RANGE).slice(0, K.GULL_MAX);
@@ -663,45 +813,43 @@
         if (consumeShield(e.o)) continue;
         st(e.o).gulls = K.GULL_T;
         hits++;
-        if (e.o.isPlayer) chip(e.o, 'bad', 'GULLS', 1600);
+        // the flock ARRIVES: a burst of white over the wheelhouse on the frame it lands, so a
+        // rival two hundred metres up the road visibly disappears into birds
+        if (RR.FX && RR.FX.spray) RR.FX.spray(e.o.pos.x, e.o.pos.y + 3.4, e.o.pos.z, 0, 1.5, 0, 20, 7.0, 1.2, 3);
+        popRing(e.o.pos.x, e.o.pos.y + 0.5, e.o.pos.z, 8, 0xf2f6f8);
+        land(e.o, b, 'GULLS ON YOU', 0.7, 0.8, 220);
       }
       if (RR.Audio && RR.Audio.seagull) RR.Audio.seagull();
-      if (b.isPlayer) chip(b, 'item', hits ? 'GULL SWARM ×' + hits : 'GULL SWARM · NOBODY AHEAD', 1600);
+      chip(b, 'item', hits ? 'GULL SWARM — HIT ' + hits : 'GULL SWARM — NOBODY AHEAD', 1600);
+      recoil(b, 0.15, 0, 0);
 
-    } else if (it.id === 'gale') {
-      // One gust, off the lake, out of the east-north-east — the same wind for everybody, and it
-      // still catches each hull on the BEAM, which is the whole point of the item.
-      const gx = -0.95, gz = 0.31;
-      const list = ahead(b, K.GALE_RANGE);
-      let hits = 0;
-      for (const e of list) {
-        const o = e.o;
-        if (consumeShield(o)) continue;
-        const ofx = Math.sin(o.heading), ofz = Math.cos(o.heading);
-        let lat = gx * ofz - gz * ofx;                  // the gust, projected onto their beam
-        if (Math.abs(lat) < 0.35) lat = (lat < 0 ? -1 : 1) * 0.35;
-        const so = st(o);
-        so.gale = K.GALE_T;
-        so.galeX = ofz * lat; so.galeZ = -ofx * lat;    // unit beam vector, signed by the gust
-        o.bumpRecover = Math.max(o.bumpRecover || 0, 0.35);
-        hits++;
-        if (o.isPlayer) {
-          chip(o, 'bad', 'GALE OFF THE LAKE', 1800);
-          if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.45);
-        }
-        if (RR.FX && RR.FX.gust) RR.FX.gust(o.pos.x, o.pos.y + 1.4, o.pos.z, so.galeX, so.galeZ, 16);
+    } else if (it.id === 'torpedo') {
+      // Fired UP THE ROUTE, not across open water: it advances in arc length and only slides
+      // sideways to match its target, so it follows every bend of the river, never leaves the
+      // channel, and cannot clip a wall. It is also the one item that reaches the leader from last
+      // place, which is exactly the job the draw table gives it.
+      const list = ahead(b, K.TORP_RANGE);
+      const target = list.length ? list[0].o : null;      // whoever is next up the road; see reTarget
+      const route = S.route;
+      if (route) {
+        U().pathAt(route, U().clamp(b.routeD || 0, 0, route.len - 1), TPT);
+        const off = (b.pos.x - TPT.x) * TPT.tz - (b.pos.z - TPT.z) * TPT.tx;
+        if (torps.length >= MAX_TORP) torps.shift();
+        torps.push({ d: (b.routeD || 0) + b.radius + 2, off, x: b.pos.x, z: b.pos.z,
+          hx: fx, hz: fz, life: K.TORP_LIFE, arm: K.TORP_ARM, acc: 0, reT: 0, owner: b, target,
+          // the warning latch lives on the PROJECTILE, never on the victim: one that expires
+          // harmlessly must not leave a boat permanently un-warnable about the next one
+          warned: !!(target && target.isPlayer) });
       }
-      // The gust is a WEATHER EVENT, not a puff: it keeps blowing for its whole 1.2 s across the
-      // whole channel, and the sustained emitter below is what makes it read as one from the chase
-      // camera. A single burst at the moment of firing was a scatter of dots and nothing else.
-      galeFX.t = K.GALE_T + 0.35; galeFX.age = 0; galeFX.acc = 0;
-      galeFX.x = b.pos.x; galeFX.z = b.pos.z;
-      galeFX.gx = gx; galeFX.gz = gz;
-      galeFX.fx = fx; galeFX.fz = fz;
-      if (b.isPlayer) {
-        chip(b, 'item', hits ? 'GALE ×' + hits : 'GALE · NOBODY AHEAD', 1600);
-        if (RR.Audio && RR.Audio.airhorn) RR.Audio.airhorn();
+      popRing(b.pos.x + fx * 5, 0.4, b.pos.z + fz * 5, 12, 0xff5a3a);
+      if (RR.FX) {
+        if (RR.FX.burn) RR.FX.burn(b.pos.x + fx * 5, b.pos.y + 0.5, b.pos.z + fz * 5, fx * 20, 2, fz * 20, 26, 7);
+        if (RR.FX.spray) RR.FX.spray(b.pos.x + fx * 5, 0.4, b.pos.z + fz * 5, fx * 16, 4.5, fz * 16, 26, 6.0, 2.0);
       }
+      if (target && target.isPlayer) chip(target, 'bad', 'TORPEDO INCOMING — ' + nameOf(b), 2200);
+      chip(b, 'item', target ? 'TORPEDO AWAY — ' + nameOf(target) : 'TORPEDO — NOBODY AHEAD', 1700);
+      recoil(b, 0.55, 0.6, 260);
+      if (b.isPlayer && RR.Audio && RR.Audio.airhorn) RR.Audio.airhorn();
     }
     if (b.isPlayer) lastFireT = RR.Engine.time();
     if (useHook) useHook(b, it);
@@ -752,9 +900,48 @@
       const s = b._pu;
       if (!s) continue;
       if (s.roll > 0) s.roll = Math.max(0, s.roll - dt);
+      if (s.slamCd > 0) s.slamCd -= dt;
+      if (s.turbo > 0) {
+        s.turbo -= dt;
+        // The sustained half of the item. Hold the burn hot so effects.js keeps the flame lit and
+        // the rooster tail running, and push towards the raised ceiling every frame — physics.js
+        // is bleeding her back down at 6 m/s² the whole time, so this is a fight, not an assignment.
+        b.boostHeat = Math.max(b.boostHeat || 0, 0.95);
+        b.turboFlame = 1;
+        const fx = Math.sin(b.heading), fz = Math.cos(b.heading);
+        const cap = (b.spec.top || 40) * K.TURBO_TOP;
+        const sp = Math.hypot(b.vel.x, b.vel.z);
+        if (sp < cap) {
+          const add = Math.min(K.TURBO_ACC * dt, cap - sp);
+          b.vel.x += fx * add; b.vel.z += fz * add;
+        }
+        // It BURNS for the whole three seconds. A flash at the trigger and nothing after it is the
+        // exact note the owner gave — you have to be able to look at a boat mid-race and see that
+        // she is on a TURBO right now, from any angle, including from in front of her.
+        s.burnAcc = (s.burnAcc || 0) + 90 * dt;
+        const nb = Math.floor(s.burnAcc);
+        s.burnAcc -= nb;
+        if (nb && RR.FX && RR.FX.burn) {
+          RR.FX.burn(b.pos.x - fx * b.radius * 1.5, b.pos.y + 0.55, b.pos.z - fz * b.radius * 1.5,
+            -fx * 24 - b.vel.x * 0.15, 1.8, -fz * 24 - b.vel.z * 0.15, Math.min(4, nb), 7);
+        }
+        // …and the prop wash reads on the RECEIVING end: anybody you go past at this speed gets
+        // shoved off their line by the water you just moved.
+        for (const o of S.boats) {
+          if (o === b || o.finished) continue;
+          const dx = o.pos.x - b.pos.x, dz = o.pos.z - b.pos.z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 > 196 || d2 < 1e-4) continue;               // 14 m
+          const d = Math.sqrt(d2), k = 1 - d / 14;
+          o.vel.x += (dx / d) * K.TURBO_WASH * k * dt;
+          o.vel.z += (dz / d) * K.TURBO_WASH * k * dt;
+          if (o.isPlayer && RR.Camera && RR.Camera.kick) RR.Camera.kick(1.6 * k * dt);
+        }
+        if (s.turbo <= 0) b.turboFlame = 0;
+      }
       if (s.shield > 0) {
         s.shield -= dt;
-        // the fender eats one real impact as well as one item — that is what makes it worth holding
+        // the shield eats one real impact as well as one item — that is what makes it worth holding
         if ((b.bumpRecover || 0) > 0 && (b.crashTimer || 0) > 0.2) { b.bumpRecover = 0; consumeShield(b); }
       }
       if (s.heavy > 0) {
@@ -776,20 +963,36 @@
         b.angVel = s.spinDir * K.SPIN_W;
         const k = Math.exp(-K.SPIN_DRAG * dt);
         b.vel.x *= k; b.vel.z *= k;
+        // a hull going round backwards throws water off the whole of one side
+        if (RR.FX && RR.FX.spray && Math.random() < dt * 26) {
+          const a = Math.random() * 6.283;
+          RR.FX.spray(b.pos.x + Math.sin(a) * b.radius, b.pos.y + 0.3, b.pos.z + Math.cos(a) * b.radius,
+            Math.sin(a) * 7, 3.0, Math.cos(a) * 7, 4, 3.6, 1.4);
+        }
       }
-      if (s.gale > 0) {
-        s.gale -= dt;
-        b.vel.x += s.galeX * K.GALE_ACC * dt;
-        b.vel.z += s.galeZ * K.GALE_ACC * dt;
+      if (s.blind > 0) {
+        s.blind -= dt;
+        const k = Math.exp(-K.DYE_DRAG * dt);       // forty pounds of powder is thick water
+        b.vel.x *= k; b.vel.z *= k;
       }
-      if (s.blind > 0) s.blind -= dt;
-      if (s.gulls > 0) s.gulls -= dt;
-      // A rival who cannot see WEAVES; the player who cannot see gets the windscreen instead, which
-      // is punishment enough without also taking the wheel off them.
-      if (!b.isPlayer) {
-        const w = (s.blind > 0 ? 0.95 : 0) + (s.gulls > 0 ? 0.85 : 0);
-        if (w > 0) {
-          b.heading = U().wrapAngle(b.heading + Math.sin(t * 4.7 + s.seed) * w * dt);
+      if (s.gulls > 0) {
+        s.gulls -= dt;
+        // Birds are not scenery: they cost you the top of the rev range, whoever you are.
+        const cap = (b.spec.top || 40) * K.GULL_TOP;
+        const sp = Math.hypot(b.vel.x, b.vel.z);
+        if (sp > cap) {
+          const k = Math.max(cap / sp, 1 - (9.0 * dt) / sp);
+          b.vel.x *= k; b.vel.z *= k;
+        }
+      }
+      // A rival who cannot see WEAVES. The player keeps the wheel — the windscreen is punishment
+      // enough — but gulls fighting for the helm is the whole reason the item is worth drawing, so
+      // the player gets a real shove on the heading too, small enough to catch and correct.
+      const w = (s.blind > 0 ? 0.95 : 0) + (s.gulls > 0 ? 0.85 : 0);
+      if (w > 0) {
+        const amp = b.isPlayer ? (s.gulls > 0 ? K.GULL_WHEEL : 0) : w;
+        if (amp > 0) b.heading = U().wrapAngle(b.heading + Math.sin(t * 4.7 + s.seed) * amp * dt);
+        if (!b.isPlayer) {
           const k = Math.exp(-0.35 * dt);
           b.vel.x *= k; b.vel.z *= k;
         }
@@ -798,20 +1001,43 @@
   }
 
   // DEEP DISH does not just weigh more, it MOVES people. Mass alone reads as "they bounced off me";
-  // the item has to read as "I went through them".
+  // the item has to read as "I went through them". Two layers: a continuous shove that lasts as
+  // long as you are on top of somebody, and a one-shot SLAM the first time each victim is caught —
+  // a full 21 m/s throw with a spin on it, because the moment of contact is the event.
+  // x3.4 on a 0.98 m hull is a 3.3 m bite — you had to be almost touching, and rivals planted at
+  // 10, 13 and 18 m were simply never caught. It hits like a truck when it connects, so the
+  // problem was reach, not force: x9 gives it ~8.8 m, still far short of SHOCKWAVE's 34 m but wide
+  // enough that driving AT someone actually collects them.
+  function crushR(b) { return (b.radius || 3) * 9.0; }
   function bulldoze(b, dt) {
+    const rr = crushR(b);
     for (const o of S.boats) {
       if (o === b || o.finished) continue;
       const dx = o.pos.x - b.pos.x, dz = o.pos.z - b.pos.z;
-      const rr = (b.radius + o.radius) * 1.5;
       const d2 = dx * dx + dz * dz;
       if (d2 > rr * rr || d2 < 1e-4) continue;
-      if (consumeShield(o)) continue;
+      const so = st(o);
+      if (so.slamCd > 0) {
+        const d = Math.sqrt(d2);
+        o.vel.x += (dx / d) * 70 * dt; o.vel.z += (dz / d) * 70 * dt;
+        b.bumpRecover = 0;
+        continue;
+      }
+      if (consumeShield(o, b)) { so.slamCd = K.SLAM_CD; continue; }
       const d = Math.sqrt(d2);
-      o.vel.x += (dx / d) * 26 * dt; o.vel.z += (dz / d) * 26 * dt;
-      o.bumpRecover = Math.max(o.bumpRecover || 0, 0.45);
+      const fx = Math.sin(b.heading), fz = Math.cos(b.heading);
+      o.vel.x += (dx / d) * K.SLAM_PUSH; o.vel.z += (dz / d) * K.SLAM_PUSH;
+      o.angVel += (dx * fz - dz * fx > 0 ? 1 : -1) * K.SLAM_SPIN;
+      o.bumpRecover = Math.max(o.bumpRecover || 0, 1.1);
+      so.slamCd = K.SLAM_CD;
       b.bumpRecover = 0;                     // the heavy one is not rattled by the light one
-      if (o.isPlayer && RR.Camera && RR.Camera.kick) RR.Camera.kick(2.4 * dt);
+      popRing(o.pos.x, o.pos.y + 0.5, o.pos.z, 12, 0xffb03a);
+      if (RR.FX && RR.FX.detonation) RR.FX.detonation(o.pos.x, o.pos.y + 0.3, o.pos.z, 0.85);
+      land(o, b, 'RUN OVER BY DEEP DISH', 1.5, 0.66, 220);
+      if (b.isPlayer) {
+        if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.45);
+        if (RR.Audio && RR.Audio.thud) RR.Audio.thud(0.9);
+      }
     }
   }
 
@@ -831,12 +1057,13 @@
         s.spin = K.SPIN_T;
         s.spinDir = (b.visRoll || 0) >= 0 ? 1 : -1;
         p.t = Math.min(p.t, 0.35);           // a slick is spent on the boat that found it
-        if (b.isPlayer) {
-          chip(b, 'bad', 'SLICK — NO GRIP', 1600);
-          if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.5);
-          if (RR.Audio && RR.Audio.splash) RR.Audio.splash(0.7);
+        popRing(b.pos.x, 0.35, b.pos.z, 14, 0x7a5aa8);
+        if (RR.FX && RR.FX.spray) {
+          RR.FX.spray(b.pos.x, b.pos.y + 0.3, b.pos.z, 0, 4.5, 0, 34, 6.0, 2.0, 2);
+          RR.FX.spray(b.pos.x, b.pos.y + 0.3, b.pos.z, 0, 3.0, 0, 16, 5.0, 1.5);
         }
-        if (RR.FX && RR.FX.spray) RR.FX.spray(b.pos.x, b.pos.y + 0.3, b.pos.z, 0, 3.0, 0, 12, 4.5, 1.3, 2);
+        land(b, p.owner, 'OIL SLICK — SPINNING OUT', 1.1, 0.6, 300);
+        if (b.isPlayer && RR.Audio && RR.Audio.splash) RR.Audio.splash(0.9);
         break;
       }
     }
@@ -851,44 +1078,131 @@
         if (U().dist2(b.pos.x, b.pos.z, p.x, p.z) > p.r * p.r) continue;
         const s = st(b);
         if (s.shield > 0) { consumeShield(b); continue; }
-        if (s.blind <= 0 && b.isPlayer) chip(b, 'bad', 'BLIND — RIVER DYE', 1400);
+        if (s.blind <= 0) land(b, p.owner, 'BLINDED BY GREEN DYE', 0.45, 0.8, 200);
         s.blind = K.BLIND_T;
       }
-      if (RR.FX && RR.FX.dyeBurst && Math.random() < dt * 8) {
+      if (RR.FX && RR.FX.dyeBurst && Math.random() < dt * 14) {
         RR.FX.dyeBurst(p.x + (Math.random() - 0.5) * p.r, 0.6 + Math.random() * 2,
-          p.z + (Math.random() - 0.5) * p.r, 2);
+          p.z + (Math.random() - 0.5) * p.r, 3);
       }
     }
     for (let i = rings.length - 1; i >= 0; i--) {
       rings[i].t += dt;
       if (rings[i].t >= rings[i].life) rings.splice(i, 1);
     }
-    if (galeFX.t > 0) {
-      galeFX.t -= dt;
-      galeFX.age += dt;
-      // laid across the channel a little up the road, so the gust sweeps THROUGH the field ahead
-      const cx = galeFX.x + galeFX.fx * 48 + galeFX.gx * galeFX.age * 22;
-      const cz = galeFX.z + galeFX.fz * 48 + galeFX.gz * galeFX.age * 22;
-      galeFX.acc += 150 * dt;                    // ~150 streaks a second while the gust is blowing
-      const n = Math.floor(galeFX.acc);
-      galeFX.acc -= n;
-      if (n && RR.FX && RR.FX.gust) RR.FX.gust(cx, 4.0, cz, galeFX.gx, galeFX.gz, n);
-      if (galeMesh) {
-        const k = Math.min(1, galeFX.age * 4) * U().clamp(galeFX.t / 0.45, 0, 1);
-        galeMesh.visible = k > 0.01;
-        galeMesh.material.opacity = 0.78 * k;
-        galeMesh.position.set(cx, 0.34, cz);
-        galeMesh.rotation.set(0, Math.atan2(galeFX.gx, galeFX.gz) + Math.PI / 2, 0);
-        galeMesh.scale.set(150, 1, 86);
-      }
-    } else if (galeMesh && galeMesh.visible) galeMesh.visible = false;
+    for (let i = walls.length - 1; i >= 0; i--) {
+      walls[i].t += dt;
+      if (walls[i].t >= walls[i].life) walls.splice(i, 1);
+    }
+    updateTorps(dt);
   }
-  const galeFX = { t: 0, age: 0, acc: 0, x: 0, z: 0, gx: -1, gz: 0, fx: 0, fz: 1 };
+
+  // ---------------------------------------------------------------------------------------------
+  // THE TORPEDO. It runs on the ROUTE, not on open water: d is arc length up the course and off is
+  // a lateral offset clamped inside the channel, so it takes every bend the river takes, it can
+  // never clip a quay or a lock wall, and it reaches the leader from last place. Deterministic —
+  // no rolls anywhere in here, only the particles.
+  // ---------------------------------------------------------------------------------------------
+  function updateTorps(dt) {
+    const route = S && S.route;
+    for (let i = torps.length - 1; i >= 0; i--) {
+      const p = torps[i];
+      p.life -= dt; p.arm -= dt;
+      if (!route || p.life <= 0) { detonate(p, null); torps.splice(i, 1); continue; }
+      p.d += K.TORP_SPD * dt;
+      if (p.d >= route.len - 4) { detonate(p, null); torps.splice(i, 1); continue; }
+
+      // Re-acquire four times a second: it chases whoever is NEXT up the road, so a rival who
+      // shields it or slides out of the way does not save the boat in front of them.
+      p.reT -= dt;
+      if (p.reT <= 0) {
+        p.reT = 0.25;
+        let best = 1e9, pick = null;
+        for (const b of S.boats) {
+          if (b === p.owner || b.finished || b.remote) continue;
+          const gapM = (b.routeD || 0) - p.d;
+          if (gapM > 1 && gapM < best) { best = gapM; pick = b; }
+        }
+        if (pick) p.target = pick;
+      }
+      // aim: slide across to wherever the target is sitting in the channel
+      const tgt = p.target;
+      if (tgt && !tgt.finished) {
+        U().pathAt(route, U().clamp(tgt.routeD || 0, 0, route.len - 1), TPT);
+        const toff = (tgt.pos.x - TPT.x) * TPT.tz - (tgt.pos.z - TPT.z) * TPT.tx;
+        p.off = U().damp(p.off, toff, K.TORP_TRACK, dt);
+      }
+      U().pathAt(route, U().clamp(p.d, 0, route.len - 1), PPT);
+      const half = Math.min(30, Math.max(5, PPT.w - 3));
+      p.off = U().clamp(p.off, -half, half);
+      const nx = PPT.x + PPT.tz * p.off, nz = PPT.z - PPT.tx * p.off;
+      const mx = nx - p.x, mz = nz - p.z;
+      if (mx * mx + mz * mz > 1e-6) { const l = Math.hypot(mx, mz); p.hx = mx / l; p.hz = mz / l; }
+      p.x = nx; p.z = nz;
+
+      // The wake, rate-limited per second so the trail is the same length whatever the frame rate
+      // is doing. Deliberately NOT FX.gust — that emitter seeds across a seventy-metre band
+      // because it was built for a weather front, and scattering a torpedo's wake over half the
+      // channel is exactly how you lose the line that says which way the thing is going.
+      p.acc += 220 * dt;
+      const n = Math.min(8, Math.floor(p.acc));
+      p.acc -= Math.floor(p.acc);
+      if (n && RR.FX) {
+        // The churn is the long-lived weightless streak, seeded in a narrow band right on the
+        // tail: at 62 m/s ordinary spray dies before it has drawn a line, and a torpedo with no
+        // line behind it is a shape you cannot tell the direction of.
+        if (RR.FX.gust) RR.FX.gust(p.x - p.hx * 4, 0.8, p.z - p.hz * 4, -p.hx, -p.hz, n, 3.5, 5);
+        if (RR.FX.spray) RR.FX.spray(p.x - p.hx * 3.2, 0.45, p.z - p.hz * 3.2,
+          -p.hx * 10, 7.5, -p.hz * 10, Math.min(4, n), 3.2, 2.2, 3);   // the rooster tail on top
+      }
+
+      let hit = null;
+      for (const b of S.boats) {
+        if (b.finished || b.remote) continue;
+        if (b === p.owner && p.arm > 0) continue;
+        const rr = K.TORP_R + b.radius;
+        if (U().dist2(b.pos.x, b.pos.z, p.x, p.z) > rr * rr) continue;
+        hit = b; break;
+      }
+      // the warning: you get roughly a second and a half of knowing it is coming, which is the
+      // difference between "what just happened" and "I nearly got out of the way"
+      if (!hit && tgt && tgt.isPlayer && !p.warned && (tgt.routeD || 0) - p.d < K.TORP_SPD * 1.5) {
+        p.warned = true;
+        chip(tgt, 'bad', 'TORPEDO INCOMING — ' + nameOf(p.owner), 1800);
+      }
+      if (hit) { detonate(p, hit); torps.splice(i, 1); }
+    }
+  }
+
+  function detonate(p, victim) {
+    popRing(p.x, 0.4, p.z, 26, 0xff5a3a);
+    popRing(p.x, 0.4, p.z, 16, 0xffd0a0);
+    popWall(p.x, p.z, 24, 0xcfe8ff);
+    if (RR.FX) {
+      if (RR.FX.detonation) RR.FX.detonation(p.x, 0.4, p.z, victim ? 1.7 : 1.0);
+      if (RR.FX.burn) RR.FX.burn(p.x, 1.2, p.z, 0, 9, 0, victim ? 40 : 18, 12);
+    }
+    if (!victim) return;
+    if (consumeShield(victim)) return;
+    const s = st(victim);
+    s.spin = K.SPIN_T * 1.3;
+    s.spinDir = (victim.visRoll || 0) >= 0 ? 1 : -1;
+    victim.vel.x *= K.TORP_SLOW; victim.vel.z *= K.TORP_SLOW;
+    victim.vel.x += p.hx * 9; victim.vel.z += p.hz * 9;      // and a shove down the road with it
+    victim.angVel += s.spinDir * 4.0;
+    victim.bumpRecover = Math.max(victim.bumpRecover || 0, 1.6);
+    land(victim, p.owner, 'TORPEDO HIT', 1.6, 0.5, 340);
+    if (victim.isPlayer && RR.Audio && RR.Audio.thud) RR.Audio.thud(1.0);
+    if (p.owner && p.owner.isPlayer) {
+      chip(p.owner, 'item', 'TORPEDO HIT — ' + nameOf(victim), 1800);
+      if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.3);
+    }
+  }
 
   // ---------------------------------------------------------------------------------------------
   // THE AI'S ITEM BRAIN. Difficulty is PATIENCE, not accuracy: a ROOKIE lets fly the moment the
-  // slot locks and wastes a GALE on an empty river; a LEGEND sits on it until you are actually up
-  // the road in front of her.
+  // slot locks and wastes a TORPEDO on an empty river; a LEGEND sits on it until you are actually
+  // up the road in front of her.
   // ---------------------------------------------------------------------------------------------
   function aiBrain(b, dt) {
     const s = st(b);
@@ -934,9 +1248,9 @@
       case 'deepdish': return nearest < 24;
       case 'slick': return nearestBehind < 45;
       case 'dye': return nearestBehind < 40;
-      case 'bowwave': return nearest < 17;
+      case 'bowwave': return nearest < 22;
       case 'gulls': return anyAhead;
-      case 'gale': return anyAhead;
+      case 'torpedo': return anyAhead;
       default: return true;
     }
   }
@@ -1034,22 +1348,75 @@
       const rad = U().lerp(r.r0, r.r1, r.t / r.life);
       SC.set(rad, 1, rad);
       M4.compose(V3, Q0, SC);
+      setTint(ringIM, n, r.color);
       ringIM.setMatrixAt(n++, M4);
     }
     ringIM.visible = n > 0;
     if (n) ringIM.material.opacity = 0.62 * (1 - rings[0].t / rings[0].life) + 0.12;
     for (let i = n; i < MAX_RING; i++) ringIM.setMatrixAt(i, HIDE);
     ringIM.instanceMatrix.needsUpdate = true;
+    if (ringIM.instanceColor) ringIM.instanceColor.needsUpdate = true;
+
+    // the wave walls: radius races out, height collapses as it goes, so it reads as water
+    // spreading and flattening rather than a cylinder being scaled
+    n = 0;
+    for (const w of walls) {
+      if (n >= MAX_WALL) break;
+      const u = w.t / w.life;
+      Q0.identity();
+      V3.set(w.x, U().waterHeight(w.x, w.z, t, RR.River.waveAmp(w.x, w.z)) - 0.2, w.z);
+      const rad = U().lerp(w.r0, w.r1, Math.pow(u, 0.55));
+      SC.set(rad, w.h * (1 - u) * (1 - u) + 0.4, rad);
+      M4.compose(V3, Q0, SC);
+      setTint(wallIM, n, w.color);
+      wallIM.setMatrixAt(n++, M4);
+    }
+    wallIM.visible = n > 0;
+    if (n) wallIM.material.opacity = 0.62 * (1 - walls[0].t / walls[0].life);
+    for (let i = n; i < MAX_WALL; i++) wallIM.setMatrixAt(i, HIDE);
+    wallIM.instanceMatrix.needsUpdate = true;
+    if (wallIM.instanceColor) wallIM.instanceColor.needsUpdate = true;
+
+    n = 0;
+    for (const p of torps) {
+      if (n >= MAX_TORP) break;
+      Q0.setFromAxisAngle(UP, Math.atan2(p.hx, p.hz));
+      V3.set(p.x, U().waterHeight(p.x, p.z, t, RR.River.waveAmp(p.x, p.z)) + 0.12, p.z);
+      SC.set(1, 1 + Math.sin(t * 24) * 0.10, 1);
+      M4.compose(V3, Q0, SC);
+      torpIM.setMatrixAt(n++, M4);
+    }
+    torpIM.visible = n > 0;
+    for (let i = n; i < MAX_TORP; i++) torpIM.setMatrixAt(i, HIDE);
+    torpIM.instanceMatrix.needsUpdate = true;
   }
 
   function drawAuras(t) {
-    let nf = 0, nh = 0;
+    let nf = 0, nh = 0, nb = 0, nc = 0;
     for (const b of S.boats) {
       const s = b._pu;
       if (!s) continue;
+      if (s.shield > 0 && nb < MAX_AURA) {
+        const fade = s.shield < 2 ? (0.55 + 0.45 * Math.sin(t * 22)) : 1;
+        Q0.setFromAxisAngle(UP, t * 0.35);
+        const r = (b.radius + 1.5) * fade;
+        V3.set(b.pos.x, b.pos.y + 0.5, b.pos.z);
+        SC.set(r, r * 0.72, r);
+        M4.compose(V3, Q0, SC);
+        bubbleIM.setMatrixAt(nb++, M4);
+      }
+      if (s.heavy > 0 && nc < MAX_AURA) {
+        // the crush zone, at the radius it actually bites at — the one honest warning a rival gets
+        Q0.setFromAxisAngle(UP, -t * 0.9);
+        const r = crushR(b) * (1 + Math.sin(t * 6) * 0.04);
+        V3.set(b.pos.x, U().waterHeight(b.pos.x, b.pos.z, t, RR.River.waveAmp(b.pos.x, b.pos.z)) + 0.14, b.pos.z);
+        SC.set(r, 1, r);
+        M4.compose(V3, Q0, SC);
+        crushIM.setMatrixAt(nc++, M4);
+      }
       if (s.shield > 0 && nf < MAX_AURA) {
         // two hoops, one at the waterline and one at the rubbing strake, counter-rotating slowly.
-        // The last two seconds strobe, so a fender about to lapse says so.
+        // The last two seconds strobe, so a shield about to lapse says so.
         const fade = s.shield < 2 ? (0.55 + 0.45 * Math.sin(t * 22)) : 1;
         for (let k = 0; k < 2 && nf < MAX_AURA; k++) {
           Q0.setFromAxisAngle(UP, t * (k ? -0.7 : 0.7));
@@ -1071,20 +1438,31 @@
     }
     fenderIM.visible = nf > 0;
     heavyIM.visible = nh > 0;
+    bubbleIM.visible = nb > 0;
+    crushIM.visible = nc > 0;
     for (let i = nf; i < MAX_AURA; i++) fenderIM.setMatrixAt(i, HIDE);
     for (let i = nh; i < MAX_AURA; i++) heavyIM.setMatrixAt(i, HIDE);
+    for (let i = nb; i < MAX_AURA; i++) bubbleIM.setMatrixAt(i, HIDE);
+    for (let i = nc; i < MAX_AURA; i++) crushIM.setMatrixAt(i, HIDE);
     fenderIM.instanceMatrix.needsUpdate = true;
     heavyIM.instanceMatrix.needsUpdate = true;
+    bubbleIM.instanceMatrix.needsUpdate = true;
+    crushIM.instanceMatrix.needsUpdate = true;
 
-    // gulls over whoever cannot see: eight birds per victim, orbiting the wheelhouse
+    // Sixteen birds per victim, in two rings at different heights and speeds. Eight in one flat
+    // orbit read as a fairground ride; two counter-set rings read as a boat disappearing into a
+    // flock, which is what the item is called.
     let g = 0;
     for (const b of S.boats) {
       const s = b._pu;
       if (!s || s.gulls <= 0 || b.isPlayer) continue;   // you are INSIDE your own flock; see the windscreen
-      for (let i = 0; i < 8 && g < MAX_GULL; i++, g++) {
-        const a = t * 2.4 + i * 0.785;
-        const r = 3.2 + (i % 3) * 0.9;
-        V3.set(b.pos.x + Math.sin(a) * r, b.pos.y + 2.4 + Math.sin(t * 3 + i) * 0.7, b.pos.z + Math.cos(a) * r);
+      for (let i = 0; i < 16 && g < MAX_GULL; i++, g++) {
+        const ring = i & 1;
+        const a = t * (ring ? -1.9 : 2.6) + i * 0.785;
+        const r = 2.6 + (i % 5) * 0.85;
+        V3.set(b.pos.x + Math.sin(a) * r,
+          b.pos.y + (ring ? 3.6 : 2.2) + Math.sin(t * 3 + i) * 0.8,
+          b.pos.z + Math.cos(a) * r);
         Q0.setFromAxisAngle(UP, -a);
         SC.set(1, 0.45 + 0.55 * Math.abs(Math.sin(t * 8 + i)), 1);
         M4.compose(V3, Q0, SC);
@@ -1110,30 +1488,24 @@
   // ---------------------------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------------------------
-  // Items are a RACE feature, with one deliberate exception. The Architecture Tour is a ride, a
-  // time trial is a record against a ghost that never had them, and multiplayer has no authority
-  // to agree on who got shoved — those three run clean.
-  //
-  // THE COLD OPEN KEEPS THEM. It is sixty seconds of the widest, emptiest water in the game with
-  // no rivals, no clock and nothing overhead that can hurt you, which makes it the best place
-  // anywhere to find out what a gold crate does. A tutorial that says "run through one" over an
-  // empty river teaches nothing, and one that only states a fact teaches less than that.
+  // Items are a RACE feature. The Architecture Tour is a ride, a time trial is a record against a
+  // ghost that never had them, and multiplayer has no authority to agree on who got shoved — those
+  // three run clean.
   function active() {
     return !!(S && group && PU.enabled() && crates.length && !S.tour && !S.timeTrial && !S.mp);
   }
   PU.active = active;
 
   function dropEverything() {
-    slicks.length = 0; dyes.length = 0; rings.length = 0;
-    galeFX.t = 0;
-    if (galeMesh) galeMesh.visible = false;
+    slicks.length = 0; dyes.length = 0; rings.length = 0; walls.length = 0; torps.length = 0;
     if (S && S.boats) {
       for (const b of S.boats) {
         const s = b._pu;
         if (!s) continue;
         if (s.heavy > 0) b.mass = s.baseMass;
         s.held = null; s.roll = 0; s.shield = 0; s.heavy = 0; s.spin = 0;
-        s.blind = 0; s.gulls = 0; s.gale = 0;
+        s.blind = 0; s.gulls = 0; s.turbo = 0; s.slamCd = 0;
+        b.turboFlame = 0;
       }
     }
     if (overlay) overlay.visible = false;
@@ -1161,14 +1533,14 @@
         if (o.material) o.material.dispose();
       });
     }
-    group = crateIM = haloIM = slickIM = dyeIM = fenderIM = heavyIM = ringIM = gullIM = null;
-    galeMesh = null;
+    group = crateIM = haloIM = slickIM = dyeIM = fenderIM = bubbleIM = heavyIM = null;
+    crushIM = ringIM = wallIM = gullIM = torpIM = null;
     overlay = overlayMat = null;
-    crates = []; slicks = []; dyes = []; rings = [];
+    crates = []; slicks = []; dyes = []; rings = []; walls = []; torps = [];
     S = null; keyWas = false; lastFireT = -1e9;
+    lastHit.label = ''; lastHit.from = ''; lastHit.t = -1e9;
   };
 
-  const attractPilot = { boat: null, ctl: null };     // hoisted: no allocation in update()
   // race.js calls this once per frame with the live race state.
   PU.update = function (dt, state) {
     if (state) S = state;
@@ -1181,20 +1553,7 @@
       collect(dt);
       applyEffects(dt, t);
       updateHazards(dt);
-      // In the attract loop the cold open has an AI at the PLAYER'S wheel, and an attract demo
-      // that collects a crate and then never uses it is a demo of half the feature.
-      const auto = !!(S.opening && RR.Opening && RR.Opening.attracting && RR.Opening.attracting());
-      for (const b of S.boats) if ((auto || !b.isPlayer) && !b.remote && !b.finished) aiBrain(b, dt);
-      // …and that pilot is opening.js's, not main.js's, so nothing was steering it at a crate. A
-      // demo that sails clean between the two things it is demonstrating is worse than one that
-      // never shows them. Ordering is the reason this can live here at all: opening.js registered
-      // its per-frame callback at load and main.js registered its own at boot, so the AI has
-      // already written ctl.steer this frame and physics has not read it yet.
-      if (auto && RR.Opening.control) {
-        attractPilot.boat = S.player;
-        attractPilot.ctl = RR.Opening.control();
-        if (attractPilot.ctl) PU.aiSteer(attractPilot, dt);
-      }
+      for (const b of S.boats) if (!b.isPlayer && !b.remote && !b.finished) aiBrain(b, dt);
       pollPlayerKey();
     }
     drawCrates(t);
@@ -1248,15 +1607,37 @@
     const p = S && S.player && S.player._pu;
     if (!p) return null;
     return { shield: Math.max(0, p.shield), heavy: Math.max(0, p.heavy), spin: Math.max(0, p.spin),
-      blind: Math.max(0, p.blind), gulls: Math.max(0, p.gulls), gale: Math.max(0, p.gale) };
+      blind: Math.max(0, p.blind), gulls: Math.max(0, p.gulls), turbo: Math.max(0, p.turbo) };
+  };
+  // Seconds until the live torpedo reaches the player, or 0. The HUD's incoming warning reads this.
+  PU.incoming = function () {
+    const me = S && S.player;
+    if (!me || !torps.length) return 0;
+    let best = 0;
+    for (const p of torps) {
+      if (p.owner === me) continue;
+      const gapM = (me.routeD || 0) - p.d;
+      if (gapM <= 0 || gapM > K.TORP_SPD * 3) continue;
+      const eta = gapM / K.TORP_SPD;
+      if (!best || eta < best) best = eta;
+    }
+    return best;
+  };
+  // What last landed on the PLAYER and who threw it: {label, from, ago}. The HUD raises its own
+  // plate off status() rising edges, and this is how that plate says "TORPEDO HIT — LOU CANAL"
+  // instead of "SPUN OUT".
+  PU.lastHit = function () {
+    return { label: lastHit.label, from: lastHit.from, ago: RR.Engine.time() - lastHit.t };
   };
   PU.debug = function () {
     return {
       enabled: PU.enabled(), active: active(),
       crates: crates.length, live: crates.filter((c) => !c.taken).length,
       held: PU.heldId(), rolling: PU.rolling(),
-      slicks: slicks.length, dyes: dyes.length, rings: rings.length,
-      gale: +galeFX.t.toFixed(2), galeVisible: !!(galeMesh && galeMesh.visible),
+      slicks: slicks.length, dyes: dyes.length, rings: rings.length, walls: walls.length,
+      torps: torps.map((p) => ({ d: Math.round(p.d), off: +p.off.toFixed(1),
+        life: +p.life.toFixed(2), target: nameOf(p.target) })),
+      incoming: +PU.incoming().toFixed(2),
       field: S && S.boats ? S.boats.map((b) => ({
         pos: b.racePos || 0, player: !!b.isPlayer,
         item: b._pu && b._pu.held ? b._pu.held.id : null,

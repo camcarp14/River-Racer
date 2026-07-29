@@ -25,23 +25,32 @@
     <div id="boost-legend"><div id="prime">PRIME</div><div id="boost-label">BOOST</div></div>
   </div>
   <div id="item-call"></div>
+  <div id="incoming"><i class="star6"></i><span>TORPEDO INCOMING</span><b>0.0</b></div>
   <div id="item-slot">
-    <div id="item-lab">ITEM</div>
-    <div id="item-box"><canvas id="item-icon" width="192" height="192"></canvas><b id="item-key">E</b></div>
-    <div id="item-name">RUN A CRATE</div>
+    <div id="item-box">
+      <div id="item-head">ITEM</div>
+      <div id="item-well">
+        <i id="item-glow"></i>
+        <canvas id="item-icon" width="192" height="192"></canvas>
+        <i id="item-ring"></i>
+      </div>
+      <div id="item-foot"><b id="item-key">E</b><span id="item-act">EMPTY</span></div>
+    </div>
+    <div id="item-name">DRIVE INTO A CRATE</div>
+    <div id="item-sub"></div>
     <div id="item-pips"></div>
   </div>
   <div id="chips"></div>
   <div id="ticker"></div>
   <div id="checkpoint-flash"></div>
-  <div id="wrongway">WRONG WAY HOMIE</div>
+  <div id="wrongway">WRONG WAY — TURN AROUND</div>
   <div id="placement"><div id="placement-big"></div><div id="placement-sub"></div><div class="stars"></div></div>
   <div id="vignette"></div>
   <div id="countdown"><div id="cd-star"></div><span id="cd-num"></span></div>
   <div id="cd-scatter"></div>
   <div id="landmark-tag"><div id="lt-blade"><i class="star6"></i><span id="lt-name"></span></div><div id="lt-sub"></div></div>
   <div id="docent"></div>
-  <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake &amp; reverse &nbsp;<b>SHIFT</b> boost<br><span id="hint-item"><b class="key">E</b> or <b class="key">SPACE</b> fire your item &nbsp;</span><b>B·Q</b> look astern &nbsp;<b>C</b> camera &nbsp;<b>[ ]</b> shot<br><b>N</b> time of day &nbsp;<b>G</b> green river &nbsp;<b>P</b> photo &nbsp;<b>R</b> reset &nbsp;<b>M</b> sound &nbsp;<b>ESC</b> pause<span id="hint-tour" style="display:none"><br><b>SPACE</b> docent &nbsp;<b>F ×5</b> take the wheel &nbsp;<b>C</b> walk the boat &nbsp;<b>DRAG</b> look around</span></div>`;
+  <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake &amp; reverse &nbsp;<b>SHIFT</b> boost<br><span id="hint-item"><b class="key">E</b> or <b class="key">SPACE</b> fire your item &nbsp;</span><b>B·Q</b> look astern &nbsp;<b>C</b> camera &nbsp;<b>[ ]</b> shot<br><b>N</b> time of day &nbsp;<b>G</b> green river &nbsp;<b>P</b> photo &nbsp;<b>R</b> reset &nbsp;<b>M</b> sound &nbsp;<b>ESC</b> pause<span id="hint-tour" style="display:none"><br><b>SPACE</b> about this building &nbsp;<b>F ×5</b> take the wheel &nbsp;<b>C</b> change seat &nbsp;<b>DRAG</b> look around</span></div>`;
 
   const CINE = `<div class="bar t"></div><div class="bar b"></div><div class="meta"></div><div class="rec">REC</div>`;
 
@@ -87,7 +96,8 @@
       vig: $('vignette'), chips: $('chips'), ticker: $('ticker'), hint: $('boost-hint'),
       hintItem: $('hint-item'), hintTour: $('hint-tour'),
       slot: $('item-slot'), icon: $('item-icon'), itemName: $('item-name'), pips: $('item-pips'),
-      call: $('item-call'),
+      call: $('item-call'), itemSub: $('item-sub'), itemAct: $('item-act'), itemKey: $('item-key'),
+      inc: $('incoming'), incNum: $('incoming') ? $('incoming').querySelector('b') : null,
       cine, cineMeta: cine.querySelector('.meta'),
     };
     els.boostCtx = els.boost ? els.boost.getContext('2d') : null;
@@ -171,7 +181,12 @@
   H.show = function (on) {
     if (!els) return;
     els.hud.classList.toggle('on', on);
-    if (!on) { clearCall(); els.slot.className = ''; slotCls = ''; }
+    if (!on) {
+      clearCall();
+      els.slot.className = ''; slotCls = '';
+      if (els.inc) els.inc.classList.remove('on');
+      incOn = false; incTxt = ''; incNear = null;
+    }
     if (on && !hintGone) { hintT = 9; els.hint.classList.remove('gone'); }
   };
 
@@ -225,7 +240,7 @@
   // thing that has happened in the last second and it gets the callout plate instead.
   H.chip = function (kind, text, ms) {
     if (!els) return;
-    if (kind === 'item') { itemCall(text, /FENDER TOOK/.test(text) ? 'save' : 'fire'); return; }
+    if (kind === 'item') { itemCall(text, /SHIELD BLOCKED/.test(text) ? 'save' : 'fire'); return; }
     let c = chips.get(kind);
     if (!c) {
       const el = document.createElement('div');
@@ -369,7 +384,7 @@
   // at 90 px. Drawn strokes do not. Same reason the flag star is a clip-path, never a character.
   function iconInk(hex) {
     let r = (hex >> 16) & 255, g = (hex >> 8) & 255, b = hex & 255;
-    // the wake slick is nearly black: unlifted it is a hole in the plate, not an icon
+    // the oil slick is nearly black: unlifted it is a hole in the plate, not an icon
     const lum = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
     if (lum < 0.55) {
       const k = (0.55 - lum) / 0.55 * 0.82;
@@ -382,58 +397,71 @@
     const ctx = els && els.iconCtx;
     if (!ctx) return;
     const S = els.icon.width, c = S / 2;
+    ctx.globalCompositeOperation = 'source-over';
     ctx.clearRect(0, 0, S, S);
-    ctx.strokeStyle = ctx.fillStyle = def ? iconInk(def.color) : 'rgba(159,195,214,.5)';
+    ctx.strokeStyle = ctx.fillStyle = def ? iconInk(def.color) : 'rgba(150,190,212,.55)';
     ctx.lineWidth = S * 0.09;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     const id = def ? def.id : null;
-
-    const chev = (x, w, h, lw) => {
-      ctx.lineWidth = lw;
-      ctx.beginPath();
-      ctx.moveTo(x - w, c - h); ctx.lineTo(x, c); ctx.lineTo(x - w, c + h);
-      ctx.stroke();
-    };
-    const arcs = (cx, r0, n, a0, a1) => {
-      for (let i = 0; i < n; i++) {
-        ctx.beginPath();
-        ctx.arc(cx, c, r0 + i * S * 0.11, a0, a1);
-        ctx.stroke();
-      }
-    };
+    const TAU = Math.PI * 2;
+    const dot = (x, y, r) => { ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill(); };
+    const ring = (x, y, r, lw) => { ctx.lineWidth = lw; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke(); };
 
     if (id === 'turbo') {
-      for (let i = 0; i < 3; i++) chev(c * 0.62 + i * S * 0.20, S * 0.14, S * 0.20, S * 0.085);
-    } else if (id === 'fender') {
+      // three chevrons: the one glyph that still reads as speed at ninety pixels
       ctx.lineWidth = S * 0.085;
-      ctx.beginPath(); ctx.arc(c, c, S * 0.30, 0.35, Math.PI * 2 - 0.35); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse(c, c, S * 0.155, S * 0.31, 0, 0, Math.PI * 2); ctx.stroke();
-    } else if (id === 'slick') {
-      ctx.lineWidth = S * 0.075;
-      for (let r = 0; r < 3; r++) {
-        const y = c + (r - 1) * S * 0.19;
+      for (let i = 0; i < 3; i++) {
+        const x = S * 0.40 + i * S * 0.20;
         ctx.beginPath();
-        for (let i = 0; i <= 24; i++) {
-          const x = S * 0.19 + (S * 0.62) * (i / 24);
-          const yy = y + Math.sin(i / 24 * Math.PI * 2 + r) * S * 0.045;
+        ctx.moveTo(x - S * 0.14, c - S * 0.20); ctx.lineTo(x, c); ctx.lineTo(x - S * 0.14, c + S * 0.20);
+        ctx.stroke();
+      }
+    } else if (id === 'fender') {
+      // a heater shield with the flag star on it — an outlined bubble read as a zero
+      const w = S * 0.235, top = S * 0.235, bot = S * 0.80;
+      ctx.lineWidth = S * 0.082;
+      ctx.beginPath();
+      ctx.moveTo(c - w, top); ctx.lineTo(c + w, top); ctx.lineTo(c + w, S * 0.50);
+      ctx.quadraticCurveTo(c + w, bot - S * 0.10, c, bot);
+      ctx.quadraticCurveTo(c - w, bot - S * 0.10, c - w, S * 0.50);
+      ctx.closePath(); ctx.stroke();
+      if (RR.UIKit && RR.UIKit.star6) { RR.UIKit.star6(ctx, c, S * 0.50, S * 0.135, 0); ctx.fill(); }
+    } else if (id === 'slick') {
+      // a patch of oil, with the wave cut back OUT of it: strokes over a fill of the same ink
+      // would be invisible, and the slick has to look like something lying on the water
+      ctx.beginPath(); ctx.ellipse(c, c, S * 0.345, S * 0.225, 0, 0, TAU); ctx.fill();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.lineWidth = S * 0.055;
+      for (let r = 0; r < 2; r++) {
+        const y = c + (r ? S * 0.085 : -S * 0.085);
+        ctx.beginPath();
+        for (let i = 0; i <= 20; i++) {
+          const x = S * 0.26 + (S * 0.48) * (i / 20);
+          const yy = y + Math.sin(i / 20 * Math.PI * 2 + r * 2.2) * S * 0.030;
           if (i) ctx.lineTo(x, yy); else ctx.moveTo(x, yy);
         }
         ctx.stroke();
       }
+      ctx.globalCompositeOperation = 'source-over';
     } else if (id === 'dye') {
-      ctx.beginPath(); ctx.arc(c, c, S * 0.145, 0, Math.PI * 2); ctx.fill();
-      ctx.lineWidth = S * 0.062;
-      arcs(c, S * 0.235, 2, 0, Math.PI * 2);
+      // a puff of dye trailing off astern
+      for (const p of [[0.42, 0.50, 0.185], [0.62, 0.48, 0.205], [0.52, 0.65, 0.165], [0.52, 0.36, 0.145]]) {
+        dot(S * p[0], S * p[1], S * p[2]);
+      }
+      dot(S * 0.24, S * 0.72, S * 0.062);
+      dot(S * 0.13, S * 0.80, S * 0.038);
     } else if (id === 'deepdish') {
-      ctx.lineWidth = S * 0.12;
-      ctx.beginPath(); ctx.arc(c, c, S * 0.28, 0, Math.PI * 2); ctx.stroke();
+      // a deep-dish pie seen from above, one slice cut out of it
+      ring(c, c, S * 0.30, S * 0.115);
       ctx.beginPath();
-      ctx.moveTo(c, c); ctx.lineTo(c + S * 0.21, c - S * 0.12); ctx.lineTo(c + S * 0.21, c + S * 0.12);
+      ctx.moveTo(c, c); ctx.lineTo(c + S * 0.225, c - S * 0.135); ctx.lineTo(c + S * 0.225, c + S * 0.135);
       ctx.closePath(); ctx.fill();
+      for (const p of [[-0.11, -0.10], [-0.15, 0.07], [0.01, 0.11]]) dot(c + S * p[0], c + S * p[1], S * 0.046);
     } else if (id === 'bowwave') {
-      ctx.lineWidth = S * 0.075;
-      arcs(c - S * 0.14, S * 0.12, 3, -1.05, 1.05);
+      // SHOCKWAVE goes off all round you now, so the icon is concentric, not one-sided
+      for (let i = 0; i < 3; i++) ring(c, c, S * (0.135 + i * 0.105), S * 0.072);
+      dot(c, c, S * 0.052);
     } else if (id === 'gulls') {
       ctx.lineWidth = S * 0.075;
       const g = [[0.50, 0.34, 0.15], [0.31, 0.58, 0.11], [0.70, 0.62, 0.11]];
@@ -445,33 +473,48 @@
         ctx.quadraticCurveTo(x + w * 0.45, y - w * 0.5, x + w, y + w * 0.42);
         ctx.stroke();
       }
-    } else if (id === 'gale') {
-      ctx.lineWidth = S * 0.075;
-      const rows = [[0.30, 0.62], [0.50, 0.78], [0.70, 0.55]];
-      for (const [fy, fw] of rows) {
-        const y = S * fy, x1 = S * 0.16 + S * fw;
-        ctx.beginPath(); ctx.moveTo(S * 0.16, y); ctx.lineTo(x1, y); ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(x1 - S * 0.10, y - S * 0.075); ctx.lineTo(x1, y); ctx.lineTo(x1 - S * 0.10, y + S * 0.075);
-        ctx.stroke();
-      }
-    } else {
-      // empty: the crate itself, so the thing to go and hit is the thing in the slot
-      ctx.lineWidth = S * 0.07;
-      ctx.strokeRect(S * 0.24, S * 0.24, S * 0.52, S * 0.52);
+    } else if (id === 'torpedo') {
+      const hh = S * 0.105, nose = S * 0.82;
       ctx.beginPath();
-      ctx.moveTo(S * 0.24, S * 0.40); ctx.lineTo(S * 0.76, S * 0.40);
-      ctx.moveTo(S * 0.24, S * 0.60); ctx.lineTo(S * 0.76, S * 0.60);
+      ctx.moveTo(S * 0.30, c - hh); ctx.lineTo(S * 0.62, c - hh);
+      ctx.quadraticCurveTo(nose, c - hh * 0.72, nose, c);
+      ctx.quadraticCurveTo(nose, c + hh * 0.72, S * 0.62, c + hh);
+      ctx.lineTo(S * 0.30, c + hh);
+      ctx.closePath(); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(S * 0.31, c - hh); ctx.lineTo(S * 0.20, c - hh * 2.1); ctx.lineTo(S * 0.255, c);
+      ctx.lineTo(S * 0.20, c + hh * 2.1); ctx.lineTo(S * 0.31, c + hh);
+      ctx.closePath(); ctx.fill();
+      ctx.lineWidth = S * 0.05;
+      ctx.beginPath();
+      ctx.moveTo(S * 0.07, c - hh * 2.4); ctx.lineTo(S * 0.21, c - hh * 2.4);
+      ctx.moveTo(S * 0.04, c + hh * 2.4); ctx.lineTo(S * 0.18, c + hh * 2.4);
+      ctx.stroke();
+    } else {
+      // Empty: the crate itself, so the thing to go and hit is the thing in the slot. Lid band,
+      // base band and cross-braced middle panel — a bare square with an X in it reads as a
+      // missing-image placeholder, which is the one thing this must never look like.
+      ctx.lineWidth = S * 0.062;
+      const a = S * 0.215, b = S * 0.785, t = S * 0.355, u = S * 0.645;
+      ctx.strokeRect(a, a, b - a, b - a);
+      ctx.beginPath();
+      ctx.moveTo(a, t); ctx.lineTo(b, t);
+      ctx.moveTo(a, u); ctx.lineTo(b, u);
+      ctx.stroke();
+      ctx.lineWidth = S * 0.05;
+      ctx.beginPath();
+      ctx.moveTo(a, t); ctx.lineTo(b, u);
+      ctx.moveTo(b, t); ctx.lineTo(a, u);
       ctx.stroke();
     }
   }
 
   // ---------- the live-effect pips ----------
-  // status() is seconds remaining; the bar is that over the tunable it started at, so a FENDER
-  // running out looks like a FENDER running out and not like a label.
-  const PIPS = [['shield', 'FENDER', 'SHIELD_T', 12], ['heavy', 'HEAVY', 'HEAVY_T', 7],
-    ['spin', 'SPIN', 'SPIN_T', 1], ['blind', 'BLIND', 'BLIND_T', 1],
-    ['gulls', 'GULLS', 'GULL_T', 3], ['gale', 'GALE', 'GALE_T', 1.2]];
+  // status() is seconds remaining; the bar is that over the tunable it started at, so a SHIELD
+  // running out looks like a SHIELD running out and not like a label.
+  const PIPS = [['turbo', 'TURBO', 'TURBO_T', 3], ['shield', 'SHIELD', 'SHIELD_T', 12],
+    ['heavy', 'HEAVY', 'HEAVY_T', 8], ['spin', 'SPUN', 'SPIN_T', 1.6],
+    ['blind', 'BLIND', 'BLIND_T', 2.2], ['gulls', 'GULLS', 'GULL_T', 4.5]];
   const pipEls = [];
   function buildPips() {
     pipEls.length = 0;
@@ -500,7 +543,7 @@
   }
 
   // ---------- the callout ----------
-  // fire = you did it, hit = it was done to you, save = the FENDER ate it. One line, one plate,
+  // fire = you did it, hit = it was done to you, save = the SHIELD ate it. One line, one plate,
   // on the axis the eye is already on — this is read at eighty miles an hour or not at all.
   // The plate lives and dies on WALL time, on timers, and its VISIBILITY is a plain class — never a
   // keyframe. A composited animation only advances on frames that actually land, so on a stalled
@@ -516,7 +559,7 @@
   }
   function itemCall(text, tone) {
     if (!els || !els.call) return;
-    // a hit landing in the same frame as your own FENDER eating it must not shout over the save
+    // a hit landing in the same frame as your own SHIELD eating it must not shout over the save
     if (tone === 'hit' && callTone === 'save' && nowMs() - callWall < 70) return;
     if (callHold) clearTimeout(callHold);
     if (callGone) clearTimeout(callGone);
@@ -536,63 +579,116 @@
     if (c && c.age < 0.3) { c.el.remove(); chips.delete('bad'); }
   }
 
-  // ---------- rising edges: what just landed on you ----------
-  const HITS = [['spin', 'SPUN OUT'], ['blind', 'BLINDED'], ['gulls', 'GULLS ON YOU'],
-    ['gale', 'GALE OFF THE LAKE']];
-  const wasHit = { spin: 0, blind: 0, gulls: 0, gale: 0 };
-  function watchHits(s) {
-    if (!s) return;
-    for (let i = 0; i < HITS.length; i++) {
-      const k = HITS[i][0], v = s[k] || 0;
-      if (v > wasHit[k] + 0.05) hitCall(HITS[i][1]);
-      wasHit[k] = v;
-    }
+  // ---------- what just landed on you ----------
+  // Every hostile effect in powerups.js goes through its land() helper, which publishes the item
+  // label and the pilot who threw it on lastHit(). Reading that instead of watching status()
+  // timers is the only way SHOCKWAVE and the DEEP DISH slam get a plate at all — neither leaves a
+  // timer on you, only a shove — and it is what turns "SPUN OUT" into "TORPEDO HIT — LOU CANAL".
+  let lastHitAt = -1e9;
+  function watchHits(P) {
+    if (!P.lastHit || !RR.Engine || !RR.Engine.time) return;
+    const lh = P.lastHit();
+    // ago outside this window means either old news or a sim clock that has been reset under us
+    // between races — neither is something to shout about
+    if (!lh || !lh.label || !(lh.ago >= 0 && lh.ago < 1.0)) return;
+    const at = RR.Engine.time() - lh.ago;
+    if (at <= lastHitAt + 1e-3) return;
+    lastHitAt = at;
+    // Several labels already carry their own em dash ("OIL SLICK — SPINNING OUT"). Appending the
+    // pilot to one of those makes a two-dash, eight-word plate that is unreadable at speed, so the
+    // pilot replaces the second clause rather than following it: "OIL SLICK — DEEP DISH DRE".
+    hitCall(lh.from ? lh.label.split(' — ')[0] + ' — ' + lh.from : lh.label);
   }
 
-  // The bow wave leaves no timer on you, only a shove, so the only honest signal is the firing
-  // itself. onUse is the module's published hook and the HUD is its natural owner.
-  let puHooked = false;
-  function hookPowerups(P) {
-    if (puHooked || !P.onUse) return;
-    puHooked = true;
-    P.onUse((boat, item) => {
-      if (!boat || boat.isPlayer || !item || item.id !== 'bowwave' || !curBoat) return;
-      const R = (P.K && P.K.WAVE_R) || 26;
-      if (RR.U.dist2(curBoat.pos.x, curBoat.pos.z, boat.pos.x, boat.pos.z) <= R * R) hitCall('BOW WAVE');
-    });
+  // ---------- the incoming-torpedo warning ----------
+  // The torpedo is the one item that reaches you from three places back, and it arrives from
+  // astern where there is nothing to see. incoming() is seconds until it lands; below 1.2 s the
+  // plate goes urgent, which is roughly the last moment a SHIELD is worth spending.
+  let incOn = false, incTxt = '', incNear = null;
+  function updateIncoming(P) {
+    if (!els.inc) return;
+    const eta = P.incoming ? P.incoming() : 0;
+    const on = eta > 0.05;
+    if (on !== incOn) { els.inc.classList.toggle('on', on); incOn = on; }
+    if (!on) return;
+    const s = eta.toFixed(1);
+    if (s !== incTxt) { els.incNum.textContent = s; incTxt = s; }
+    const near = eta < 1.2;
+    if (near !== incNear) { els.inc.classList.toggle('near', near); incNear = near; }
   }
 
-  let curBoat = null, slotCls = null, lastFace = '', lastItemName = '';
-  function updateItems() {
+  // ---------- the slot ----------
+  // Three states and two moments. The states are EMPTY / SPINNING / HOLDING, and they are told
+  // apart by frame, colour and words, not by the icon alone — an empty slot that looks like a full
+  // one is the whole reason this was rebuilt. The moments are the LOCK (the spin stops and you now
+  // have a thing) and the FIRE (you no longer do), and each gets its own one-shot.
+  const LOCK_T = 0.62, FIRED_T = 0.34, BLURB_T = 3.4;
+  let slotCls = null, lastFace = '', lastItemName = '';
+  let lastAct = '', lastSub = '', lastHeldId = null, lockT = 0, firedT = 0, blurbT = 0;
+
+  // blurbs arrive as sentences ("Drops 3 slicks behind you. They spin out."); the HUD speaks in
+  // caps and has room for one clause
+  function blurbOf(def) {
+    if (!def || !def.blurb) return '';
+    return String(def.blurb).split('.')[0].toUpperCase();
+  }
+
+  function setText(el, key, txt) {
+    if (el && key !== txt) el.textContent = txt;
+    return txt;
+  }
+
+  function updateItems(dt) {
     const P = RR.Powerups;
     const on = !!(P && P.active && P.active());
     if (!on) {
       if (slotCls !== '') { els.slot.className = ''; slotCls = ''; }
+      if (incOn) { els.inc.classList.remove('on'); incOn = false; }
       return;
     }
-    hookPowerups(P);
     const roll = P.rolling ? P.rolling() : 0;
     const face = P.rollFace ? P.rollFace() : null;
     const held = P.held ? P.held() : null;
+    const hid = held ? held.id : null;
+
+    // held() stays null for the whole 0.85 s spin, so this edge IS the lock
+    if (hid !== lastHeldId) {
+      if (hid) { lockT = LOCK_T; blurbT = BLURB_T; } else if (lastHeldId) { firedT = FIRED_T; }
+      lastHeldId = hid;
+    }
+    if (lockT > 0) lockT -= dt;
+    if (firedT > 0) firedT -= dt;
+    if (blurbT > 0) blurbT -= dt;
+
     const fid = face ? face.id : '';
     if (fid !== lastFace) {
       drawIcon(face);
       lastFace = fid;
-      if (face) els.slot.style.setProperty('--item', '#' + face.color.toString(16).padStart(6, '0'));
+      els.slot.style.setProperty('--item',
+        face ? '#' + face.color.toString(16).padStart(6, '0') : '#7EC8E3');
     }
-    const cls = 'on ' + (roll > 0 ? 'roll' : held ? 'held' : 'empty');
+
+    const state = roll > 0 ? 'roll' : hid ? 'held' : 'empty';
+    const cls = 'on ' + state + (lockT > 0 ? ' lock' : '') + (firedT > 0 ? ' fired' : '');
     if (cls !== slotCls) { els.slot.className = cls; slotCls = cls; }
-    const nm = held ? held.name : (roll > 0 && face) ? face.name : 'RUN A CRATE';
-    if (nm !== lastItemName) { els.itemName.textContent = nm; lastItemName = nm; }
+
+    // The blade carries the loudest thing there is to say. Empty, that is not the word "empty" —
+    // it is what to do about it.
+    const nm = held ? held.name : (roll > 0 && face) ? face.name : 'DRIVE INTO A CRATE';
+    lastItemName = setText(els.itemName, lastItemName, nm);
+    lastAct = setText(els.itemAct, lastAct, held ? 'FIRE' : roll > 0 ? '' : 'EMPTY');
+    lastSub = setText(els.itemSub, lastSub, held && blurbT > 0 ? blurbOf(held) : '');
+    if (els.itemKey && P.KEY && els.itemKey.textContent !== P.KEY) els.itemKey.textContent = P.KEY;
+
     const status = P.status ? P.status() : null;   // one call, two readers: status() allocates
     updatePips(P, status);
-    watchHits(status);
+    watchHits(P);
+    updateIncoming(P);
   }
 
   // ---------- per frame ----------
   H.update = function (dt, boat, race) {
     if (!els) return;
-    curBoat = boat;
     const speed = Math.hypot(boat.vel.x, boat.vel.z);
     const mph = Math.round(speed * 2.237);
     if (mph !== lastSpeed) { els.speed.textContent = mph; lastSpeed = mph; }
@@ -609,7 +705,7 @@
 
     drawBoost(boat.boostEnergy || 0, (boat.boostHeat || 0) > 0.35);
 
-    updateItems();
+    updateItems(dt);
     paintHintKeys(race);
 
     // chips driven straight off the physics fields
@@ -683,10 +779,18 @@
     hintItems = null; hintTour = null;
     clearCall(); callWall = -1e9;
     slotCls = null; lastFace = ''; lastItemName = '';
-    wasHit.spin = wasHit.blind = wasHit.gulls = wasHit.gale = 0;
+    lastAct = ''; lastSub = ''; lastHeldId = null; lockT = firedT = blurbT = 0;
+    // a stamp from the previous run would otherwise swallow the first real hit of this one
+    lastHitAt = -1e9;
+    incOn = false; incTxt = ''; incNear = null;
     if (els) {
       els.hint.classList.remove('gone'); els.docent.classList.remove('on');
       els.slot.className = '';
+      if (els.inc) els.inc.classList.remove('on');
+      els.itemName.textContent = 'DRIVE INTO A CRATE';
+      if (els.itemAct) els.itemAct.textContent = 'EMPTY';
+      if (els.itemSub) els.itemSub.textContent = '';
+      els.slot.style.setProperty('--item', '#7EC8E3');
       drawIcon(null);
       for (const p of pipEls) { p.el.classList.remove('on'); p.on = false; p.w = -1; }
     }

@@ -38,6 +38,12 @@
       const wc = lockPt(GS0 + lock.len / 2, (lock.w / 2 + 4) * s);
       boxAt(geoms, 8, 4.6, lock.len + 40, wc.x, 2.0, wc.z, 0x9a988e, lang);
       boxAt(geoms, 9, 0.5, lock.len + 40, wc.x, 4.55, wc.z, 0xb4afa4, lang);        // concrete coping
+      // …and the concrete is SOLID. Until now not one metre of the lock collided with anything:
+      // boats drove through the chamber walls on the way to the lake. One capsule down each wall's
+      // own centreline, pad = half its thickness, so the barrier is the face you can see. This is
+      // the wall's OUTER half and its ends; RR.River's lock corridor owns the water inside.
+      const ca = lockPt(GS0 - 20, (lock.w / 2 + 4) * s), cb = lockPt(GS1 + 20, (lock.w / 2 + 4) * s);
+      RR.River.addWall(ca.x, ca.z, cb.x, cb.z, 3.6);
       // gate machinery towers at both ends
       for (const gs of [GS0, GS1]) {
         const g0 = lockPt(gs, (lock.w / 2 + 5) * s);
@@ -52,6 +58,7 @@
         const b = lockPt(gs + dir * 80, (lock.w / 2 + 11) * s);
         const glen = Math.hypot(b.x - a.x, b.z - a.z);
         const gm = Math.atan2(b.x - a.x, b.z - a.z);
+        RR.River.addWall(a.x, a.z, b.x, b.z, 1.6);                                  // 3.2 m of wall
         boxAt(geoms, 3.2, 2.3, glen, (a.x + b.x) / 2, 0.85, (a.z + b.z) / 2, 0x9a988e, gm);
         boxAt(geoms, 3.8, 0.4, glen, (a.x + b.x) / 2, 2.2, (a.z + b.z) / 2, 0xb4afa4, gm);
         for (let f = 0.12; f < 1; f += 0.25) {                                      // timber rub strips
@@ -643,6 +650,7 @@
         }
       }
       RR.River.addObstacle(dockX0 + dockLen + 2, dz, 4);             // boats can't clip the finger tip
+      RR.River.addWall(dockX0, dz, dockX0 + dockLen, dz, 2.0);       // …nor sail down the middle of it
       for (let k = 0; k < 7; k++) {                                  // moored boats between the fingers
         const mbx = dockX0 + 12 + k * 11, side = (k % 2) ? 1 : -1, mbz = dz + side * 5.4;
         if (basinClear(mbx, mbz) <= 0) continue;

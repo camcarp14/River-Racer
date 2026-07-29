@@ -126,7 +126,10 @@
   // to nothing over its life, and smears along its own screen-space travel when it moves fast,
   // which is how a camera actually records a droplet. Anything about to hit the lens fades out
   // rather than splatting a white disc across the frame.
-  const MAXP = 900;
+  // The pool is sized so that ONE power-up going off cannot starve the hull spray of every boat on
+  // the river. An item is meant to be the loudest thing on screen for half a second; it is not
+  // meant to blank the wakes for two.
+  const MAXP = 1300;
   const P_GRAV = 13;
   let pGeo, pPts, pMat, pool, poolIdx = 0;
   function initParticles(scene) {
@@ -203,7 +206,10 @@
           else if (vSeed < 8.0)  col = uCol;                     // water
           else if (vSeed < 18.0) col = vec3(0.10, 0.86, 0.36);   // the St Patrick's dye
           else if (vSeed < 28.0) col = vec3(0.05, 0.08, 0.11);   // a slick: it DARKENS the river
-          else                   col = vec3(0.80, 0.91, 1.00);   // spindrift off the lake gale
+          else if (vSeed < 38.0) col = vec3(0.80, 0.91, 1.00);   // torn foam / blown spindrift
+          // engine burn. Over 1.0 so the core crosses the bloom threshold, but not so far over
+          // that the whole plume clips to white and loses the one thing that says FIRE.
+          else                   col = vec3(1.75, 0.62, 0.14);
           vec2 d = gl_PointCoord - 0.5;
           float ca = cos(vRot), sa = sin(vRot);
           vec2 q = vec2(d.x * ca + d.y * sa, d.y * ca - d.x * sa);
@@ -235,9 +241,9 @@
 
   // FROZEN signature — other modules call it. size is a multiplier, not a diameter.
   // The mist/drop mix is deliberate: fine mist alone reads as fog, drops alone read as buckshot.
-  // `tint` is optional and defaults to water (0 water · 1 river dye · 2 slick · 3 gale spindrift);
-  // it only shifts the colour band the fragment shader reads out of the seed.
-  const TINT_BASE = [0, 10, 20, 30];
+  // `tint` is optional and defaults to water (0 water · 1 green dye · 2 oil slick · 3 torn foam ·
+  // 4 engine burn); it only shifts the colour band the fragment shader reads out of the seed.
+  const TINT_BASE = [0, 10, 20, 30, 40];
   FX.spray = function (x, y, z, vx, vy, vz, count, spread, size, tint) {
     const tb = TINT_BASE[tint | 0] || 0;
     // sized for the chase camera, which rides ~20 m astern: a droplet has to be ~0.2-0.6 m across
@@ -323,17 +329,19 @@
     }
   };
 
-  // GALE OFF THE LAKE. Weightless spindrift torn along one direction — the shader smears each
-  // particle along its own travel, so a fast horizontal streak IS the wind.
-  FX.gust = function (x, y, z, dx, dz, n) {
+  // Weightless foam torn along ONE direction — the shader smears each particle along its own
+  // travel, so a fast horizontal streak IS the motion. The torpedo's churned wake rides this.
+  // band/depth default to a 70 m front seeded 44 m upwind — a weather front crossing the channel.
+  // A torpedo's wake wants the same weightless, long-lived, smeared particle in a 3 m band, so the
+  // seeding is a parameter rather than a second emitter.
+  FX.gust = function (x, y, z, dx, dz, n, band, depth) {
     if (!pool) return;
     const l = Math.max(1e-3, Math.hypot(dx, dz));
     const ux = dx / l, uz = dz / l;
+    const W = band == null ? 70 : band, D = depth == null ? 44 : depth;
     for (let i = 0; i < n; i++) {
       const p = pool[poolIdx]; poolIdx = (poolIdx + 1) % MAXP;
-      // seeded across a 70 m band and 44 m upwind, so the gust arrives as a FRONT crossing the
-      // channel rather than a puff at one point
-      const back = Math.random() * 44, side = (Math.random() - 0.5) * 70;
+      const back = Math.random() * D, side = (Math.random() - 0.5) * W;
       p.x = x - ux * back - uz * side;
       p.y = y + (Math.random() - 0.5) * 7.5;
       p.z = z - uz * back + ux * side;
@@ -346,6 +354,60 @@
       p.core = 0.18;                    // soft: a hard-edged streak is a scratch on the lens
       p.seed = 30 + Math.random() * 6.283;
       p.g = 0; p.drag = 0.2; p.fp = 1.4; p.sMin = 0.6;
+    }
+  };
+
+  // DETONATION. What a heavy charge does to river water: a narrow column that throws its biggest
+  // slugs almost straight UP out of the middle and a low skirt of torn water off the rim. Written
+  // against the pool directly rather than through FX.spray because spray's cone is symmetric, and a
+  // symmetric cone reads as a puff — the vertical column is the entire silhouette of a water hit.
+  FX.detonation = function (x, y, z, scale) {
+    if (!pool) return;
+    const k = Math.max(0.3, scale == null ? 1 : scale);
+    const n = Math.min(190, Math.round(78 * k));
+    const R = 3.2 * k;
+    for (let i = 0; i < n; i++) {
+      const p = pool[poolIdx]; poolIdx = (poolIdx + 1) % MAXP;
+      const a = Math.random() * 6.283;
+      const r = Math.pow(Math.random(), 0.62) * R;          // packed towards the centre
+      const core = 1 - r / (R + 1e-3);
+      p.x = x + Math.cos(a) * r;
+      p.y = y + Math.random() * 1.1;
+      p.z = z + Math.sin(a) * r;
+      p.vx = Math.cos(a) * (2.0 + Math.random() * 9 * k) * (1.15 - core * 0.75);
+      p.vz = Math.sin(a) * (2.0 + Math.random() * 9 * k) * (1.15 - core * 0.75);
+      p.vy = (5 + Math.random() * 9) * k * (0.34 + core * 1.5);
+      p.age = 0;
+      p.life = 0.60 + Math.random() * 0.95;
+      p.s0 = 0.28 + Math.random() * 0.80 * k;
+      p.a0 = 0.34 + Math.random() * 0.24;
+      p.core = 0.35 + Math.random() * 0.35;
+      p.seed = 30 + Math.random() * 6.283;
+      p.g = 1; p.drag = 0.40; p.fp = 1.35; p.sMin = 0.5;
+    }
+  };
+
+  // ENGINE BURN. Incandescent, rises instead of falling (g is negative), dies in a third of a
+  // second. Over 1.0 in the shader so it crosses the bloom threshold — a TURBO light-off has to
+  // put actual light on the water, not a puff of grey.
+  FX.burn = function (x, y, z, vx, vy, vz, n, spread) {
+    if (!pool) return;
+    const sp = spread == null ? 6 : spread;
+    for (let i = 0; i < n; i++) {
+      const p = pool[poolIdx]; poolIdx = (poolIdx + 1) % MAXP;
+      p.x = x + (Math.random() - 0.5) * 1.3;
+      p.y = y + (Math.random() - 0.5) * 0.8;
+      p.z = z + (Math.random() - 0.5) * 1.3;
+      p.vx = vx + (Math.random() - 0.5) * sp;
+      p.vy = vy + (Math.random() - 0.5) * sp * 0.45;
+      p.vz = vz + (Math.random() - 0.5) * sp;
+      p.age = 0;
+      p.life = 0.16 + Math.random() * 0.30;
+      p.s0 = 0.26 + Math.random() * 0.60;
+      p.a0 = 0.40 + Math.random() * 0.30;
+      p.core = 0.30;
+      p.seed = 40 + Math.random() * 6.283;
+      p.g = -0.14; p.drag = 2.3; p.fp = 1.6; p.sMin = 0.25;
     }
   };
 
@@ -620,10 +682,18 @@
       w.flame = createFlame(boat);
       boat.mesh.add(w.flame);
     }
-    const heat = boat.boostHeat || 0;
+    // boat.turboFlame is powerups.js saying "this is not a boost, this is a TURBO": the sheath
+    // stays lit at full heat and stretches nearly three times aft, which is the one thing a chase
+    // camera can read as a different event from the boost you already have on a button.
+    const tf = boat.turboFlame || 0;
+    const heat = Math.max(boat.boostHeat || 0, tf > 0 ? 1 : 0);
     const on = heat > 0.45;
     w.flame.visible = on;
-    if (on) w.flame.scale.setScalar(0.7 + heat * (0.6 + 0.25 * Math.sin(t * 40)));
+    if (on) {
+      const s = 0.7 + heat * (0.6 + 0.25 * Math.sin(t * 40));
+      const fat = 1 + tf * 0.60;
+      w.flame.scale.set(s * fat, s * fat, s * (1 + tf * 2.4));
+    }
   }
 
   FX.splashBurst = function (x, y, z, intensity) {
