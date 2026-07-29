@@ -5,18 +5,20 @@
    countdown skipped, and everything below is a prompt script laid over it — one line at a time,
    each one clearing itself the moment you obey it.
 
-   The whole run down the stem, in metres of route (measured off the built course, not guessed):
+   The whole run down the stem, in metres of route (re-measured off the built course this round,
+   not guessed — the ramps moved and the crates arrived):
 
-     26  grid          224 FRANKLIN      356 WELLS       482 LASALLE     600 CLARK
-     725 DEARBORN      818 ramp lip      856 STATE       1022 WABASH     1187 DUSABLE
-     1519 COLUMBUS     2093 LAKE SHORE DR
+     26  grid          223 FRANKLIN      355 WELLS       480 LASALLE     604 CLARK
+     728 DEARBORN      853 STATE        1021 WABASH     1189 DUSABLE    1211 ramp foot
+     1516 COLUMBUS     1756 ramp foot   2091 LAKE SHORE DR
+     crate rows at 250 · 600 · 940 · 1275 · 1610 · 1955
 
    HOLD UP off the line, SHIFT clearing Franklin, and then the Loop closes in over the channel and
    the tender starts working down his sequence. That beat is a fact card, not an instruction: a
    bridge lift is the one thing on this river nobody in a boat can ask for, and the best thing in
-   the game to look at. State St has a ramp on its approach and that one is a question rather than
-   an order. Past Wabash the channel opens out and the power-ups ride down the middle of it. Past
-   the last bridge the canyon lets go, the rig releases onto the skyline and the title lands.
+   the game to look at. Past Wabash the channel opens out, the crates ride down the middle of it,
+   and the first ramp is moored in the Riverwalk reach past DuSable. Past the last bridge the
+   canyon lets go, the rig releases onto the skyline and the title lands.
 
    It is unloseable in every sense: no rivals, no timer, no wrong turn that ends it, and nothing
    overhead that can hurt you.
@@ -31,7 +33,6 @@
   const O = {};
   const $ = (id) => document.getElementById(id);
 
-  const STATE = 856, RAMP = 818;
   const END_D = 2140;          // past DuSable Lake Shore Dr: the last bridge on the stem is behind you
   const FIN_HOLD_S = 4.9;      // 3.5 s of feel.js's finale, then a beat of the title standing alone
   const MAX_S = 180;           // SIM-seconds backstop — a boat parked on the bank still gets a title
@@ -56,22 +57,43 @@
       from: 380, to: 640,
     },
     {
-      // Five of the six ramps in this game are moored on a bascule approach, which used to make
-      // every one of them a question about the span overhead. It isn't any more: take it.
-      key: null, line: 'A RAMP ON THE STATE ST APPROACH', sub: 'SEND IT — AIRTIME PAYS BOOST',
-      from: RAMP - 160, to: STATE + 24,
+      // The crates are in this run now — powerups.js stopped holding them out of the cold open —
+      // so this is an order the player can carry out rather than a fact about some other race.
+      // It clears on USING one, not on holding one: the first row is 250 m off the line, so a beat
+      // that cleared on a full slot was consumed 400 m before its own window opened and the line
+      // was never once on screen. Rows at 600 and 940 straddle this stretch either way.
+      key: 'E', line: 'RUN A GOLD CRATE', sub: 'THE SLOT SPINS YOU AN ITEM — E LETS IT GO',
+      from: 640, to: 1040, done: (c) => c.used,
     },
     {
-      // The channel is at its widest here, between Wabash and DuSable — which is where a race
-      // puts its crates. THIS run has none: powerups.js holds the items out of the cold open on
-      // purpose, so the boat has nothing to run through and the item slot is not on screen. The
-      // beat therefore states a fact about racing rather than giving an order that cannot be
-      // obeyed; `done` stays, so it still clears early if the items are ever let in here.
-      key: null, line: 'IN A RACE, POWER-UPS RIDE THIS CHANNEL',
-      sub: 'GOLD CRATES · THE FURTHER BACK YOU ARE, THE MEANER THE DRAW',
-      from: 900, to: 1400, done: (c) => !!c.item,
+      // The window is RESOLVED AT start() from the ramp list, not written down here. All six ramps
+      // moved this round — off the bascule approaches, into open water — and the constant that used
+      // to be State St's lip spent the change pointing the player at empty river. Line and sub name
+      // no street for the same reason.
+      key: null, line: 'A RAMP, MOORED IN OPEN WATER', sub: 'SEND IT — NOTHING OVER YOU BUT SKY',
+      from: 1e9, to: 1e9,
     },
   ];
+  const RAMP_BEAT = BEATS.length - 1;
+
+  // Aim the ramp beat at whichever ramp is actually moored on the run's own route. No ramp in
+  // reach (another branch, or too near the start or the finish to call) leaves the window shut,
+  // and the script simply has one line fewer.
+  function aimRampBeat(route) {
+    const b = BEATS[RAMP_BEAT];
+    b.from = 1e9; b.to = 1e9;
+    if (!route || !RR.Ramps || !RR.Ramps.list || !RR.U) return;
+    let d = 0;
+    for (const r of RR.Ramps.list) {
+      const q = RR.U.pathNearest(route, r.x, r.z);
+      if (Math.hypot(q.x - r.x, q.z - r.z) > 12) continue;      // moored on some other channel
+      if (q.d < 420 || q.d > END_D - 120) continue;             // no room to call it, or past the end
+      if (!d || q.d < d) d = q.d;
+    }
+    if (!d) return;
+    b.from = Math.max(BEATS[RAMP_BEAT - 1].to, d - 170);        // ~5 s of warning at cold-open speed
+    b.to = d + 34;                                              // released once the lip is astern
+  }
 
   let live = false, attract = false, host = null;
   let beat = 0, shown = -1, pilot = null, ctl = null;
@@ -81,8 +103,12 @@
   let els = null, listening = false, ended = null;
 
   // The power-ups belong to another workstream. Everything this file knows about them is whatever
-  // they leave on the hull, read through one guarded accessor — so the beat above degrades to a
-  // line of text that times out on its own if they are not in the build yet.
+  // they leave on the hull plus one published clock, both read through guarded accessors — so the
+  // crate beat degrades to a line of text that times out on its own if they are not in the build.
+  function firedRecently() {
+    const P = RR.Powerups;
+    return !!(P && P.firedAgo && P.firedAgo() < 1.5);
+  }
   function heldItem(p) {
     const it = p && (p.item || p.powerup);
     if (!it) return null;
@@ -164,11 +190,12 @@
     attract = !!(opts && opts.attract);
     beat = 0; shown = -1; itemSeen = null; wordT = 0; camLowT = 0; camLow = false; camShot = false;
     ending = 0; endT = 0; pilot = null; ctl = null; ended = null;
-    age = 0; airPeak = 0; topSpd = 0;
+    age = 0; airPeak = 0; topSpd = 0; c.used = false;
     live = true;
     host.startRace();                          // MAIN STEM, one boat, no countdown, no timer
     const rs = RR.Race && RR.Race.state ? RR.Race.state() : null;
     if (!rs || !rs.player) { live = false; return false; }
+    aimRampBeat(rs.route);                     // the ramps move; the script must not have to
     if (attract && RR.AI && RR.AI.createPilot) {
       pilot = RR.AI.createPilot(rs.player, { path: rs.route }, 2, 1.0);
       pilot.lane = 0;
@@ -239,7 +266,7 @@
   }
 
   // ---- per frame -----------------------------------------------------------------------------
-  const c = { d: 0, spd: 0, boost: false, item: null };
+  const c = { d: 0, spd: 0, boost: false, item: null, used: false };
 
   RR.Engine.onUpdate(function (dt) {
     if (!live) return;
@@ -251,13 +278,14 @@
     c.spd = Math.hypot(p.vel.x, p.vel.z);
     c.boost = !!(RR.Input && RR.Input.boost) || !!(ctl && ctl.boost);
     c.item = heldItem(p);
+    if (!c.used && firedRecently()) c.used = true;      // sticky: the lesson does not un-learn
     age += dt;
     if (c.spd > topSpd) topSpd = c.spd;
 
     if (attract && pilot && RR.AI && RR.AI.update) RR.AI.update(pilot, dt, RR.Engine.time(), c.d);
 
-    // ---- the word, for the two things this run can pay you. Air off the State St ramp needs
-    // nothing but the ramp; the pickup line only ever fires once the power-ups are in the build.
+    // ---- the word, for the two things this run can pay you. Airtime needs nothing but the ramp;
+    // the pickup line only ever fires once the power-ups are in the build.
     if (p.airborne) airPeak = Math.max(airPeak, p.airTime || 0);
     else if (airPeak > 0) {
       if (airPeak > 0.7) showWord('AIR  ' + airPeak.toFixed(1) + ' S', 1.9);

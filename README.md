@@ -37,6 +37,25 @@ Along the banks, modeled from their actual footprints and heights:
 | **Architecture Tour** | No clock, no rivals. You ride the *Wacker Belle*, a 30 m river tour boat, while the docent names what you are passing. She keeps a secret |
 | **Multiplayer** | Real cross-machine P2P rooms — share a link, everyone brings their own boat |
 
+## Power-ups
+
+Gold crates ride the channel — drive through one and the slot spins you an item. The draw is
+**weighted by race position**: the leader pulls defensive scraps, the tail pulls the mean stuff, so
+a lead is never safe and the race is not decided by whoever gets out first. The AI uses them too.
+
+| Item | What it does |
+|---|---|
+| **Turbo** | Fills the tank and kicks |
+| **Fender** | Absorbs one hit or hazard |
+| **Wake Slick** | Dropped astern — whoever hits it loses the back end |
+| **River Dye** | The St Patrick's green, dumped as a blinding cloud for anyone following |
+| **Deep Dish** | You go heavy: bulldoze on contact, at a cost to your top end |
+| **Bow Wave** | A shove that knocks nearby rivals off their line |
+| **Gull Swarm** | A flock in the face of everyone ahead of you |
+| **Gale Off The Lake** | A gust that shoves the whole field ahead of you sideways |
+
+On by default; toggle with `I` or from the title and pause screens.
+
 ## Courses
 
 | Course | Water |
@@ -65,8 +84,12 @@ Pick your ride in a **live 3D showroom** — the boat idles on the lake chop wit
 | `C` | Camera (chase / close / hull) |
 | `N` | Time of day (day / sunset / **dusk** / night) |
 | `G` | Dye the river green (St. Patrick's Day) |
+| `E` | Fire the item you are holding |
+| `B` | Hold to look astern |
 | `P` | Photo mode (orbit camera, HUD off) |
 | `[` `]` | Cycle cinematic camera shots |
+| `M` | Sound on / off (the game boots silent) |
+| `I` | Power-ups on / off (menus only) |
 | `R` | Reset to course |
 | `Esc` | Pause |
 

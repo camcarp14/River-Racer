@@ -1,4 +1,20 @@
-/* River Racer — keyboard / gamepad / touch input */
+/* River Racer — keyboard / gamepad / touch input
+
+   THE WHOLE KEY MAP lives here in one list, because it is documented in three places on screen
+   (hud.js's key wall, and HOW TO PLAY + the pause legend in menus.js) and a binding nobody wrote
+   down is a binding nobody finds. Add a key, add it to all four.
+
+     W/↑ throttle · S/↓ brake+reverse · A·D/←·→ steer · SHIFT boost   (this file)
+     E or SPACE fire item        (polled by powerups.js through I.pressed)
+     B or Q look astern          (this file → camera.js)
+     [ ] cinematic shot          (this file → camera.js)
+     F ×5 take the wheel         (this file → main.js, Architecture Tour only)
+     C camera · N time of day · G green river · P photo · R reset · SPACE docent · ESC pause  (main.js)
+     M sound · I power-ups       (menus.js; I only answers on the title and pause screens)
+     ↑↓ ←→ select · ENTER confirm · BKSP back                          (menus.js)
+
+   Gamepad: left stick steer · RT throttle · LT brake · A throttle · X boost · B fire item ·
+   LB look astern · right stick free look (tour) · stick click re-centres. */
 (function () {
   const I = { throttle: 0, brake: 0, steer: 0, boost: false, lookBack: false, lookX: 0, lookY: 0, lookDX: 0, lookDY: 0, lookCenter: false, raw: {} };
   const keys = {};
@@ -41,7 +57,11 @@
   window.addEventListener('keyup', (e) => { keys[e.code] = false; });
   window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
-  I.pressed = (code) => !!keys[code];
+  // A pad had no item button at all, which with power-ups shipping ON meant a pad player could not
+  // play the default game. powerups.js polls I.pressed('KeyE'), so B/circle answers there — the
+  // routing lives with the other pad bindings instead of teaching another module about gamepads.
+  I.padItem = false;
+  I.pressed = (code) => !!keys[code] || (I.padItem && code === 'KeyE');
 
   // touch: left half steers by horizontal position, right half is throttle
   let touchSteer = 0, touchThrottle = 0;
@@ -92,7 +112,7 @@
     // LOOK BACK: hold it and the whole chase rig swings round onto the bow to look astern.
     let lb = !!(keys.KeyB || keys.KeyQ);
 
-    let lx = 0, ly = 0, recentre = false;
+    let lx = 0, ly = 0, recentre = false, padFire = false;
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     for (const p of pads) {
       if (!p || !p.connected) continue;
@@ -103,6 +123,7 @@
       if (rt > 0.05) th = Math.max(th, rt);
       if (lt > 0.05) br = Math.max(br, lt);
       if (p.buttons[0] && p.buttons[0].pressed) th = 1;
+      if (p.buttons[1] && p.buttons[1].pressed) padFire = true;       // B / circle: fire your item
       if (p.buttons[2] && p.buttons[2].pressed) bo = true;
       if (p.buttons[4] && p.buttons[4].pressed) lb = true;            // LB / L1: look astern
       // right stick is the passenger's head on the Architecture Tour
@@ -123,6 +144,7 @@
     I.steer = RR.U.damp(I.steer, st, st === 0 ? 9 : 5.5, dt);
     I.boost = bo;
     I.lookBack = lb;
+    I.padItem = padFire;
     I.lookX = lx; I.lookY = ly; I.lookCenter = recentre;
     // publish one frame's drag, capped: sitting on the menu for a minute must not bank up a whip
     I.lookDX = RR.U.clamp(mdx, -140, 140); I.lookDY = RR.U.clamp(mdy, -140, 140);

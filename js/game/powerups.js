@@ -141,17 +141,52 @@
     parts.push(tint(pon, 0xe8eef2));
     return merge(parts);
   }
+  // A vertical ramp written straight into the merged colour buffer. Under additive blending a
+  // vertex colour of black adds nothing at all, which is the only way to end a shaft of light
+  // without giving it an edge. Linear space on purpose: this multiplies the material colour, which
+  // three has already converted — run it through convertSRGBToLinear and the fade goes muddy.
+  function fadeUp(geo, y0, y1, mul) {
+    const pos = geo.attributes.position, n = pos.count;
+    const col = new Float32Array(n * 3);
+    const span = Math.max(1e-3, y1 - y0);
+    for (let i = 0; i < n; i++) {
+      const f = Math.pow(1 - U().clamp((pos.getY(i) - y0) / span, 0, 1), 1.05) * (mul == null ? 1 : mul);
+      col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = f;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return geo;
+  }
+
   // The halo does NOT turn with the crate: a ring rotating on the water reads as a propeller, and
   // the ring is the part that says "the gap is here".
+  //
+  // The shaft above it was one cone tapered to a point, and a cone tapered to a point is a
+  // TRIANGLE — a pale triangle standing on a white float in open water is a SAIL, and course 3
+  // moors a whole fleet of them within two hundred metres of every crate row. Seen down a row from
+  // a metre off the water the beacons joined that fleet. So the column is built the way a light is
+  // and not the way a sail is: it SPLAYS as it rises instead of coming to a head, it is dimmed to
+  // nothing long before it ends so there is no silhouette left up there to mistake, and it wears
+  // three bands climbing it. Those bands are what saves the grazing view — three stacked
+  // horizontal bars is the one thing out here that is not a sail, not a buoy and not a piling.
   function haloGeom() {
+    const Y0 = 0.3, H = 11;
     const ring = new THREE.RingGeometry(2.6, 3.6, 22);
     ring.rotateX(-Math.PI / 2);
     ring.translate(0, 0.12, 0);
-    // tapered to a point, not a tube: a straight-sided column reads as a plastic pipe standing in
-    // the river, a cone that thins out reads as a beacon
-    const col = new THREE.CylinderGeometry(0.04, 1.15, 11, 9, 1, true);
-    col.translate(0, 5.9, 0);
-    return merge([ring, col]);
+    const parts = [ring];
+
+    // five height segments is plenty: the ramp below is very nearly linear, and linear is exactly
+    // what interpolating across a segment gives you for free
+    const col = new THREE.CylinderGeometry(2.05, 0.82, H, 10, 5, true);
+    col.translate(0, Y0 + H / 2, 0);
+    parts.push(fadeUp(col, Y0, Y0 + H, 0.78));
+
+    for (const b of [[1.05, 0.98], [2.35, 1.18], [3.75, 1.40]]) {
+      const band = new THREE.CylinderGeometry(b[1], b[1] * 0.93, 0.32, 10, 1, true);
+      band.translate(0, b[0], 0);
+      parts.push(fadeUp(band, Y0, Y0 + H));
+    }
+    return merge(parts);
   }
 
   // Oil on water is not a grey disc, it is a dark centre with an iridescent rim — that rim is the
@@ -243,9 +278,13 @@
     crateIM = instanced(crateGeom(),
       new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.05,
         emissive: 0x3a2a00, emissiveIntensity: 0.5 }), nCrates, 1);
+    // FrontSide, not DoubleSide: an open cylinder drawn both ways adds itself to the frame twice,
+    // and twice 0.42 of additive cyan over a bright lake clips to flat WHITE — which is how the
+    // beacon lost its colour and became a sheet. One wall, a little brighter, keeps the cyan.
     haloIM = instanced(haloGeom(),
-      new THREE.MeshBasicMaterial({ color: 0x6ff0ff, transparent: true, opacity: 0.42,
-        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), nCrates, 2);
+      new THREE.MeshBasicMaterial({ color: 0x6ff0ff, vertexColors: true, transparent: true,
+        opacity: 0.78, blending: THREE.AdditiveBlending, depthWrite: false,
+        side: THREE.FrontSide }), nCrates, 2);
 
     const disc = new THREE.CircleGeometry(1, 20);
     disc.rotateX(-Math.PI / 2);
@@ -469,7 +508,7 @@
       gale: 0, galeX: 0, galeZ: 0,
       seed: (seedTick = (seedTick + 2.399963) % 6.283),
       baseMass: b.mass || 1,
-      aiHold: 0, aiPatience: 0, aiCheck: 0, seekX: 0, seekZ: 0, seekT: 0,
+      aiHold: 0, aiPatience: null, aiCheck: 0, seekX: 0, seekZ: 0, seekT: 0,
     });
   }
 
@@ -478,6 +517,7 @@
     if (s.held) return false;
     s.held = item;
     s.roll = instant ? 0 : K.ROLL_T;
+    s.aiPatience = null;                   // a fresh item gets a fresh clock — see aiBrain
     return true;
   }
 
@@ -523,6 +563,7 @@
     return out;
   }
 
+  let lastFireT = -1e9;
   function fire(b) {
     const s = st(b);
     const it = s.held;
@@ -662,10 +703,15 @@
         if (RR.Audio && RR.Audio.airhorn) RR.Audio.airhorn();
       }
     }
+    if (b.isPlayer) lastFireT = RR.Engine.time();
     if (useHook) useHook(b, it);
     return true;
   }
   PU.onUse = function (fn) { useHook = fn; };
+  // Seconds since the PLAYER last let an item go, or effectively forever. Published rather than
+  // routed through onUse because onUse holds exactly one subscriber and the HUD already has it —
+  // life.js turns the Riverwalk crowd on this.
+  PU.firedAgo = function () { return RR.Engine.time() - lastFireT; };
 
   // ---------------------------------------------------------------------------------------------
   // Per-frame
@@ -849,14 +895,19 @@
     if (!s.held || s.roll > 0) return;
     if (s.aiHold > 0) { s.aiHold -= dt; return; }
     const w = U().clamp((diff() - 0.7) / 0.75, 0, 1);     // 0 rookie · 0.4 skipper · 1 legend
-    if (s.aiPatience <= 0) s.aiPatience = U().lerp(1.2, 9.0, w);
+    // The clock is armed once per item (give() nulls it) and then allowed to RUN OUT. It used to be
+    // re-armed on any frame it was already spent, so "patience gone, just use it" could only fire
+    // on the one frame in twenty-one where the 0.35 s check gate happened to open on the same tick
+    // the clock crossed zero — which meant a rival with nobody to aim at, and the cold open's own
+    // boat, sat on an item indefinitely and only ever fired on wants().
+    if (s.aiPatience == null) s.aiPatience = U().lerp(1.2, 9.0, w);
     s.aiPatience -= dt;
     s.aiCheck -= dt;
     if (s.aiCheck > 0) return;
     s.aiCheck = 0.35;
     if (s.aiPatience <= 0 || wants(b, s.held)) {
       fire(b);
-      s.aiPatience = 0;
+      s.aiPatience = null;
       s.aiHold = U().lerp(2.2, 0.35, w);                  // no double-tapping the next crate
     }
   }
@@ -1059,12 +1110,16 @@
   // ---------------------------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------------------------
-  // Items are a RACE feature. The Architecture Tour is a ride, a time trial is a record against a
-  // ghost that never had them, the cold open is teaching one thing at a time, and multiplayer has
-  // no authority to agree on who got shoved — so all four run clean.
+  // Items are a RACE feature, with one deliberate exception. The Architecture Tour is a ride, a
+  // time trial is a record against a ghost that never had them, and multiplayer has no authority
+  // to agree on who got shoved — those three run clean.
+  //
+  // THE COLD OPEN KEEPS THEM. It is sixty seconds of the widest, emptiest water in the game with
+  // no rivals, no clock and nothing overhead that can hurt you, which makes it the best place
+  // anywhere to find out what a gold crate does. A tutorial that says "run through one" over an
+  // empty river teaches nothing, and one that only states a fact teaches less than that.
   function active() {
-    return !!(S && group && PU.enabled() && crates.length &&
-      !S.tour && !S.timeTrial && !S.mp && !S.opening);
+    return !!(S && group && PU.enabled() && crates.length && !S.tour && !S.timeTrial && !S.mp);
   }
   PU.active = active;
 
@@ -1087,8 +1142,8 @@
   PU.buildForRace = function (state) {
     PU.clear();
     // A ride and a record run never get crates at all, so they do not even pay to build them.
-    // (The cold open and multiplayer are only known AFTER start() returns, so those two are caught
-    // by active() instead and the built crates simply stay hidden.)
+    // (Multiplayer is only known AFTER start() returns, so it is caught by active() instead and
+    // the built crates simply stay hidden.)
     if (!state || state.tour || state.timeTrial || !RR.Engine.scene) return;
     S = state;
     drawRng = U().mulberry((((state.courseIdx | 0) * 2654435761) ^ 0x85EBCA6B) >>> 0);
@@ -1110,9 +1165,10 @@
     galeMesh = null;
     overlay = overlayMat = null;
     crates = []; slicks = []; dyes = []; rings = [];
-    S = null; keyWas = false;
+    S = null; keyWas = false; lastFireT = -1e9;
   };
 
+  const attractPilot = { boat: null, ctl: null };     // hoisted: no allocation in update()
   // race.js calls this once per frame with the live race state.
   PU.update = function (dt, state) {
     if (state) S = state;
@@ -1125,7 +1181,20 @@
       collect(dt);
       applyEffects(dt, t);
       updateHazards(dt);
-      for (const b of S.boats) if (!b.isPlayer && !b.remote && !b.finished) aiBrain(b, dt);
+      // In the attract loop the cold open has an AI at the PLAYER'S wheel, and an attract demo
+      // that collects a crate and then never uses it is a demo of half the feature.
+      const auto = !!(S.opening && RR.Opening && RR.Opening.attracting && RR.Opening.attracting());
+      for (const b of S.boats) if ((auto || !b.isPlayer) && !b.remote && !b.finished) aiBrain(b, dt);
+      // …and that pilot is opening.js's, not main.js's, so nothing was steering it at a crate. A
+      // demo that sails clean between the two things it is demonstrating is worse than one that
+      // never shows them. Ordering is the reason this can live here at all: opening.js registered
+      // its per-frame callback at load and main.js registered its own at boot, so the AI has
+      // already written ctl.steer this frame and physics has not read it yet.
+      if (auto && RR.Opening.control) {
+        attractPilot.boat = S.player;
+        attractPilot.ctl = RR.Opening.control();
+        if (attractPilot.ctl) PU.aiSteer(attractPilot, dt);
+      }
       pollPlayerKey();
     }
     drawCrates(t);

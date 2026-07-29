@@ -1,45 +1,54 @@
-/* River Racer — jump ramps: floating orange wedges moored on the straight approach to a few
-   bridges. Hit one at speed (boost helps) and you launch clear over the span.
+/* River Racer — jump ramps: floating orange wedges moored in the open reaches of the river.
+   Hit one at speed (boost helps) and you launch clear, with nothing over you but sky.
    Built like real river plant: a pontoon hull with a rubber fender, a painted steel deck with
    chevrons, kerbs, and a guard rail set outboard of the running surface so it never narrows it. */
 (function () {
   const RAMPS = { list: [] };
   const U = () => RR.U;
 
-  // Every ramp is moored on a bascule approach, and with a live ceiling overhead that makes each
-  // one the same question: is it up? For that question to have an honest answer the arc has to
-  // land in the same place whatever the boat is doing, and it does not do that for free.
+  // Every ramp used to be moored 16 m off a bascule approach, and that was never about the jump —
+  // it was the Salute. You asked for the span, the tender lifted it, you threaded the raised slot,
+  // and if you mistimed it you wrecked on the shut deck. The Salute is retired and the bridge-strike
+  // collision went with it, so the question is gone and only the geometry is left: measured over six
+  // ramps and three speeds with every leaf pinned down, the hull peaked at 7.9-10.6 m against a
+  // soffit of 5.8-6.4 and a deck top of 11.1-11.7. That is 23-31 frames — half a second — spent
+  // inside solid steel, on every single launch. So the ramps move to water with sky over it.
   //
-  // Height at the span is y0 + 1.25*(H/LEN)*D + 1.6*D/v - 4.9*D²/v². The middle term is
-  // speed-free — the launch is proportional to speed, so the two v terms very nearly cancel — but
-  // the tail term is not, and it grows as D². At the old 40-48 m lip it swamped everything: 2.8 m
-  // at 20 m/s (you pass harmlessly under a shut span), 9.2 m at 25 (you hit it), 15.9 m at 40 (you
-  // sail clean over the parapet and nothing happens). Three different games on one ramp.
+  // How much water is set by the fastest thing that can hit one, measured rather than assumed: every
+  // hull, full throttle and boost off a full tank, planted 80 m out on the ramp's own axis.
+  // ANAKIN'S PODRACER leaves the lip at 71.1 m/s — top speed 61 is only the cruise, boost is 1.18
+  // with a 1.15 full-tank bonus on top — peaks at 24.3 m and comes down 234 m downstream. Nothing
+  // else is close: 136 m for the F1H2O, 115 for the Formula, 92 for the jetski, 17 for the BELLE.
+  // CLEAR_M is that worst case with 16 m over it, and no site below lets a deck footprint inside
+  // 15 m of the corridor.
   //
-  // At a 16 m lip the tail is worth half a metre across the whole speed range. Measured over 192
-  // launches — all six ramps, both span states, 13 to 56 m/s, the 33 m/s jetski and the 61 m/s
-  // podracer — every one launches, and every one crosses the span line between 6.5 and 7.5 m:
-  // above every soffit (5.8-6.4) and far under every deck top (11.1-11.7). Shut deck or raised
-  // slot, it is the same question at every speed in the game. H is 3.4 so the flight (110 m at
-  // 40 m/s) stays shorter than the 124 m between Main Stem bascules and a jump lands on water.
-  // The launch itself reads ~0.75 m below the formula: physics damps pos.y toward the waterline on
-  // the frame the hull leaves the footprint, before it reads the lip. That is priced in above.
-  //
-  // VISION R6 asks that a shut span be visible before you commit, and answers it the other way
-  // round: a LONGER lip is not more legible, it is less. Rendered from the chase camera at the
-  // commit point — 55 m from the span, 23 m short of the ramp, 28 m/s — for all six ramps in both
-  // states (shots/dev/w1lip-<ramp>-commit-{shut,open}.png), a shut deck is a solid red band across
-  // the channel and an open one is two 30 m leaves standing over the frame. The same pair from
-  // 79 m, where a 40 m lip would put the commit point (w1lip-lasalle-far80-{shut,open}.png), shows
-  // the bridge at half the size. Moving the lip out moves the read onto the HUD, not off it.
-  // Below ~15 m/s the arc no longer reaches the soffit and the ramp is simply inert — which is a
-  // mercy for a boat still recovering, not a hole. Signed off at 16.
-  RAMPS.LIP_M = 16;                                  // lip → span line
+  // Leaves DOWN is the worst case and the only one worth checking, because a bascule leaf pivots
+  // about a trunnion running parallel to the channel: it swings up and back over its own bank and
+  // never reaches outside the shut deck's along-channel footprint. Stay out of that footprint and
+  // every position in the cycle is clear — including the half-raised one, where a leaf tip stands
+  // over the middle of the channel at 17 m and would otherwise swat anything flying the parapet.
+  RAMPS.CLEAR_M = 250;                               // flight corridor that must be free of deck
   RAMPS.LEN = 16; RAMPS.H = 3.4;
-  // low edge → span line: the distance the whole decision is made at, and what the HUD's
-  // `▲ RAMP n M` chip counts down. Derived so it cannot drift away from the two above.
-  RAMPS.FOOT_M = RAMPS.LIP_M + RAMPS.LEN;
-  const PICKS = { 'LaSalle St': 1, 'State St': 1, 'Adams St': 1, 'Randolph St': 1, 'Grand Ave': 1, 'Columbus Dr': 1 };
+
+  // Foot of the wedge, as a distance along a named channel. Each site sits in a bridge-free reach
+  // long enough for CLEAR_M, in water the whole corridor stays inside, on a stretch where the
+  // channel runs straight for the 110 m before it (centreline drift off the ramp axis under 3 m) so
+  // the ramp is on the line a racer is already taking rather than something to swerve at.
+  // A site therefore needs 15 + 16 + CLEAR_M + 15 = 296 m of straight water between deck edges, and
+  // that is what decides which reaches can hold a ramp at all. The Loop canyon holds none: from
+  // Franklin to DuSable the bascules are 124-168 m apart. The North Branch holds none either — its
+  // longest bridge-free reach (Chicago Ave to Ohio St) is 487 m but swings through 25 degrees in the
+  // middle, and the longest straight one (Grand Ave to Kinzie St) leaves 269 m. So the ramps live
+  // where the river opens out, which is also where the boats are quickest.
+  const SITES = [
+    { path: 'main',  d: 1215, reach: 'DuSable Bridge to Columbus Dr — the Riverwalk reach' },
+    { path: 'main',  d: 1760, reach: 'Columbus Dr to Lake Shore Dr — off the Centennial Fountain' },
+    { path: 'main',  d: 2160, reach: 'Lake Shore Dr to the lock — the outer harbour, widest water on the river' },
+    { path: 'south', d:  855, reach: '18th St to Roosevelt Rd — the long South Branch straight' },
+    { path: 'south', d: 1240, reach: '18th St to Roosevelt Rd — the Roosevelt approach' },
+    { path: 'south', d: 1985, reach: 'Roosevelt Rd to Harrison St' },
+  ];
+
   const LEN = RAMPS.LEN, W = 7, H = RAMPS.H;
   const ORANGE = 0xf07820, ORANGE_DK = 0xc45a14, ORANGE_MD = 0xd8681a;
   const WHITE = 0xf2f2ee, HULL = 0x54585e, RUBBER = 0x2b2e33;
@@ -47,17 +56,13 @@
   RAMPS.init = function () {
     const rng = U().mulberry(777);
     const geoms = [];
-    for (const b of window.CHICAGO.bridges) {
-      if (!PICKS[b.name]) continue;
-      const p = RR.River.paths[b.branch];
-      if (!p) continue;
-      const q = U().pathNearest(p, b.x, b.z);
-      const d0 = q.d - RAMPS.FOOT_M;                  // leading (low) edge of the wedge
-      if (d0 < 40) continue;
-      const a = U().pathAt(p, d0, {});
+    for (const s of SITES) {
+      const p = RR.River.paths[s.path];
+      if (!p || s.d < 40 || s.d > p.len - 40) continue;
+      const a = U().pathAt(p, s.d, {});
       RAMPS.list.push({
         x: a.x, z: a.z, dirx: a.tx, dirz: a.tz, len: LEN, w: W, h: H, slope: H / LEN,
-        bridge: b.name, bx: q.x, bz: q.z, lipD: RAMPS.LIP_M, footD: RAMPS.FOOT_M,
+        reach: s.reach, deckClear: deckClearance(a.x, a.z, a.tx, a.tz),
       });
       buildMesh(geoms, a.x, a.z, a.tx, a.tz, rng);
     }
@@ -67,6 +72,27 @@
       RR.Engine.scene.add(mesh);
     }
   };
+
+  // Smallest horizontal gap between the launch corridor — the wedge, then CLEAR_M of flight past
+  // the lip — and any bridge deck footprint. This is the invariant the whole siting exists to hold,
+  // so it is measured off the live span table rather than trusted to the comment above: re-bake
+  // chicago.js and move a bridge and the number moves with it.
+  function deckClearance(x, z, dx, dz) {
+    const spans = (RR.Bridges && RR.Bridges.list) ? RR.Bridges.list() : [];
+    let best = Infinity;
+    for (let s = 0; s <= LEN + RAMPS.CLEAR_M; s += 2) {
+      const px = x + dx * s, pz = z + dz * s;
+      for (let i = 0; i < spans.length; i++) {
+        const b = spans[i];
+        const ex = px - b.x, ez = pz - b.z;
+        const along = Math.abs(ex * b.tx + ez * b.tz) - b.halfAlong;
+        const across = Math.abs(ex * -b.tz + ez * b.tx) - b.halfSpan;
+        const g = (along > 0 && across > 0) ? Math.hypot(along, across) : Math.max(along, across);
+        if (g < best) best = g;
+      }
+    }
+    return Math.round(best * 10) / 10;
+  }
 
   function buildMesh(geoms, x, z, dx, dz, rng) {
     const ang = Math.atan2(dx, dz);

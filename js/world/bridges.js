@@ -12,9 +12,10 @@
   const U = () => RR.U;
   let rng;
   // The bascules whose leaves actually move. The six Loop bridges CDOT lifts in a wave are the
-  // core of it, plus Adams, Randolph and Grand — the three that carry a jump ramp on their
-  // approach, where a leaf standing open is the best thing in the game to fly at. All nine are
-  // real operating double-leaf bascules.
+  // core of it, plus Adams, Randolph and Grand, which put a moving leaf on each of the other three
+  // reaches a course runs through. (Those three used to be picked because each carried a jump ramp
+  // on its approach; ramps.js re-sited every ramp into open water, so the reason is now simply
+  // coverage.) All nine are real operating double-leaf bascules.
   const ANIMATED = {
     'LaSalle St': 1, 'Clark St': 1, 'Dearborn St': 1, 'State St': 1, 'Wabash Ave': 1, 'Columbus Dr': 1,
     'Adams St': 1, 'Randolph St': 1, 'Grand Ave': 1,

@@ -41,7 +41,7 @@
   <div id="cd-scatter"></div>
   <div id="landmark-tag"><div id="lt-blade"><i class="star6"></i><span id="lt-name"></span></div><div id="lt-sub"></div></div>
   <div id="docent"></div>
-  <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake &amp; reverse &nbsp;<b>SHIFT</b> boost &nbsp;<b class="key">E</b> fire your item<br><b>B</b> look astern &nbsp;<b>C</b> camera &nbsp;<b>[ ]</b> shot &nbsp;<b>N</b> time of day &nbsp;<b>G</b> green river &nbsp;<b>P</b> photo &nbsp;<b>R</b> reset &nbsp;<b>ESC</b> pause</div>`;
+  <div id="boost-hint"><b>W/↑</b> throttle &nbsp;<b>A·D/←·→</b> steer &nbsp;<b>S/↓</b> brake &amp; reverse &nbsp;<b>SHIFT</b> boost<br><span id="hint-item"><b class="key">E</b> or <b class="key">SPACE</b> fire your item &nbsp;</span><b>B·Q</b> look astern &nbsp;<b>C</b> camera &nbsp;<b>[ ]</b> shot<br><b>N</b> time of day &nbsp;<b>G</b> green river &nbsp;<b>P</b> photo &nbsp;<b>R</b> reset &nbsp;<b>M</b> sound &nbsp;<b>ESC</b> pause<span id="hint-tour" style="display:none"><br><b>SPACE</b> docent &nbsp;<b>F ×5</b> take the wheel &nbsp;<b>C</b> walk the boat &nbsp;<b>DRAG</b> look around</span></div>`;
 
   const CINE = `<div class="bar t"></div><div class="bar b"></div><div class="meta"></div><div class="rec">REC</div>`;
 
@@ -53,8 +53,20 @@
   const chips = new Map();              // kind -> {el, t}
   let lastPos = 0, lastBoost = '', lastSpeed = -1, lastArc = '';
   let lastLap = '', lastTimer = '', lastWrong = null;
-  let hintT = 0, hintGone = false;
+  let hintT = 0, hintGone = false, hintItems = null, hintTour = null;
   let tickerT = 0;
+
+  // The key wall must never list a key that does nothing in the run you are actually in: SPACE is
+  // the docent aboard the Architecture Tour and the item trigger everywhere else, and with items
+  // switched off (or in a time trial) there is no item to fire at all. Repainted every frame rather
+  // than only while the wall is counting down, because the switch that decides it lives on the
+  // pause menu and can be thrown long after the nine seconds are up.
+  function paintHintKeys(race) {
+    const items = !!(RR.Powerups && RR.Powerups.active && RR.Powerups.active());
+    const tour = !!(race && race.tour);
+    if (items !== hintItems) { hintItems = items; if (els.hintItem) els.hintItem.style.display = items ? '' : 'none'; }
+    if (tour !== hintTour) { hintTour = tour; if (els.hintTour) els.hintTour.style.display = tour ? '' : 'none'; }
+  }
 
   H.init = function () {
     const hud = $('hud');
@@ -73,6 +85,7 @@
       count: $('countdown'), cdNum: $('cd-num'), cdStar: $('cd-star'), scatter: $('cd-scatter'),
       tag: $('landmark-tag'), ltName: $('lt-name'), ltSub: $('lt-sub'), docent: $('docent'),
       vig: $('vignette'), chips: $('chips'), ticker: $('ticker'), hint: $('boost-hint'),
+      hintItem: $('hint-item'), hintTour: $('hint-tour'),
       slot: $('item-slot'), icon: $('item-icon'), itemName: $('item-name'), pips: $('item-pips'),
       call: $('item-call'),
       cine, cineMeta: cine.querySelector('.meta'),
@@ -597,6 +610,7 @@
     drawBoost(boat.boostEnergy || 0, (boat.boostHeat || 0) > 0.35);
 
     updateItems();
+    paintHintKeys(race);
 
     // chips driven straight off the physics fields
     if ((boat.draft || 0) > 0.25) H.chip('draft', 'DRAFTING', 150);
@@ -666,6 +680,7 @@
 
   H.resetSession = function () {
     tagSeen.clear(); tagName = null; lastPos = 0; hintGone = false; hintT = 0;
+    hintItems = null; hintTour = null;
     clearCall(); callWall = -1e9;
     slotCls = null; lastFace = ''; lastItemName = '';
     wasHit.spin = wasHit.blind = wasHit.gulls = wasHit.gale = 0;

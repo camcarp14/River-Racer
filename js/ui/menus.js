@@ -105,7 +105,7 @@
         ${rows.map((r, i) => `<div class="menu-item" data-i="${i}">${r}</div>`).join('')}
       </div>
       <div id="switches"><div id="snd-row" class="sound-row"></div>${puRowHTML()}</div>
-      <div class="menu-note">↑↓ SELECT · ENTER CONFIRM · <b>M</b> SOUND<br>BUILT ON THE REAL CHICAGO RIVER</div>
+      <div class="menu-note">↑↓ SELECT · ENTER CONFIRM · <b>M</b> SOUND · <b>I</b> POWER-UPS<br>BUILT ON THE REAL CHICAGO RIVER</div>
     `);
     bindClicks(acts);
     const row = $('snd-row');
@@ -119,29 +119,47 @@
   MENU.showTitle = showTitle;
   MENU.toTitle = showTitle;
 
+  // Every key the game answers to, on one screen. It is a TABLE and not prose because prose is how
+  // the look-astern binding went a whole build undocumented — and because this panel has to fit
+  // 720p: a HOW TO PLAY tall enough to overflow clips its own title off the top and its own BACK
+  // button off the bottom, which is exactly what happened the last time three lines were added.
+  // Measured, not eyeballed: at 1280x720 this runs from y=68 to y=652 of the 720 available.
+  const HELP_KEYS = [
+    ['W / ↑', 'throttle', 'S / ↓', 'brake &amp; reverse'],
+    ['A·D / ←·→', 'steer', 'SHIFT', 'boost'],
+    ['E / SPACE', 'fire your item', 'B / Q', 'look astern'],
+    ['C', 'camera', '[ ]', 'cinematic shot'],
+    ['P', 'photo mode', 'R', 'reset to the course'],
+    ['N', 'time of day', 'G', 'dye the river green'],
+    ['M', 'sound', 'I', 'power-ups on / off'],
+    ['ESC', 'pause', '↑↓ ←→ ENTER', 'menus · BKSP back'],
+  ];
   function showHelp() {
     screen = 'help'; sel = 0;
+    const grid = HELP_KEYS.map((r) => `<b>${r[0]}</b><span>${r[1]}</span><b>${r[2]}</b><span>${r[3]}</span>`).join('');
     html(`
       <div id="select-title">HOW TO PLAY</div>
-      <div class="menu-note" style="font-size:15px;max-width:660px;line-height:2.0;">
-        <b>W / ↑</b> — throttle &nbsp;&nbsp; <b>S / ↓</b> — brake &amp; reverse &nbsp;&nbsp; <b>A·D / ←·→</b> — steer<br>
-        <b>SHIFT</b> — boost. The meter is the outer ring of the dial; the two
-        <span style="color:#EF3340">red</span> segments at the bottom are the reserve, and the engine
-        will not light below them. Above <span style="color:#FFC857">PRIME</span> it pays 15% more.<br>
-        <b>E</b> or <b>SPACE</b> — fire what you are holding. Run through one of the gold
-        <span style="color:#FFC857">CRATES</span> in the channel and the slot at the bottom of the
-        screen spins you an item. What you can draw depends on where you are running: the leader
-        gets a <b>FENDER</b> and something to hide behind, the tail of the field gets the
-        <b>GALE</b> and the <b>GULL SWARM</b>. Turn the whole thing off with
-        <b>POWER-UPS</b> on the title screen.<br>
-        <b>B</b> look astern &nbsp; <b>C</b> camera &nbsp; <b>[ ]</b> cinematic shot &nbsp; <b>P</b> photo &nbsp;
-        <b>N</b> time of day &nbsp; <b>G</b> green river &nbsp; <b>R</b> reset &nbsp; <b>ESC</b> pause<br>
-        Thread the checkpoint buoys — <span style="color:#EF3340">red LEFT</span>,
-        <span style="color:#3ED17E">green RIGHT</span>. Gold gates off the racing line pay boost.
-        The bascule bridges lift and fall on the tender's own cycle all day, the way the real ones
-        do: if a span is coming down as you reach it, that is the river's business, not yours.
+      <div class="menu-note" style="font-size:13px;max-width:760px;line-height:1.5;margin-top:10px">
+        <div style="display:grid;grid-template-columns:max-content 1fr max-content 1fr;gap:.30em 1.1em;text-align:left">${grid}</div>
+        <div style="margin-top:.85em;text-wrap:balance"><b>GAMEPAD</b> — LEFT STICK steer · RT throttle ·
+          LT brake · A throttle · X boost · B fire item · LB look astern</div>
+        <div style="margin-top:.5em;text-wrap:balance"><b>ARCHITECTURE TOUR</b> — <b>F</b>×5 take the wheel ·
+          <b>SPACE</b> docent · <b>C</b> walk the boat · DRAG or RIGHT STICK to look around</div>
+        <div style="margin-top:.9em;line-height:1.75">
+          <b>SHIFT</b> is boost: the meter is the outer ring of the dial, the two
+          <span style="color:#EF3340">red</span> segments at the bottom are the reserve the engine
+          will not light below, and above <span style="color:#FFC857">PRIME</span> it pays 15% more.<br>
+          <b>E</b> or <b>SPACE</b> fires what you are holding. Run through one of the gold
+          <span style="color:#FFC857">CRATES</span> in the channel and the slot spins you an item —
+          the leader draws a <b>FENDER</b> and something to hide behind, the tail of the field draws
+          the <b>GALE</b> and the <b>GULL SWARM</b>. <b>I</b> turns the whole thing off.<br>
+          Thread the checkpoint buoys — <span style="color:#EF3340">red LEFT</span>,
+          <span style="color:#3ED17E">green RIGHT</span>. Gold gates off the racing line pay boost.
+          The bascule bridges lift and fall on the tender's own cycle all day, the way the real ones
+          do: if a span is coming down as you reach it, that is the river's business, not yours.
+        </div>
       </div>
-      <div class="menu-list"><div class="menu-item sel" data-i="0">BACK</div></div>
+      <div class="menu-list" style="margin-top:.9em"><div class="menu-item sel" data-i="0">BACK</div></div>
     `);
     bindClicks([showTitle]);
   }
@@ -714,11 +732,14 @@
         <label>MUSIC<input type="range" id="vol-music" min="0" max="100" value="${Math.round(volMusic * 100)}"></label>
         <label>SFX&nbsp;&nbsp;&nbsp;<input type="range" id="vol-sfx" min="0" max="100" value="${Math.round(volSfx * 100)}"></label>
       </div>
-      <div class="menu-note" style="margin-top:1.4em;max-width:640px">
+      <div class="menu-note" style="margin-top:1.1em;max-width:790px;line-height:1.75">
         <b>W/↑</b> throttle · <b>A·D/←·→</b> steer · <b>S/↓</b> brake &amp; reverse · <b>SHIFT</b> boost<br>
-        <b style="color:#FFC857">E</b> or <b style="color:#FFC857">SPACE</b> fire the item you are holding<br>
-        <b>B</b> look astern · <b>C</b> camera · <b>[ ]</b> shot · <b>P</b> photo · <b>N</b> time of day ·
-        <b>G</b> green river · <b>M</b> sound · <b>R</b> reset
+        <b style="color:#FFC857">E</b> or <b style="color:#FFC857">SPACE</b> fire the item you are holding ·
+        <b style="color:#FFC857">I</b> power-ups on / off<br>
+        <b>B·Q</b> look astern · <b>C</b> camera · <b>[ ]</b> shot · <b>P</b> photo · <b>N</b> time of day ·
+        <b>G</b> green river · <b>R</b> reset<br>
+        <b>M</b> sound · <b>ESC</b> resume · TOUR — <b>F</b>×5 take the wheel · <b>SPACE</b> docent ·
+        <b>C</b> walk the boat
       </div>
     `);
     bindClicks([() => { MENU.hide(); if (MENU.onResume) MENU.onResume(); },
@@ -816,8 +837,8 @@
     if (!row) return;
     const on = puOn();
     row.classList.toggle('off', !on);
-    row.innerHTML = `${CRATE}<b>POWER-UPS ${on ? 'ON' : 'OFF'}</b><i>${on ? 'ITEMS' : 'CLEAN RACE'}</i>`;
-    row.title = on ? 'Race without items' : 'Put the crates back in the channel';
+    row.innerHTML = `${CRATE}<b>POWER-UPS ${on ? 'ON' : 'OFF'}</b><i>PRESS I</i>`;
+    row.title = on ? 'Race without items (I)' : 'Put the crates back in the channel (I)';
   }
   function bindPowerupRow() {
     const row = $('pu-row');
@@ -873,11 +894,22 @@
 
   // Its own listener, deliberately: the one below returns early during a race, and M has to work
   // everywhere — title, showroom, mid-race, pause.
+  const typing = (t) => !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable));
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'KeyM' || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
-    const t = e.target;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (typing(e.target)) return;
     MENU.toggleSound();
+  });
+
+  // I for ITEMS, the mate of M for sound — same guards, but deliberately NOT global. Sound is a
+  // comfort setting and belongs everywhere; the crates are the race, and a key that empties the
+  // channel from the cockpit is a cheat with a shortcut. It answers only where the switch it
+  // drives is on screen to answer back: the title screen and the pause menu.
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'KeyI' || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (screen !== 'title' && screen !== 'pause') return;
+    if (typing(e.target)) return;
+    MENU.togglePowerups();
   });
 
   window.addEventListener('keydown', (e) => {

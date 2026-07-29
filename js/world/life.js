@@ -13,7 +13,7 @@
   let cars, carData = [];
   let riverCraft = [];
   let staticData = [];            // the idlers — they only move when the city has a reason to look
-  let watchK = 0, watchTurned = 0, lateArmed = false;
+  let watchK = 0, watchTurned = 0, watchHold = 0, lateArmed = false;
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1);
   const _up = new THREE.Vector3(0, 1, 0);
 
@@ -388,6 +388,26 @@
     u.uNumBoats.value = n + 1;
   }
 
+  // WHAT THE PROMENADE TURNS FOR. This used to be the salute chain, which is now permanently zero,
+  // so the trigger is the three things a crowd on a river wall actually looks up at: a hull in the
+  // AIR off a ramp, one running FLAT OUT, and one that has just let an item go. Deliberately NOT
+  // "holding the lead": whoever is winning is winning for most of the race, and four hundred
+  // people frozen face-on for four minutes is scenery, not reaction. Measured down the Main Stem
+  // this stands the crowd up about seven times in a hundred seconds and holds them ~16% of the
+  // time — often enough to be a thing that happens to you, rare enough to still mean something.
+  const WATCH_HOLD = 1.8;                  // each of the three buys this long, so half a second of
+  function worthWatching(RS) {             // airtime is a turn you can see rather than a twitch
+    const b = RS && RS.player;
+    if (!b || b.finished || RS.phase === 'countdown') return false;
+    if (b.airborne) return true;
+    // FLAT OUT means past her RATED top, which only the boost can buy — these hulls sit at nine
+    // tenths of spec top the whole way down the stem, and a promenade that turns for cruising
+    // speed is a promenade that never turns back.
+    if ((b.boostHeat || 0) > 0.55 &&
+        Math.hypot(b.vel.x, b.vel.z) > ((b.spec && b.spec.top) || 40)) return true;
+    return !!(RR.Powerups && RR.Powerups.firedAgo && RR.Powerups.firedAgo() < 0.7);
+  }
+
   LIFE.update = function (dt, t) {
     if (!LIFE._ready) return;
     if (!lateArmed) { lateArmed = true; RR.Engine.onUpdate(feedWake); }
@@ -413,12 +433,13 @@
     }
     _s.setScalar(1);
 
-    // Above chain ×6 the Riverwalk stops pretending you are traffic and watches you go past. The
-    // idlers are the crowd — the walkers keep walking, because a promenade where nobody is going
-    // anywhere reads as a diorama. Costs one distance test per idler per frame, and only while
-    // somebody is actually on a chain: with no chain and nobody turned, the loop never runs.
-    const chain = (RR.Salute && RR.Salute.chain) || 0;
-    watchK = U().damp(watchK, chain >= 6 ? 1 : 0, 2.2, dt);
+    // The Riverwalk stops pretending you are traffic and watches you go past. The idlers are the
+    // crowd — the walkers keep walking, because a promenade where nobody is going anywhere reads
+    // as a diorama. Costs one distance test per idler per frame, and only while there is something
+    // to look at: with nothing worth watching and nobody turned, the loop never runs.
+    watchHold = Math.max(0, watchHold - dt);
+    if (worthWatching(RS)) watchHold = WATCH_HOLD;
+    watchK = U().damp(watchK, watchHold > 0 ? 1 : 0, 2.2, dt);
     if (pl && (watchK > 0.002 || watchTurned > 0)) {
       watchTurned = 0;
       for (let i = 0; i < staticData.length; i++) {
