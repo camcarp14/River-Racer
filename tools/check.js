@@ -38,6 +38,17 @@ const nums = (s, n) => {
   return v.length === n && v.every((x) => Number.isFinite(x)) ? v : null;
 };
 
+// --device=NAME emulates a phone: real CSS size, real DPR, and a touch-only context, so touch
+// controls actually receive events and the HUD lays out against the size a phone really gives it.
+// Landscape is the racing orientation; the portrait entries exist to test the rotate prompt.
+const DEVICES = {
+  'iphone-se': { width: 667, height: 375, dpr: 2 },        // the small landscape case
+  'iphone-14': { width: 844, height: 390, dpr: 3 },
+  'iphone-14-portrait': { width: 390, height: 844, dpr: 3 },
+  'pixel-7': { width: 915, height: 412, dpr: 2.6 },
+  'ipad': { width: 1080, height: 810, dpr: 2 },
+};
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
@@ -52,7 +63,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   try {
     browser = await chromium.launch({ headless: true, chromiumSandbox: false, timeout: 20_000 });
-    const page = await browser.newPage({ viewport: VIEWPORT });
+    const dev = opt.device && DEVICES[opt.device];
+    if (opt.device && !dev) {
+      throw new Error(`unknown --device=${opt.device}. Known: ${Object.keys(DEVICES).join(', ')}`);
+    }
+    const page = await browser.newPage(dev
+      ? { viewport: { width: dev.width, height: dev.height }, deviceScaleFactor: dev.dpr,
+          isMobile: true, hasTouch: true }
+      : { viewport: VIEWPORT });
+    if (dev) console.log(`[check] device ${opt.device} — ${dev.width}x${dev.height} @${dev.dpr}x, touch`);
     page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
     page.on('pageerror', (e) => errors.push('page: ' + (e && e.message ? e.message : String(e))));
 
