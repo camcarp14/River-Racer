@@ -1,8 +1,26 @@
 /* River Racer — planar reflections: a mirror camera renders the world across the
    water plane (y=0) into a texture the water shader samples. Real skyline mirroring. */
 (function () {
-  const R = { enabled: true, strength: 0.62 };   // strength is per-preset (theme.js writes P.water.refl)
+  // strength is per-preset (theme.js writes P.water.refl); scale and far are per performance tier
+  const R = { strength: 0.62, scale: 0.42, far: 2600, allowed: true };
   let rt, vcam, ready = false;
+
+  // `enabled` is the adaptive ladder's switch; `allowed` is the performance tier's veto. They are
+  // separate because they answer to different owners: the ladder flips `enabled` on a slow second,
+  // and RRTest.pinQuality() forces it true for screenshots — neither of which may put a second
+  // full-scene pass back onto a phone. Setting `enabled` is always honoured, it just cannot win.
+  let want = true;
+  Object.defineProperty(R, 'enabled', {
+    get() { return want && R.allowed; },
+    set(v) { want = !!v; },
+    enumerable: true, configurable: true,
+  });
+  R.setAllowed = function (on) {
+    R.allowed = !!on;
+    // the water shader falls back to its sky-fresnel term the moment this hits zero
+    if (!R.allowed && RR.Water && RR.Water.material) RR.Water.material.uniforms.uReflectStrength.value = 0;
+    else if (R.allowed && R.resize) R.resize();      // R.scale may have changed with the tier
+  };
 
   const reflectorPos = new THREE.Vector3();
   const camPos = new THREE.Vector3();
@@ -15,7 +33,8 @@
 
   // 0.42-res is plenty — the tap is distorted by the wave normal before it is sampled, so the
   // 29% pixel saving is invisible and it is the largest single win in the frame budget.
-  function size() { return [Math.max(256, (window.innerWidth * 0.42) | 0), Math.max(256, (window.innerHeight * 0.42) | 0)]; }
+  // R.scale is per-tier: a phone that has been handed the mirror back by hand gets a cheaper one.
+  function size() { return [Math.max(256, (window.innerWidth * R.scale) | 0), Math.max(256, (window.innerHeight * R.scale) | 0)]; }
 
   R.init = function () {
     const [w, h] = size();
@@ -25,8 +44,10 @@
     R.texture = rt.texture;
     R.textureMatrix = textureMatrix;
     ready = true;
-    window.addEventListener('resize', () => { const [w2, h2] = size(); rt.setSize(w2, h2); });
+    window.addEventListener('resize', R.resize);
   };
+
+  R.resize = function () { if (ready) { const [w2, h2] = size(); rt.setSize(w2, h2); } };
 
   R.update = function (renderer, scene, camera) {
     if (!ready || !R.enabled) return;
@@ -54,7 +75,7 @@
     vcam.fov = camera.fov;
     vcam.aspect = camera.aspect;
     vcam.near = camera.near;
-    vcam.far = 2600;                                  // nothing past 2.6 km survives the ripple + blend
+    vcam.far = R.far;                                 // nothing past 2.6 km survives the ripple + blend
     vcam.updateMatrixWorld();
     vcam.updateProjectionMatrix();
 

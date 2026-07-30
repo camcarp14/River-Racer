@@ -20,7 +20,8 @@
   #net-ui .row{display:flex;gap:10px}
   #net-ui .row>*{flex:1}
   #net-ui button{margin-top:16px;width:100%;background:var(--sign-green);border:0;box-shadow:inset 0 0 0 2px #fff;color:#fff;font-weight:700;letter-spacing:.2em;padding:12px;border-radius:2px;font-size:15px;cursor:pointer;font-family:inherit}
-  #net-ui button:hover{filter:brightness(1.12)} #net-ui button:disabled{opacity:.5;cursor:default;filter:none}
+  @media (hover:hover){#net-ui button:hover{filter:brightness(1.12)}}
+  #net-ui button:disabled{opacity:.5;cursor:default;filter:none}
   #net-ui button.ghost{background:transparent;box-shadow:inset 0 0 0 2px var(--rule-soft);color:var(--text-dim);font-weight:600}
   #net-ui .seat{display:flex;align-items:center;gap:10px;padding:9px 12px;margin:6px 0;background:var(--panel);border-radius:2px;border:0;box-shadow:inset 0 0 0 2px var(--rule-soft)}
   #net-ui .seat .dot{width:9px;height:9px;border-radius:50%;background:#3ED17E;flex:0 0 auto}
@@ -38,7 +39,34 @@
   #net-ui ol li .pl{font:400 1.35em/1 var(--f-display);color:var(--gold);width:26px}
   #net-ui ol li.me{box-shadow:inset .28em 0 0 var(--gold)}
   #net-ui ol li .tm{margin-left:auto;opacity:.85;font-family:var(--f-num);font-variant-numeric:tabular-nums}
-  #net-play-btn{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:40;background:var(--sign-green);border:0;box-shadow:inset 0 0 0 2px #fff;color:#fff;font-weight:700;letter-spacing:.22em;padding:11px 22px;border-radius:2px;font-size:14px;cursor:pointer;font-family:var(--f-ui);display:none}
+  #net-play-btn{position:fixed;left:50%;bottom:calc(22px + var(--sab));transform:translateX(-50%);z-index:40;background:var(--sign-green);border:0;box-shadow:inset 0 0 0 2px #fff;color:#fff;font-weight:700;letter-spacing:.22em;padding:11px 22px;border-radius:2px;font-size:14px;cursor:pointer;font-family:var(--f-ui);display:none}
+
+  /* The lobby is a FORM, and a landscape phone gives a form 390px of height. It scrolls inside its
+     own plate rather than running off the top of the screen — where the JOIN button lives — and it
+     keeps clear of the notch and the home indicator. */
+  @media (max-height:560px){
+    #net-ui{padding:calc(4px + var(--sat)) calc(4px + var(--sar)) calc(4px + var(--sab)) calc(4px + var(--sal))}
+    #net-ui .np{max-height:100%;overflow-y:auto;overscroll-behavior:contain;padding:12px 16px;min-width:0;width:min(94vw,420px)}
+    #net-ui h2{font-size:1.3em} #net-ui .sub{font-size:11px;margin-bottom:8px}
+    #net-ui label{margin:8px 0 3px} #net-ui .code{font-size:20px}
+    #net-ui .seat{padding:7px 10px;margin:4px 0} #net-ui .mode{margin:8px 0 2px;padding:7px 10px}
+    #net-ui ol li{padding:6px 10px;margin:4px 0}
+    #net-ui button{margin-top:10px}
+    #net-play-btn{bottom:calc(6px + var(--sab));padding:10px 18px;font-size:13px}
+  }
+  /* an iPhone SE in landscape is 375px tall — the Leave button was the 3px that did not fit */
+  @media (max-height:400px){
+    #net-ui .np{padding:8px 12px}
+    #net-ui h2{font-size:1.15em} #net-ui .sub{margin-bottom:5px}
+    #net-ui label{margin:5px 0 2px} #net-ui .code{font-size:17px}
+    #net-ui .seat{padding:5px 10px;margin:3px 0} #net-ui .mode{margin:5px 0 2px;padding:5px 10px}
+    #net-ui button{margin-top:6px}
+  }
+  /* a thumb needs 44px of anything it has to hit — the room code field most of all */
+  @media (hover:none) and (pointer:coarse){
+    #net-ui input,#net-ui select,#net-ui button,#net-play-btn{min-height:44px}
+    #net-ui .mode button{min-height:38px;padding:8px 14px}
+  }
   `;
 
   function boatOptions(sel) {
@@ -87,7 +115,8 @@
       <label>YOUR NAME</label><input id="ne-name" maxlength="24" placeholder="e.g. Cam" value="${esc(savedName)}">
       <label>BOAT</label><select id="ne-boat">${boatOptions(savedBoat)}</select>
       <label>ROOM CODE</label>
-      <div class="row"><input id="ne-room" maxlength="12" placeholder="ROOM" value="${esc(roomVal)}" style="text-transform:uppercase">
+      <div class="row"><input id="ne-room" maxlength="12" placeholder="ROOM" value="${esc(roomVal)}" style="text-transform:uppercase"
+        autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false">
       <button class="ghost" id="ne-new" style="margin-top:0;flex:0 0 auto;width:auto;padding:12px 16px">New</button></div>
       <button id="ne-join">JOIN RACE</button>
       <button class="ghost" id="ne-cancel">Cancel</button>

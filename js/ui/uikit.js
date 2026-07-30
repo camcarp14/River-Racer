@@ -27,6 +27,10 @@
   /* motion */
   --e-out:cubic-bezier(.16,1,.3,1); --e-pop:cubic-bezier(.2,2.2,.4,1); --e-in:cubic-bezier(.5,0,.75,0);
   --t-micro:120ms; --t-std:220ms; --t-enter:360ms; --t-cel:750ms;
+  /* the phone eats its own edges: a notch at one end of a landscape screen, a home indicator
+     along the bottom. Zero everywhere else, so every calc() below is a no-op on a desktop. */
+  --sat:env(safe-area-inset-top,0px);  --sar:env(safe-area-inset-right,0px);
+  --sab:env(safe-area-inset-bottom,0px); --sal:env(safe-area-inset-left,0px);
 }
 
 /* the single worst thing about the old UI: italics everywhere */
@@ -39,10 +43,15 @@
                     50% 100%,35.57% 75%,6.70% 75%,21.13% 50%,6.70% 25%,35.57% 25%)}
 
 /* ---------------------------------------------------------------- HUD shell */
+/* Width alone is the wrong question. A 1366x640 laptop window and a 844x390 phone in landscape
+   both read as "wide"; what they are short of is HEIGHT, and the HUD hangs off the top and bottom
+   edges. The height rules below come last and therefore win when both apply — see SHORT SCREENS
+   at the foot of this file for the phone, where the layout changes and not just the type size. */
 #hud{font:400 16px/1 var(--f-ui);color:var(--text);letter-spacing:0}
 @media (max-width:1440px){#hud{font-size:14px}}
 @media (max-width:1180px){#hud{font-size:12.4px}}
 @media (max-width:900px){#hud{font-size:10.6px}}
+@media (min-height:501px) and (max-height:760px){#hud{font-size:min(14px,2.02vh)}}
 
 /* ------------------------------------------- position plate + lap blade (TL) */
 #race-info{position:absolute;left:1.625em;top:1.125em;display:flex;flex-direction:column;gap:.375em;
@@ -468,8 +477,12 @@
 .menu-item{white-space:nowrap;font:700 1.05em/1 var(--f-ui);letter-spacing:.24em;padding:.76em 2em;border-radius:2px;
   background:var(--panel);border:0;box-shadow:inset 0 0 0 2px var(--rule-soft);
   color:var(--text);transition:all var(--t-micro) var(--e-out);text-align:center;cursor:pointer}
-.menu-item.sel,.menu-item:hover{background:var(--sign-green);color:#fff;
+/* .sel is the state; :hover only ECHOES it, and only on a pointer that can hover. A touch screen
+   fires a phantom hover that then sticks to whatever was tapped last. */
+.menu-item.sel{background:var(--sign-green);color:#fff;
   box-shadow:inset 0 0 0 2px #fff,0 .3em 1.2em rgba(0,105,62,.4);transform:translateX(.4em)}
+@media (hover:hover){.menu-item:hover{background:var(--sign-green);color:#fff;
+  box-shadow:inset 0 0 0 2px #fff,0 .3em 1.2em rgba(0,105,62,.4);transform:translateX(.4em)}}
 .menu-item.sel::before{content:"";display:inline-block;width:.62em;height:.62em;margin-right:.9em;
   vertical-align:-.02em;background:var(--chi-red);
   clip-path:polygon(50% 0%,64.43% 25%,93.30% 25%,78.87% 50%,93.30% 75%,64.43% 75%,
@@ -478,6 +491,12 @@
 .menu-note{margin-top:1.4em;font:700 .74em/1.85 var(--f-ui);letter-spacing:.14em;color:var(--text-dim);
   text-shadow:0 1px 4px rgba(0,0,0,.9)}
 .menu-note b{color:var(--text)}
+/* HOW TO PLAY is the one screen that is mostly words, so it carries its own measure and type size.
+   These were inline styles until the key table had to be able to disappear on a touchscreen — and
+   an inline display: beats any stylesheet rule that would hide it. */
+.help-note{font:700 13px/1.5 var(--f-ui);max-width:760px;margin-top:10px}
+.help-grid{display:grid;grid-template-columns:max-content 1fr max-content 1fr;gap:.30em 1.1em;text-align:left}
+.help-row{margin-top:.85em;text-wrap:balance}
 
 #select-title{font:400 2.3em/1 var(--f-display);letter-spacing:.03em;color:#fff;
   text-shadow:0 .1em .5em rgba(0,0,0,.8);margin-bottom:.2em}
@@ -668,8 +687,9 @@
   letter-spacing:.22em;padding:.62em 2.2em}
 .cup-cta .menu-item.primary{font:700 1.42em/1 var(--f-ui);letter-spacing:.18em;padding:.58em 2.2em;
   box-shadow:inset 0 0 0 2px var(--gold)}
-.cup-cta .menu-item.primary.sel,.cup-cta .menu-item.primary:hover{
-  box-shadow:inset 0 0 0 2px #fff,0 .3em 1.2em rgba(0,105,62,.45)}
+.cup-cta .menu-item.primary.sel{box-shadow:inset 0 0 0 2px #fff,0 .3em 1.2em rgba(0,105,62,.45)}
+@media (hover:hover){.cup-cta .menu-item.primary:hover{
+  box-shadow:inset 0 0 0 2px #fff,0 .3em 1.2em rgba(0,105,62,.45)}}
 .cup-note{margin-top:.4em;text-align:center;font:700 .7em/1.7 var(--f-ui);letter-spacing:.18em;
   color:var(--text-dim)}
 
@@ -700,7 +720,8 @@
 #sound-chip{position:fixed;top:1.15em;right:1.25em;z-index:30;font-size:13px}
 #sound-chip.hidden{display:none}
 .sound-row{margin-top:1.5em;justify-content:center}
-#sound-chip:hover,.sound-row:hover,.opt-row:hover{transform:translateY(-.1em);box-shadow:inset 0 0 0 2px var(--rule)}
+@media (hover:hover){#sound-chip:hover,.sound-row:hover,.opt-row:hover{
+  transform:translateY(-.1em);box-shadow:inset 0 0 0 2px var(--rule)}}
 #sound-chip b,.sound-row b,.opt-row b{color:var(--text);font-weight:700}
 #sound-chip i,.sound-row i,.opt-row i{font-style:normal;font-size:.85em;letter-spacing:.16em;color:var(--text-mute);
   padding:.32em .5em;border-radius:2px;box-shadow:inset 0 0 0 1px var(--rule-soft)}
@@ -732,6 +753,24 @@
 .opt-row.off svg .x{display:inline}
 #vol-panel .opt-row{margin-top:.2em;justify-content:center}
 
+/* ------------------------------------------------- rotate to landscape (phone) */
+/* The game is a landscape game: the river runs across the frame and the thumbs drive from the two
+   bottom corners. A portrait phone gets this instead of a broken layout. z-index 200 clears
+   #loading (100), #fade (50), #net-ui (60) and the sound chip (30). */
+#rr-rotate{position:fixed;inset:0;z-index:200;display:none;flex-direction:column;align-items:center;
+  justify-content:center;gap:1.1em;text-align:center;background:var(--ink-900);
+  padding:calc(2em + var(--sat)) calc(1.6em + var(--sar)) calc(2em + var(--sab)) calc(1.6em + var(--sal))}
+#rr-rotate .phone{width:3.2em;height:5.6em;border-radius:.5em;box-shadow:inset 0 0 0 3px var(--chi-blue);
+  animation:rotturn 2.6s var(--e-out) infinite}
+#rr-rotate .phone i{display:block;width:34%;height:3px;margin:.45em auto 0;border-radius:2px;
+  background:var(--chi-blue);opacity:.7}
+@keyframes rotturn{0%,26%{transform:rotate(0)}62%,100%{transform:rotate(-90deg)}}
+#rr-rotate h2{font:400 2.3em/1 var(--f-display);letter-spacing:.03em;color:#fff}
+#rr-rotate p{font:700 .8em/1.7 var(--f-ui);letter-spacing:.22em;color:var(--chi-blue)}
+#rr-rotate .crest{display:flex;gap:1.1em}
+#rr-rotate .crest .star6{width:.85em;height:.85em}
+@media (orientation:portrait) and (max-width:620px){#rr-rotate{display:flex;font-size:16px}}
+
 /* --------------------------------------------------------------- loading ---*/
 #loading{background:var(--ink-900)}
 #loading #load-title{font:400 2.4em/1 var(--f-display)!important;letter-spacing:.04em!important;color:#fff}
@@ -740,6 +779,222 @@
 #loading .msg{font:700 .72em/1 var(--f-ui);letter-spacing:.34em;color:var(--chi-blue)}
 #load-stars{display:flex;gap:1.1em}
 #load-stars .star6{width:.7em;height:.7em;opacity:.55}
+
+/* ======================================================== A PHONE, LANDSCAPE ==*/
+/* 844x390. Every max-width breakpoint above already fired — 844 is "narrow" — and none of them
+   noticed that the axis in short supply is the 390px HEIGHT. Two things change here, and the
+   second matters more than the first: the type scales off the SHORT axis, and the layout moves.
+   The desktop HUD hangs its heaviest furniture in the four corners; on a phone the two BOTTOM
+   corners are where the thumbs live (they are steering the boat), the notch eats one end of the
+   long edge and the home indicator the bottom. So everything climbs into the top third and the
+   two lower corners are left empty. Nothing here is a shrink of the desktop layout. */
+@media (max-height:500px){
+  #hud{font-size:clamp(8.5px,2.72vh,12px)}
+
+  /* TOP LEFT — the plate and the blade lie down side by side instead of stacking */
+  #race-info{left:calc(1em + var(--sal));top:calc(.7em + var(--sat));
+    flex-direction:row;align-items:center;gap:.45em}
+  #pos-plate{width:3.6em;height:3.6em}
+  #pos-big{font-size:2.5em}
+  #pos-suffix{font-size:.75em;margin-top:.42em}
+  #pos-total{right:.42em;bottom:.30em;font-size:.52em}
+  #lap-line{font-size:.66em;padding:.5em .7em;letter-spacing:.14em}
+
+  /* LEFT, under it — the dial loses its speed arc and its ticks and becomes what a phone player
+     actually needs from it: the boost ring, with the number in the middle of it. Both were
+     three-pixel hairlines at this size, and the bottom-right corner they used to live in is now
+     somebody's thumb. */
+  #speedo{left:calc(1em + var(--sal));right:auto;top:calc(4.6em + var(--sat));bottom:auto;
+    width:6em;height:6em;text-align:center}
+  #spd-arc,#spd-ticks{display:none}
+  #spd-boost{left:0;top:0;right:auto;bottom:auto;width:100%;height:100%}
+  #speed-num{left:0;right:auto;top:26%;bottom:auto;width:100%;font-size:2.05em;text-align:center}
+  #speed-unit{left:0;right:auto;top:62%;bottom:auto;width:100%;font-size:.55em;
+    letter-spacing:.24em;text-indent:.24em;text-align:center}
+  #boost-legend{left:0;right:auto;bottom:-1.1em;width:100%;transform:none}
+  #boost-label{font-size:.52em} #prime{margin-bottom:.2em;font-size:.54em}
+
+  /* TOP CENTRE — one line of clock, the gaps tucked straight under it */
+  #timer{top:calc(.6em + var(--sat));padding:.35em .95em .4em}
+  #timer small{font-size:.5em;letter-spacing:.24em;margin-bottom:.14em}
+  #timer-num{font-size:1.55em}
+  #delta{margin-top:.18em;font-size:.8em}
+  /* 6.2em of THIS element's own .66em type = 4.1em of the HUD's, which clears the timer plate.
+     The em trap the timer offsets document, one more time. */
+  #gaps{top:calc(6.2em + var(--sat));font-size:.66em;gap:.9em}
+  /* the torpedo call comes off the right edge and onto the centre line, where the eye already is */
+  #incoming{left:50%;right:auto;top:8.6em;bottom:auto;transform:translate(-50%,-.7em)}
+  #incoming.on{transform:translate(-50%,0)}
+
+  /* TOP RIGHT — the map was 143x191 here, a fifth of the screen. 85x113 is a map; that was a wall */
+  #minimap{right:calc(.8em + var(--sar));top:calc(.7em + var(--sat));width:8em;height:10.67em}
+  /* the chips move under it: their old home is inside the right thumb's reach */
+  #chips{right:calc(.8em + var(--sar));top:calc(11.9em + var(--sat));bottom:auto;align-items:flex-end}
+  .chip{font-size:.62em;padding:.4em .7em}
+
+  /* BOTTOM CENTRE — the one strip of the bottom edge that no thumb covers. The socket keeps its
+     well, its brackets and its blade; the header rail, the key rail (there is no key) and the
+     blurb line go, because 390px of screen cannot afford a caption. */
+  #item-slot{bottom:calc(.35em + var(--sab))}
+  #item-box{width:4.6em;height:4.6em}
+  #item-head,#item-foot,#item-sub{display:none}
+  #item-well{left:6%;right:6%;top:6%;bottom:6%}
+  #item-name{margin-top:.4em;min-width:0;font-size:.6em;padding:.42em .7em;
+    letter-spacing:.14em;text-indent:.14em}
+  #item-pips{margin-top:.28em;min-height:1.1em;gap:.25em}
+  .pip{font-size:.52em;padding:.3em .45em .26em}
+  /* 6.6em of this element's own 1.5em type = 9.9em of the HUD's: clear of the socket below it,
+     and narrow enough to stay out of the right-hand button stack */
+  #item-call{font-size:1.5em;bottom:6.6em;max-width:56vw}
+
+  /* the rival ticker is the gap line's own information in longer words: the gap line stays */
+  #ticker{display:none}
+  /* The landmark blade, squeezed into the last free band on the left: the steering pad claims
+     everything below 62% of the height, so the blade sits above it and gives up its architect
+     line to do so — the NAME is the callout, the credit was always the footnote.
+     font-size FIRST: index.html pins this element at 15px and nothing above resets it, so without
+     that line every em offset here would resolve against 15px and the blade would land 60px low. */
+  #landmark-tag{font-size:1em;left:calc(1em + var(--sal));top:calc(12.2em + var(--sat));
+    bottom:auto;max-width:17em}
+  #lt-name{font-size:1em} #lt-blade{padding:.4em .8em} #lt-sub{display:none}
+  #docent{left:50%;right:auto;bottom:calc(.5em + var(--sab));transform:translateX(-50%);
+    max-width:80vw;font-size:.68em;line-height:1.45;padding:.6em .9em}
+  #docent h4{font-size:1.4em}
+
+  /* the celebration furniture, sized to the short axis */
+  #countdown{top:38%} #cd-num{font-size:8.6em} #cd-star{width:8.4em;height:8.4em;margin:-4.2em 0 0 -4.2em}
+  #placement-big{font-size:7.4em} #placement-sub{font-size:1em;letter-spacing:.34em}
+  #placement .stars{margin-top:.6em;gap:.7em}
+  #wrongway{font-size:2em} #checkpoint-flash{font-size:1.5em}
+  #cine .bar{height:8vh}
+
+  /* ---------------------------------------------------------------- menus ---*/
+  /* Nothing may be clipped by a 390px viewport, and a screen that cannot fit scrolls rather than
+     hiding its own BACK button. A "safe" centre keeps a short screen centred without letting a
+     tall one lose its top edge to the centring. */
+  #menu{font-size:min(11.5px,3vh);overflow-y:auto;overscroll-behavior:contain;
+    justify-content:center;justify-content:safe center;
+    padding:calc(.5em + var(--sat)) calc(.6em + var(--sar)) calc(.5em + var(--sab)) calc(.6em + var(--sal))}
+  #select-title{font-size:1.65em;margin-bottom:.15em}
+  #select-sub{font-size:.66em;padding:.4em .9em;margin-bottom:.9em}
+  .menu-list{margin-top:1.1em;min-width:16em;gap:.34em}
+  .menu-item{font-size:1em;padding:.55em 1.4em}
+  .menu-note{margin-top:.8em;font-size:.66em;line-height:1.6}
+  .help-note{font-size:11px;max-width:96vw;margin-top:.3em}
+  .help-row{margin-top:.6em}
+
+  /* the title: a landscape screen is two columns, not one long one, so the list gets the height */
+  #menu.title-screen{display:grid;align-content:center;align-content:safe center;justify-content:center;
+    justify-items:center;grid-template-columns:auto minmax(13em,20em);gap:.3em 2.2em;font-size:11px;
+    padding:calc(.5em + var(--sat)) calc(.6em + var(--sar)) calc(.5em + var(--sab)) calc(.6em + var(--sal))}
+  #menu.title-screen .stars{grid-column:1;grid-row:1;margin:0;gap:1.2em}
+  #menu.title-screen .starcol{width:auto;gap:0}
+  #menu.title-screen .starcol span{display:none}
+  #menu.title-screen .starcol .star6{width:1.3em;height:1.3em}
+  #menu.title-screen #title{grid-column:1;grid-row:2;font-size:min(9.6vh,42px)}
+  #menu.title-screen #subtitle{grid-column:1;grid-row:3;font-size:.82em;letter-spacing:.3em;
+    text-indent:.3em;margin-top:.5em}
+  #menu.title-screen #switches{grid-column:1;grid-row:4;margin-top:1em;gap:.5em}
+  #menu.title-screen .menu-list{grid-column:2;grid-row:1/5;align-self:center;
+    margin:0;width:100%;max-width:none;gap:.3em}
+  /* eight rows once a championship is running: 44px each would not fit, and a row this wide is
+     a comfortable target at 38 */
+  #menu.title-screen .menu-item{padding:.5em 1em;font-size:1em;min-height:38px}
+  #menu.title-screen .menu-note{display:none}
+
+  /* the showroom: plate top-left, hulls along the foot, the boat itself in the clear middle.
+     Both offsets are pre-divided by the element's OWN type, per the em trap: .52em of the title's
+     1.5em and 4.63em of the sub's .62em are 9px and 33px of an 11.5px menu. The display face
+     overshoots its line box by half a line, so a title parked at its own em height loses its caps
+     off the top of the screen. */
+  #menu.showroom #select-title{top:calc(.52em + var(--sat));font-size:1.5em}
+  #menu.showroom #select-sub{top:calc(4.63em + var(--sat));font-size:.62em}
+  #ride-panel{left:calc(.6em + var(--sal));top:calc(5.2em + var(--sat));transform:none;
+    width:12.6em;padding:.6em .75em}
+  #ride-panel h3{font-size:1.25em;margin:.1em 0 .3em}
+  #ride-panel .desc{font-size:.66em;line-height:1.45}
+  #radar{width:8em;height:8em;margin:.2em auto}
+  #spec-sheet{display:none}
+  #livery{gap:.4em;margin-top:.5em;flex-wrap:wrap}
+  #cards{gap:.6em}
+  .card{width:11.6em;padding:.55em}
+  .card canvas{height:4.6em}
+  .card .desc{min-height:0;font-size:.64em;line-height:1.4}
+  #cards.dock{bottom:calc(.4em + var(--sab));gap:.5em;max-width:100vw}
+  #cards.dock .card{width:6.1em;padding:.4em .45em}
+  #cards.dock .card canvas{height:3.4em}
+  #cards.dock .card h3{font-size:.8em;min-height:2.2em}
+
+  /* results: the HULL column is the first thing to go — it is the one cell nobody reads twice */
+  #results-list{min-width:0;width:min(96vw,42em);margin-top:.4em}
+  .result-head .h,.result-row .h{display:none}
+  .result-head,.result-row{grid-template-columns:3em 1fr 5em 4.4em;gap:.7em;padding:.34em .8em}
+  .result-head.cup,.result-row.cup{grid-template-columns:3em 1fr 5em 4.4em 2.8em}
+  .result-head{letter-spacing:.14em}
+  .result-row{font-size:.8em}
+  .result-row .p{font-size:1.35em}
+  #medal-strip{margin:.5em 0 .1em;padding:.5em 1.1em;font-size:.7em}
+  #record-banner{margin:.5em 0;padding:.5em 1em;font-size:.8em;letter-spacing:.2em}
+
+  /* the championship board: the bracket says what the table already says, and the table is the
+     one that carries the whole season */
+  #cup-board{width:min(97vw,60em);gap:.5em;font-size:min(10.5px,2.8vh)}
+  .cup-bracket{display:none}
+  .cup-title{font-size:2.1em} .cup-crest{margin-bottom:.3em} .cup-crest .star6{width:.62em;height:.62em}
+  .cup-kicker{margin-top:.5em;font-size:.72em}
+  .cup-row{grid-template-columns:3em minmax(5em,1fr) repeat(4,3.6em) 3em 3.6em 2.4em;
+    gap:.5em;padding:.16em .6em}
+  .cup-row.head{padding:.45em .6em .4em;font-size:.62em;letter-spacing:.1em}
+  .cup-row.head .rh i{margin-top:.3em}
+  .cup-row.line{font-size:.78em}
+  .cup-cell{padding:.16em 0}
+  .cup-cell .pp{font-size:1.2em} .cup-cell .pv{font-size:.6em}
+  .cup-tot b{font-size:1.5em} .cup-tot i{font-size:.58em}
+  .cup-champ{padding:.6em 1em .7em} .cup-champ .who{font-size:2.4em}
+  .cup-cta{gap:.28em}
+  .cup-cta .menu-item{min-width:0;min-height:36px;width:min(90vw,30em);font-size:.86em;padding:.4em 1.2em}
+  .cup-cta .menu-item.primary{font-size:1.05em;padding:.4em 1.2em}
+  .cup-note{margin-top:.25em;font-size:.62em}
+
+  /* pause: the volume panel stays (it is the only mixer there is), the key legend goes */
+  #vol-panel{margin-top:.9em;min-width:15em;gap:.4em;font-size:.66em}
+  #pause-flag .star6{width:4em;height:4em;margin-top:-2em;margin-left:-2em}
+  #sound-chip{top:calc(.55em + var(--sat));right:calc(.55em + var(--sar))}
+}
+
+/* ============================================================ TOUCH INPUT ====*/
+/* Not a size question — a finger question, and an iPad answers yes to it as well as a phone.
+   Anything you have to hit is at least 44px on its shortest side, nothing is reachable by hover
+   alone, and no legend promises a key that this device does not have.
+   The two defaults come FIRST: a media query adds no specificity, so a plain rule written after
+   one simply beats it. */
+.t-hint{display:none}
+.back-chip{position:fixed;left:calc(.7em + var(--sal));top:calc(.7em + var(--sat));z-index:31;
+  display:none;align-items:center;justify-content:center;gap:.5em;min-height:44px;padding:.7em 1.1em;
+  border:0;border-radius:2px;background:var(--panel-hi);box-shadow:inset 0 0 0 2px var(--rule-soft);
+  color:var(--text-dim);font:700 13px/1 var(--f-ui);letter-spacing:.2em;cursor:pointer;
+  pointer-events:auto}
+@media (hover:none) and (pointer:coarse){
+  .menu-item{display:flex;align-items:center;justify-content:center;min-height:44px;
+    padding-top:.5em;padding-bottom:.5em}
+  #sound-chip,.sound-row,.opt-row{min-height:44px;box-sizing:border-box;padding:.7em 1em}
+  #sound-chip{font-size:15px}
+  /* "PRESS M" on a device with no M */
+  #sound-chip i,.sound-row i,.opt-row i{display:none}
+  #livery i{width:2.2em;height:2.2em}
+  #vol-panel input[type=range]{height:40px}
+  /* the key wall is a keyboard legend; the controls are on the glass */
+  #boost-hint{display:none}
+  /* …and so is the gold E on the item box, which promises a key this device does not have. The
+     word beside it stays: the foot then reads FIRE, which is what the pad on the glass says too.
+     Written after the rule that shows it and at the same specificity, so this simply wins. */
+  #item-slot.held #item-key{display:none}
+  .k-hint{display:none}
+  .t-hint{display:inline}
+  .t-hint.b{display:block}
+  /* BKSP is how every picker went back, and there is no BKSP. A chip in the corner instead. */
+  .back-chip{display:flex}
+}
 `;
 
   K.init = function () {
@@ -749,7 +1004,23 @@
     s.id = 'rr-ui';
     s.textContent = K.css;
     (document.head || document.documentElement).appendChild(s);
+    mountRotate();
   };
+
+  // The rotate prompt is pure CSS state — one media query shows it — but the markup has to exist
+  // before the first portrait frame, which is why it goes up with the stylesheet rather than
+  // waiting for a menu. index.html is not ours to edit, so it is built here.
+  const ROTATE = '<div class="phone"><i></i></div><h2>ROTATE YOUR DEVICE</h2>' +
+    '<p>RIVER RACER RUNS IN LANDSCAPE</p>' +
+    '<div class="crest"><i class="star6"></i><i class="star6"></i><i class="star6"></i><i class="star6"></i></div>';
+  function mountRotate() {
+    if (document.getElementById('rr-rotate')) return;
+    if (!document.body) { document.addEventListener('DOMContentLoaded', mountRotate, { once: true }); return; }
+    const d = document.createElement('div');
+    d.id = 'rr-rotate';
+    d.innerHTML = ROTATE;
+    document.body.appendChild(d);
+  }
 
   // hexagram path shared by the minimap and every canvas card. Same geometry as the CSS clip-path.
   K.star6 = function (ctx, cx, cy, R, rot) {

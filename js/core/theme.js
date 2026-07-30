@@ -133,8 +133,12 @@
     E.wantShadows = P.shadows;                 // dusk light is too grazing to be worth the map
     E.sun.castShadow = P.shadows && E.renderer.shadowMap.enabled;
     const sc = E.sun.shadow.camera;
-    sc.left = -P.shadowHalf; sc.right = P.shadowHalf;
-    sc.top = P.shadowHalf; sc.bottom = -P.shadowHalf;
+    // The phone tier caps the sun frustum at 200 m. That is not just a sharper map on a quarter of
+    // the texels — the shadow pass only draws casters inside this box, so shrinking it from 360 m
+    // is where most of the saving is. Nothing is lost that the chase camera can see.
+    const half = Math.min(P.shadowHalf, (E.quality && E.quality.shadowHalfCap) || Infinity);
+    sc.left = -half; sc.right = half;
+    sc.top = half; sc.bottom = -half;
     sc.far = P.shadowFar;
     sc.updateProjectionMatrix();
     E.trackShadow(E.sun.target.position.x, E.sun.target.position.z);
@@ -190,6 +194,11 @@
       const u = RR.Water.material.uniforms;
       if (u.uFoamTint) u.uFoamTint.value.setRGB(0.84, 0.86, 0.80);
     }
+
+    // Last word goes to the performance tier — every preset above hands the water a mirror
+    // strength the phone tier does not honour. This is also the one hook in the boot that runs
+    // AFTER the water and sky materials exist, so it is where their per-tier uniforms land.
+    if (E.applyQuality) E.applyQuality();
   };
 
   T.toggle = function () {

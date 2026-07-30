@@ -235,7 +235,10 @@
     const crew = player.mesh.userData.crew;
     if (crew && crew.skipper) crew.skipper.visible = !on;
     if (RR.HUD.flash) RR.HUD.flash(on ? 'YOU HAVE THE WHEEL' : 'THE SKIPPER HAS THE WHEEL');
-    if (RR.HUD.chip) RR.HUD.chip('near', on ? 'YOU ARE STEERING — W A S D' : 'THE SKIPPER IS STEERING AGAIN', 3000);
+    // …and name the controls this device actually has. "W A S D" on a phone is the same lie the
+    // rest of the touch tier spent its time deleting.
+    const how = RR.Input.hasTouch ? 'YOU ARE STEERING — STEER PAD AND GO' : 'YOU ARE STEERING — W A S D';
+    if (RR.HUD.chip) RR.HUD.chip('near', on ? how : 'THE SKIPPER IS STEERING AGAIN', 3000);
     // Steering her yourself is the whole point of the secret, so that is what unlocks her. From
     // here on she is in the ride picker — announced on a chip of her own, since flash() shows
     // one line at a time and that line belongs to the handover.
@@ -246,6 +249,16 @@
     RR.Camera.kick(0.3);
     setTourView(on ? 4 : 0);              // hand her over from the HELM shot: you need to see her length
   }
+
+  // The tour, as two questions anyone may ask. ui/touch.js needs both of them every tenth of a
+  // second: a phone has no F to take the wheel with and no SPACE to ask about a building, so the
+  // control layer has to know it is on a ride, and whether that ride is currently being driven,
+  // before it can offer either. Exposed here rather than read off RRTest, which is a test hook and
+  // not an interface — and as two closures rather than a live object, so nothing can write them.
+  RR.Tour = {
+    active: () => !!(raceState && raceState.tour),
+    driving: () => tourDriving,
+  };
 
   // roster (multiplayer) = [{id, name, boatIdx, isSelf}] sorted identically on every client
   function startRace(courseIdx, vehicleIdx, timeTrial, roster, tourMode, cupRound) {
@@ -447,6 +460,15 @@
     RR.Camera.snapTo(player);
   }
 
+  // One pause path, called from ESC, from the thumb control (which dispatches ESC) and from the
+  // orientation gate below. Anything that stops the world has to stop it the same way, or the two
+  // callers drift and one of them leaves timeScale at 0 with no menu on top of it.
+  function pauseRace() {
+    if (mode !== 'race') return false;
+    mode = 'paused'; RR.Engine.timeScale = 0; RR.Menus.showPause();
+    return true;
+  }
+
   // ---------- global keys ----------
   window.addEventListener('keydown', (e) => {
     // Aboard the tour boat C walks the boat: four places to stand or sit, the helm shot, then the
@@ -471,12 +493,135 @@
     // both of these used to fall through into the pause branch in the SAME event: leaving photo
     // mode, or menus.js resuming from pause, sets mode='race' and the next line re-paused you.
     if (e.code === 'Escape' && mode === 'photo') togglePhotoMode();
-    else if (e.code === 'Escape' && mode === 'race' && !e.defaultPrevented) {
-      mode = 'paused'; RR.Engine.timeScale = 0; RR.Menus.showPause();
-    }
+    else if (e.code === 'Escape' && mode === 'race' && !e.defaultPrevented) pauseRace();
     RR.Audio.init(); RR.Audio.resume();
   }, { once: false });
   window.addEventListener('pointerdown', () => { RR.Audio.init(); RR.Audio.resume(); });
+
+  // ---------- the phone shell ----------
+  // Everything below is about the PAGE rather than the race, which is why it lives here and not in
+  // engine.js: a handset browser has three habits that make a full-screen canvas game unplayable,
+  // and each one has to be answered once, at the top.
+
+  // 1. THE VIEWPORT IS NOT A CONSTANT. A mobile URL bar slides away and window.innerHeight changes
+  //    under the running game; iOS reports the new size a beat AFTER an orientation change, and the
+  //    `resize` that engine.js resizes the renderer from does not always arrive. visualViewport
+  //    does. So: listen to the signal that is reliable, publish ONE number, and give it to both
+  //    sides — the drawing buffer (engine.js, via the event) and the HUD box (--rr-vh, via CSS).
+  //    It is window.innerHeight and not 100vh deliberately: on iOS 100vh is the URL-bar-HIDDEN
+  //    height whatever the bar is currently doing, which is exactly the gap this has to close.
+  let vpW = 0, vpH = 0, vpQueued = false;
+  function syncViewport() {
+    vpQueued = false;
+    const w = window.innerWidth, h = window.innerHeight;
+    document.documentElement.style.setProperty('--rr-vh', h + 'px');
+    thumbsKnown = false; measureThumbs();            // the stack is sized in vh/vw ems: re-measure
+    if (w === vpW && h === vpH) return;
+    vpW = w; vpH = h;
+    // engine.js (renderer + camera aspect), touch.js (thumb geometry) and uikit's media queries all
+    // hang off this one event. Re-entry is bounded: the size is already stored, so a listener that
+    // asks for another sync finds nothing changed and stops.
+    window.dispatchEvent(new Event('resize'));
+  }
+  function queueViewport() {
+    if (vpQueued) return;
+    vpQueued = true;
+    requestAnimationFrame(syncViewport);
+  }
+
+  // 2. FULLSCREEN AND LANDSCAPE, best effort. Neither can be asked for outside a user gesture, so
+  //    the first tap of the session buys both. Both are allowed to fail silently and nothing is
+  //    permitted to depend on either: iOS Safari has no Fullscreen API for a canvas and no Screen
+  //    Orientation lock at all, so every entry point is feature-tested and every promise is caught.
+  //    (On iOS the answer is the home screen instead — see the apple-mobile-web-app meta tags.)
+  //    Desktop is exempt: a browser that goes fullscreen because you clicked RACE is a browser
+  //    fighting its user.
+  let immersiveTried = false;
+  function lockLandscape() {
+    const so = window.screen && window.screen.orientation;
+    if (!so || typeof so.lock !== 'function') return;
+    try { const p = so.lock('landscape'); if (p && p.catch) p.catch(() => {}); } catch (e) { /* not permitted here */ }
+  }
+  function goImmersive() {
+    if (immersiveTried || !RR.Input || !RR.Input.hasTouch) return;
+    immersiveTried = true;
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+    if (!req || document.fullscreenElement || document.webkitFullscreenElement) { lockLandscape(); return; }
+    try {
+      const p = req.call(el, { navigationUI: 'hide' });
+      if (p && p.then) p.then(lockLandscape, () => {}); else lockLandscape();
+    } catch (e) { lockLandscape(); }
+  }
+
+  // 3. A TABLET IS A TOUCH DEVICE THAT IS NOT A PHONE. uikit's phone HUD is keyed to
+  //    max-height:500px, so an iPad in landscape keeps the DESKTOP layout — dial and chips in the
+  //    bottom-right corner — while touch.js, which keys off hasTouch, puts the throttle column
+  //    there. Publish how wide the control stack actually is and let index.html step the two
+  //    widgets inboard of it. Measured rather than recomputed from touch.js's ems: the overlay is
+  //    display:none until a race, so the first real measurement lands when the HUD comes up.
+  //    BOTH corners, not just the right one: the steering pad is the bottom-LEFT of the same
+  //    screen, and on a tablet the rival ticker and the landmark blade sit entirely inside it —
+  //    your thumb covers the gaps and the building name. So publish the pad's height as well and
+  //    let those two climb above it, the mirror of what --rr-thumbs-w does on the right.
+  let thumbsKnown = false, thumbsWanted = false;     // false on a desktop: this then costs one bool
+  function measureThumbs() {
+    if (thumbsKnown || !thumbsWanted) return;
+    const el = document.getElementById('rt-fire');
+    const sz = document.getElementById('rt-steer');
+    if (!el || !sz) return;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0) return;                        // display:none until the overlay is up
+    thumbsKnown = true;
+    const st = document.documentElement.style;
+    st.setProperty('--rr-thumbs-w', Math.round(window.innerWidth - r.left) + 'px');
+    st.setProperty('--rr-steer-h', Math.round(sz.getBoundingClientRect().height) + 'px');
+  }
+
+  // 4. ROTATING THE PHONE MUST STOP THE RACE. uikit's rotate gate covers the screen in portrait,
+  //    but covering the screen is not stopping the boat: measured at 31.9 m/s with a finger on GO,
+  //    the hull still ran 17 m blind behind the gate — far enough to find a seawall or miss a
+  //    checkpoint you cannot see. Every phone player rotates by accident at least once, and losing a
+  //    race to it is the one failure this whole workstream would not be forgiven for.
+  //    The predicate is matchMedia with the gate's OWN query text rather than a width/height
+  //    comparison of our own: two ways of asking "is the gate up" is two answers waiting to differ,
+  //    and the wrong half of that pair pauses a landscape race or leaves a portrait one running.
+  const ROTATE_Q = '(orientation:portrait) and (max-width:620px)';
+  function watchRotate() {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia(ROTATE_Q);
+    const check = () => { if (mq.matches) pauseRace(); };   // pauseRace no-ops unless mode==='race'
+    // addEventListener is the modern spelling; addListener is what older WebKit answers to, and a
+    // phone browser old enough to need the fallback is exactly the phone this matters on.
+    if (mq.addEventListener) mq.addEventListener('change', check);
+    else if (mq.addListener) mq.addListener(check);
+    // …and a belt-and-braces pass on the resize the rotation itself produces: iOS has been known to
+    // resize without firing the media query listener when the URL bar moves in the same gesture.
+    window.addEventListener('orientationchange', () => setTimeout(check, 120));
+    check();
+  }
+
+  function installShell() {
+    thumbsWanted = !!(RR.Input && RR.Input.hasTouch);
+    if (thumbsWanted) document.documentElement.classList.add('rr-thumbs');
+    watchRotate();
+    syncViewport();
+    window.addEventListener('resize', queueViewport);
+    window.addEventListener('pageshow', queueViewport);
+    // iOS resizes the window some time after it reports the rotation, so ask again as it settles
+    window.addEventListener('orientationchange', () => {
+      queueViewport();
+      for (const ms of [120, 350, 700]) setTimeout(syncViewport, ms);
+    });
+    document.addEventListener('fullscreenchange', () => { queueViewport(); setTimeout(syncViewport, 260); });
+    document.addEventListener('webkitfullscreenchange', () => { queueViewport(); setTimeout(syncViewport, 260); });
+    const vv = window.visualViewport;
+    if (vv) { vv.addEventListener('resize', queueViewport); vv.addEventListener('scroll', queueViewport); }
+    // touchend, not touchstart: Safari only counts the END of a tap as a user gesture, and a
+    // click covers the pointer devices that never send a touch at all.
+    window.addEventListener('touchend', goImmersive, { passive: true });
+    window.addEventListener('click', goImmersive);
+  }
 
   // ---------- per-frame ----------
   const aiCtl = { throttle: 0, brake: 0, steer: 0, boost: false };
@@ -499,6 +644,7 @@
   }
 
   function update(dt, t) {
+    measureThumbs();                             // self-gating: a no-op the moment the stack is measured
     if (RR.Life) RR.Life.update(dt, t);          // crowds + traffic animate in every scene
     if (RR.Fireworks) RR.Fireworks.update(dt);
     if (mode === 'menu' || mode === 'results') {
@@ -782,6 +928,22 @@
       RR.Camera.snapTo(player);
     },
     night: (m) => { if (RR.Theme) RR.Theme.apply(typeof m === 'string' ? m : (m ? 'night' : 'day')); },
+    // the phone shell, as facts rather than assumptions: does the HUD's box agree with the drawing
+    // buffer, are the thumb controls up, and did fullscreen/orientation actually take
+    shell: () => ({
+      touch: !!(RR.Input && RR.Input.hasTouch),
+      overlay: !!(RR.Touch && RR.Touch.visible && RR.Touch.visible()),
+      tier: RR.Engine.tier,
+      vw: window.innerWidth, vh: window.innerHeight,
+      cssVh: getComputedStyle(document.documentElement).getPropertyValue('--rr-vh').trim(),
+      hudH: Math.round($('hud').getBoundingClientRect().height),
+      canvas: [RR.Engine.renderer.domElement.width, RR.Engine.renderer.domElement.height],
+      dpr: window.devicePixelRatio || 1,
+      fullscreen: !!(document.fullscreenElement || document.webkitFullscreenElement),
+      fsApi: !!document.documentElement.requestFullscreen,
+      lockApi: !!(window.screen && window.screen.orientation && window.screen.orientation.lock),
+    }),
+    immersive: () => { immersiveTried = false; goImmersive(); return true; },
     // hold full quality (disable adaptive downgrade) — used by visual tests on the software renderer
     pinQuality: () => { RR.Engine.setAutoQuality(false); if (RR.Reflect) RR.Reflect.enabled = true; if (RR.Post) RR.Post.enabled = true; },
     // A fresh boot already lands on the title screen, so this is only a way BACK to it from a race
@@ -806,7 +968,7 @@
   // nothing left to skip. Harness scripts that still ask for it get the way back to the title.
   window.RRTest.skipOpening = window.RRTest.toTitle;
 
-  function bootOnce() { if (!booted) { booted = 1; boot(); } }
+  function bootOnce() { if (!booted) { booted = 1; installShell(); boot(); } }
   window.addEventListener('DOMContentLoaded', bootOnce);
   if (document.readyState !== 'loading') bootOnce();
 })();

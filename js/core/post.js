@@ -2,8 +2,23 @@
    bright bits, gaussian-blur them, and add them back for a golden-hour glow.
    Works in display (sRGB) space so the existing colour grade is preserved. */
 (function () {
-  const P = { enabled: true, streaks: 1 };
+  const P = { enabled: true, streaks: 1, lowRes: false };
   let sceneRT, brightRT, blurA, blurB, quad, cam, brightMat, blurMat, compMat, ready = false;
+
+  // Bloom's cost is the gaussian, and the gaussian's cost is resolution x passes. Desktop runs it
+  // at half res over four passes; the phone tier runs quarter res over two — an EIGHTH of the fill
+  // for a glow that is only very slightly wider, because dropping the resolution doubles the
+  // kernel's reach in screen space and very nearly pays the missing passes back. The bright pass
+  // and the composite are unchanged, so the grade is bit-for-bit the same picture underneath.
+  let div = 2, passes = 4;
+  P.setTier = function (q) {
+    if (!q) return;
+    const d = q.bloomDiv || 2, p = q.blurPasses || 4;
+    if (d === div && p === passes) return;
+    div = d; passes = p;
+    P.lowRes = div > 2;
+    P.resize();
+  };
 
   // The grade has two authors. theme.js owns the BASE (day/sunset/dusk/night), the salute chain
   // owns a modulation on top of it, and neither may clobber the other — so the base is kept here
@@ -76,7 +91,8 @@
   }
 
   P.init = function () {
-    const w = window.innerWidth, h = window.innerHeight, hw = Math.max(1, w >> 1), hh = Math.max(1, h >> 1);
+    const w = window.innerWidth, h = window.innerHeight;
+    const hw = Math.max(1, (w / div) | 0), hh = Math.max(1, (h / div) | 0);
     sceneRT = rt(w, h, true);
     brightRT = rt(hw, hh, false); blurA = rt(hw, hh, false); blurB = rt(hw, hh, false);
     cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -158,7 +174,8 @@
 
   P.resize = function () {
     if (!ready) return;
-    const w = window.innerWidth, h = window.innerHeight, hw = Math.max(1, w >> 1), hh = Math.max(1, h >> 1);
+    const w = window.innerWidth, h = window.innerHeight;
+    const hw = Math.max(1, (w / div) | 0), hh = Math.max(1, (h / div) | 0);
     sceneRT.setSize(w, h); brightRT.setSize(hw, hh); blurA.setSize(hw, hh); blurB.setSize(hw, hh);
     blurMat.uniforms.res.value.set(hw, hh);
   };
@@ -190,13 +207,18 @@
     renderer.render(scene, camera);
 
     brightMat.uniforms.tDiffuse.value = sceneRT.texture; pass(renderer, brightMat, brightRT);
-    blurMat.uniforms.tDiffuse.value = brightRT.texture; blurMat.uniforms.dir.value.set(1, 0); pass(renderer, blurMat, blurA);
-    blurMat.uniforms.tDiffuse.value = blurA.texture; blurMat.uniforms.dir.value.set(0, 1); pass(renderer, blurMat, blurB);
-    blurMat.uniforms.tDiffuse.value = blurB.texture; blurMat.uniforms.dir.value.set(1, 0); pass(renderer, blurMat, blurA);
-    blurMat.uniforms.tDiffuse.value = blurA.texture; blurMat.uniforms.dir.value.set(0, 1); pass(renderer, blurMat, blurB);
+    // ping-pong H,V,H,V… — `passes` is 4 on desktop (identical to what it always was) and 2 on a phone
+    let src = brightRT;
+    for (let i = 0; i < passes; i++) {
+      const dst = (i & 1) ? blurB : blurA;
+      blurMat.uniforms.tDiffuse.value = src.texture;
+      blurMat.uniforms.dir.value.set((i & 1) ? 0 : 1, (i & 1) ? 1 : 0);
+      pass(renderer, blurMat, dst);
+      src = dst;
+    }
 
     compMat.uniforms.tScene.value = sceneRT.texture;
-    compMat.uniforms.tBloom.value = blurB.texture;
+    compMat.uniforms.tBloom.value = src.texture;
     quad.material = compMat;
     renderer.setRenderTarget(null);
     renderer.render(quad, cam);

@@ -12,6 +12,19 @@
   const STAR = '<i class="star6"></i>';
   const STAR_CAPS = ['FORT DEARBORN', 'GREAT FIRE 1871', 'COLUMBIAN EXPO 1893', 'CENTURY OF PROGRESS 1933'];
 
+  // A finger, not a mouse. Asked live rather than cached at boot: the same browser window can be
+  // dragged onto a touchscreen, and a tablet in a keyboard case answers differently once docked.
+  // Everything it gates is an ADDITION for touch — nothing a keyboard could do goes away.
+  const coarse = () => !!(window.matchMedia && matchMedia('(hover:none) and (pointer:coarse)').matches);
+
+  // BKSP is how you left a picker, and a phone has no BKSP. One chip, in the corner, on every
+  // screen whose only way back was that key. CSS keeps it invisible to a mouse.
+  const BACK_CHIP = '<button id="rr-back" class="back-chip" type="button">&#9666; BACK</button>';
+  function bindBack(fn) {
+    const b = $('rr-back');
+    if (b) b.addEventListener('click', (e) => { e.preventDefault(); RR.Audio.uiMove(); fn(); });
+  }
+
   MENU.init = function (startRaceCb) {
     root = $('menu');
     onStartRace = startRaceCb;
@@ -97,7 +110,7 @@
         ${rows.map((r, i) => `<div class="menu-item" data-i="${i}">${r}</div>`).join('')}
       </div>
       <div id="switches"><div id="snd-row" class="sound-row"></div>${puRowHTML()}</div>
-      <div class="menu-note">↑↓ SELECT · ENTER CONFIRM · <b>M</b> SOUND · <b>I</b> POWER-UPS<br>BUILT ON THE REAL CHICAGO RIVER</div>
+      <div class="menu-note"><span class="k-hint">↑↓ SELECT · ENTER CONFIRM · <b>M</b> SOUND · <b>I</b> POWER-UPS<br></span>BUILT ON THE REAL CHICAGO RIVER</div>
     `);
     bindClicks(acts);
     const row = $('snd-row');
@@ -131,20 +144,29 @@
     const grid = HELP_KEYS.map((r) => `<b>${r[0]}</b><span>${r[1]}</span><b>${r[2]}</b><span>${r[3]}</span>`).join('');
     html(`
       <div id="select-title">HOW TO PLAY</div>
-      <div class="menu-note" style="font-size:13px;max-width:760px;line-height:1.5;margin-top:10px">
-        <div style="display:grid;grid-template-columns:max-content 1fr max-content 1fr;gap:.30em 1.1em;text-align:left">${grid}</div>
-        <div style="margin-top:.85em;text-wrap:balance"><b>GAMEPAD</b> — LEFT STICK steer · RT throttle ·
+      <div class="menu-note help-note">
+        <div class="t-hint b help-row"><b>ON A PHONE</b> — hold it in landscape. Your LEFT thumb steers:
+          put it down anywhere on the left of the screen and the stick comes to you.<br>
+          Your RIGHT thumb has one column, three bands. Hold <b>GO</b> to drive, and
+          <b style="color:#FFC857">SLIDE UP into BOOST WITHOUT LIFTING OFF</b> — that is the whole trick,
+          and it is why boost and throttle share a column. Slide down to <b>REV</b> to brake and back
+          her out of trouble. <b>FIRE</b>, <b>ASTERN</b> and <b>PAUSE</b> are inboard of it.</div>
+        <div class="t-hint b help-row"><b>ARCHITECTURE TOUR</b> — the ride has its own row along the
+          bottom: <b>ABOUT</b> for the building you are passing, <b>SEAT</b> to move around the boat,
+          and <b>TAKE THE WHEEL</b> — tap it five times and she is yours.</div>
+        <div class="k-hint help-grid">${grid}</div>
+        <div class="k-hint help-row"><b>GAMEPAD</b> — LEFT STICK steer · RT throttle ·
           LT brake · A throttle · X boost · B fire item · LB look astern</div>
-        <div style="margin-top:.5em;text-wrap:balance"><b>ARCHITECTURE TOUR</b> — <b>F</b>×5 take the wheel ·
+        <div class="k-hint help-row" style="margin-top:.5em"><b>ARCHITECTURE TOUR</b> — <b>F</b>×5 take the wheel ·
           <b>SPACE</b> about this building · <b>C</b> change seat · DRAG or RIGHT STICK to look around</div>
         <div style="margin-top:.9em;line-height:1.75">
-          <b>SHIFT</b> is boost. The meter is the outer ring of the dial. The two
+          <span class="k-hint"><b>SHIFT</b> is boost. </span>The boost meter is the ring on the dial. The two
           <span style="color:#EF3340">red</span> segments at the bottom are a reserve the engine
           will not burn, and above <span style="color:#FFC857">PRIME</span> boost is 15% stronger.<br>
           Drive into a gold <span style="color:#FFC857">CRATE</span> in the channel and the slot
-          spins you an item. <b>E</b> or <b>SPACE</b> fires it. What you can draw depends on your
-          position: out front you get <b>SHIELD</b> and things to drop behind you, at the back you
-          get <b>TORPEDO</b>, <b>GULL SWARM</b> and <b>SHOCKWAVE</b>. <b>I</b> turns items off.<br>
+          spins you an item.<span class="k-hint"> <b>E</b> or <b>SPACE</b> fires it.</span><span class="t-hint"> The <b>FIRE</b> pad fires it.</span> What you
+          can draw depends on your position: out front you get <b>SHIELD</b> and things to drop
+          behind you, at the back you get <b>TORPEDO</b>, <b>GULL SWARM</b> and <b>SHOCKWAVE</b>.<span class="k-hint"> <b>I</b> turns items off.</span><br>
           Thread the checkpoint buoys — <span style="color:#EF3340">red LEFT</span>,
           <span style="color:#3ED17E">green RIGHT</span>. Gold gates off the racing line pay boost.
           The nine bascule bridges raise and lower on their own all day, like the real ones do.
@@ -178,8 +200,9 @@
       </div>`).join('');
     const label = cupMode ? 'THE CHICAGO CUP' : tourMode ? 'ARCHITECTURE TOUR' : timeTrial ? 'TIME TRIAL' : 'RACE';
     html(`
+      ${BACK_CHIP}
       <div id="select-title">PICK YOUR RIDE</div>
-      <div id="select-sub">${label} · ←→ SELECT · ENTER CONFIRM · BKSP BACK</div>
+      <div id="select-sub">${label}<span class="k-hint"> · ←→ SELECT · ENTER CONFIRM · BKSP BACK</span><span class="t-hint"> · TAP A HULL, TAP IT AGAIN TO TAKE IT</span></div>
       <div id="ride-panel">
         <div class="tag" id="ride-kind"></div>
         <h3 id="ride-name"></h3>
@@ -199,6 +222,7 @@
     });
     drawVehicleCards();
     buildLivery();
+    bindBack(showTitle);
     paintSel();
   }
 
@@ -375,8 +399,9 @@
     sel = Math.max(0, DIFFS.findIndex((d) => d.v === difficulty));
     const rows = DIFFS.map((d, i) => `<div class="menu-item" data-i="${i}">${d.name}</div>`).join('');
     html(`
+      ${BACK_CHIP}
       <div id="select-title">HOW TOUGH ARE THE RIVALS?</div>
-      <div id="select-sub">${cupMode ? 'FOUR ROUNDS AT THIS SETTING · ' : ''}↑↓ SELECT · ENTER RACE · BKSP BACK</div>
+      <div id="select-sub">${cupMode ? 'FOUR ROUNDS AT THIS SETTING' : ''}<span class="k-hint">${cupMode ? ' · ' : ''}↑↓ SELECT · ENTER RACE · BKSP BACK</span><span class="t-hint">${cupMode ? ' · ' : ''}TAP A LEVEL TO RACE</span></div>
       <div class="menu-list">${rows}</div>
       <div class="menu-note" id="diff-desc" style="max-width:520px;">${DIFFS[sel].desc}</div>
     `);
@@ -386,6 +411,7 @@
       if (cupMode && cupPending && RR.Race.cupBegin) { RR.Race.cupBegin(vehicleIdx, difficulty, 6); cupPending = false; }
       launch();
     }));
+    bindBack(() => { if (cupMode) showVehicles({ cup: true }); else showCourses(); });
     paintSel();
   }
 
@@ -404,12 +430,14 @@
       </div>`;
     }).join('');
     html(`
+      ${BACK_CHIP}
       <div id="select-title">PICK YOUR COURSE</div>
-      <div id="select-sub">←→ SELECT · ENTER RACE · BKSP BACK</div>
+      <div id="select-sub"><span class="k-hint">←→ SELECT · ENTER RACE · BKSP BACK</span><span class="t-hint">TAP A COURSE, TAP IT AGAIN TO RACE IT</span></div>
       <div id="cards">${cards}</div>
     `);
     bindCards(RR.Race.COURSES.length, (i) => { courseIdx = i; (timeTrial || tourMode) ? launch() : showDifficulty(); });
     drawCourseCards();
+    bindBack(() => showVehicles({ tt: timeTrial, tour: tourMode, cup: cupMode }));
     paintSel();
   }
 
@@ -505,7 +533,7 @@
     const board = cup && RR.Race.cupBoard ? RR.Race.cupBoard() : null;
     const fresh = board ? board.roundsDone - 1 : -1;
     const round = board && board.rounds[fresh] ? board.rounds[fresh] : null;
-    const head = `<div class="result-head${cup ? ' cup' : ''}"><span>POS</span><span>PILOT</span><span>HULL</span><span>TIME</span><span>GAP</span>${cup ? '<span>PTS</span>' : ''}</div>`;
+    const head = `<div class="result-head${cup ? ' cup' : ''}"><span>POS</span><span>PILOT</span><span class="h">HULL</span><span>TIME</span><span>GAP</span>${cup ? '<span>PTS</span>' : ''}</div>`;
     const title = board ? 'ROUND ' + board.roundsDone + ' RESULT'
       : (results[0] && results[0].boat && results[0].boat.isPlayer ? 'RIVER CHAMP' : 'RACE COMPLETE');
     const sub = board
@@ -674,7 +702,7 @@
         ${board.done ? cupChampionBand(board) : cupBracket(board, fresh)}
         ${cupSeasonTable(board)}
         <div class="cup-cta">${cta}</div>
-        <div class="cup-note">↑↓ SELECT · ENTER CONFIRM${board.done ? '' : ' · POINTS ' + board.points.join('/')}</div>
+        <div class="cup-note"><span class="k-hint">↑↓ SELECT · ENTER CONFIRM${board.done ? '' : ' · '}</span>${board.done ? '' : 'POINTS ' + board.points.join('/')}</div>
       </div>
     `);
     const newCup = () => { if (RR.Race.cupAbandon) RR.Race.cupAbandon(); cupMode = true; cupPending = true; showVehicles({ cup: true }); };
@@ -699,7 +727,7 @@
     html(`
       <div id="select-title">RACE COMPLETE</div>
       <div id="select-sub">MULTIPLAYER · ${String(courseId || '').toUpperCase()}</div>
-      <div id="results-list"><div class="result-head"><span>POS</span><span>PILOT</span><span>HULL</span><span>TIME</span><span>GAP</span></div>${rows}</div>
+      <div id="results-list"><div class="result-head"><span>POS</span><span>PILOT</span><span class="h">HULL</span><span>TIME</span><span>GAP</span></div>${rows}</div>
       <div class="menu-list" style="margin-top:1.0em;"><div class="menu-item" data-i="0">TITLE SCREEN</div></div>
     `);
     bindClicks([() => { if (RR.Net && RR.Net.leave) RR.Net.leave(); showTitle(); }]);
@@ -724,7 +752,7 @@
         <label>MUSIC<input type="range" id="vol-music" min="0" max="100" value="${Math.round(volMusic * 100)}"></label>
         <label>SFX&nbsp;&nbsp;&nbsp;<input type="range" id="vol-sfx" min="0" max="100" value="${Math.round(volSfx * 100)}"></label>
       </div>
-      <div class="menu-note" style="margin-top:1.1em;max-width:790px;line-height:1.75">
+      <div class="menu-note k-hint" style="margin-top:1.1em;max-width:790px;line-height:1.75">
         <b>W/↑</b> throttle · <b>A·D/←·→</b> steer · <b>S/↓</b> brake &amp; reverse · <b>SHIFT</b> boost<br>
         <b style="color:#FFC857">E</b> or <b style="color:#FFC857">SPACE</b> fire the item you are holding ·
         <b style="color:#FFC857">I</b> power-ups on / off<br>
@@ -867,12 +895,23 @@
       el.addEventListener('mouseenter', () => { sel = +el.dataset.i; paintSel(); });
     });
   }
+  // A card is two things at once: the cursor that drives the showroom (the live 3D hull, the
+  // radar, the spec sheet, the course map) and the confirm button. A mouse separates them with
+  // hover — a finger has nothing to separate them with, so on a touchscreen the first tap is the
+  // look and the second is the choice. Without this a phone player can never see a boat's stats:
+  // the tap that would show them also leaves the screen.
   function bindCards(n, confirm) {
     actions = [];
     for (let i = 0; i < n; i++) actions.push(() => confirm(i));
     root.querySelectorAll('.card').forEach((el) => {
-      el.addEventListener('click', () => { sel = +el.dataset.i; RR.Audio.uiSelect(); confirm(sel); });
-      el.addEventListener('mouseenter', () => { sel = +el.dataset.i; paintSel(); });
+      el.addEventListener('click', () => {
+        const i = +el.dataset.i;
+        if (coarse() && i !== sel) { sel = i; RR.Audio.uiMove(); paintSel(); return; }
+        sel = i; RR.Audio.uiSelect(); confirm(sel);
+      });
+      // a touchscreen fires this ahead of the click it is about to send, which would move the
+      // cursor onto the card before the tap could tell that it had moved
+      el.addEventListener('mouseenter', () => { if (coarse()) return; sel = +el.dataset.i; paintSel(); });
     });
   }
   function paintSel() {

@@ -2,7 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<!-- viewport-fit=cover is load-bearing, not decoration: every env(safe-area-inset-*) in uikit.js
+     and touch.js reads 0 without it, which puts the lap blade under the notch and the throttle
+     column under the home indicator. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b1e2d">
+<meta name="color-scheme" content="dark">
+<!-- added to a home screen the game runs without a URL bar at all, which is the only fullscreen
+     iOS Safari will ever give a canvas. black-translucent + viewport-fit=cover = full bleed. -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="River Racer">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-180.png">
 <title>River Racer — Chicago</title>
 <style>
   :root {
@@ -11,11 +24,45 @@
     --ink: #0b1e2d;
     --gold: #ffc857;
     --hud-bg: rgba(6, 20, 32, 0.72);
+    /* The height every full-screen overlay is laid out against. main.js keeps it equal to the
+       height the renderer was last sized to, so the HUD can never disagree with the canvas when a
+       mobile URL bar slides away. 100% is exactly right on a desktop, which is where it starts. */
+    --rr-vh: 100%;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #0b1e2d; }
-  body { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; color: #eaf6ff; user-select: none; -webkit-user-select: none; }
-  #gl { position: fixed; inset: 0; display: block; }
+  /* overscroll-behavior kills pull-to-refresh and the rubber band; there is nothing to scroll here
+     and a race that reloads itself because a thumb slipped downward is not a race. */
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0b1e2d; overscroll-behavior: none; }
+  body { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; color: #eaf6ff; user-select: none; -webkit-user-select: none;
+         -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  /* the river takes no browser gestures at all: no pan, no pinch, no double-tap zoom */
+  #gl { position: fixed; inset: 0; display: block; touch-action: none; }
+  /* manipulation, not none: a menu still scrolls and still taps, it just stops zooming under a
+     double tap. Scoped to the UI layers rather than set on <body>, deliberately — touch-action is
+     intersected down the whole ancestor chain, and a blanket rule here leaves the thumb controls
+     (already touch-action:none) with no default action left for the browser to cancel, at which
+     point Chromium marks their touchstart non-cancelable and touch.js's preventDefault logs an
+     error on every press of GO. The canvas and the controls set their own; nothing else is ever
+     the hit target. */
+  #menu, #loading, #rr-rotate { touch-action: manipulation; }
+  /* A TABLET IS A TOUCH DEVICE THAT IS NOT A PHONE, and it falls between the two workstreams:
+     uikit's phone HUD is keyed to max-height:500px, so an iPad in landscape keeps the DESKTOP
+     layout — dial and chips hung in the bottom-right corner — while touch.js, which keys off
+     hasTouch, puts the throttle column in that same corner. The corner belongs to the thumb on any
+     screen the thumbs are on, so the two widgets step inboard of the control stack (main.js
+     measures it). Under 501px the phone layout has already moved them and this must not fire;
+     without .rr-thumbs there is no stack to step around, so a desktop never sees it. */
+  @media (min-height: 501px) {
+    html.rr-thumbs #speedo, html.rr-thumbs #chips { right: calc(1.625em + var(--rr-thumbs-w, 0px)); }
+    /* …and the same again on the left, which is the half that was missed: the steering pad claims
+       the bottom-LEFT corner, and on an iPad the rival ticker and the landmark blade sit ENTIRELY
+       inside it — measured 100% overlap, so a thumb on the wheel covers the gaps and the building
+       name. Both climb above the pad (main.js publishes its height). */
+    html.rr-thumbs #ticker { bottom: calc(1.25em + var(--rr-steer-h, 0px)); }
+    html.rr-thumbs #landmark-tag { bottom: calc(7.5em + var(--rr-steer-h, 0px)); }
+  }
+  /* over-constrained on purpose (top + bottom + height): height wins, so these track the canvas */
+  #hud, #menu, #fade, #loading, #rr-rotate { height: var(--rr-vh); }
 
   /* ---------- HUD ---------- */
   #hud { position: fixed; inset: 0; pointer-events: none; display: none; }
@@ -1829,26 +1876,224 @@ window.CHICAGO = {
 </script>
 <script>
 /* ===== js/core/engine.js ===== */
-/* River Racer — renderer, scene, main loop, adaptive quality */
+/* River Racer — renderer, scene, main loop, performance tiers + adaptive quality */
 (function () {
   const E = { SKIP_REFLECT: 1, autoQuality: true, timeScale: 1, rawDt: 0, wantShadows: true };
   E.setAutoQuality = function (on) { E.autoQuality = on; };
   let renderer, scene, camera;
   let updateFns = [];
   let last = 0, simTime = 0, running = false;
-  let fpsEMA = 60, qualityTimer = 0, pixelScale = 1;
-  const MAX_PR = Math.min(window.devicePixelRatio || 1, 2);
+  // -1 so the very first throttled frame renders the map rather than sampling an empty one
+  let fpsEMA = 60, qualityTimer = 0, pixelScale = 1, shadowPhase = -1;
+
+  // ---------------------------------------------------------------------------------------
+  // PERFORMANCE TIERS
+  //
+  // A phone is not a small desktop. Three things in this renderer are each, on their own, more
+  // than a mid-range mobile GPU has: a 3x backbuffer (2532x1170 to fill a 844x390 view), the
+  // planar water mirror (a second pass over essentially the whole world), and a 2048 PCF-soft
+  // shadow map (a third pass over every caster). The adaptive ladder below would eventually find
+  // its way down to something playable, but only after ten seconds of stutter and only by
+  // stripping everything, in the wrong order, because its thresholds assume a 60 fps target.
+  //
+  // So the tier is decided BEFORE the renderer exists and the phone never renders a heavy frame.
+  // Each field is a named, reversible decision — see the mobile row for what a phone gives up.
+  const TIERS = {
+    desktop: {
+      maxPR: 2, msaa: true, fpsK: 1,
+      reflect: true, reflectScale: 0.42, reflectFar: 2600, reflectOff: 40, reflectOn: 54, reflectKeep: 42,
+      shadowMap: 2048, shadowType: 'soft', shadowHalfCap: Infinity, shadowEvery: 1,
+      bloomDiv: 2, blurPasses: 4, streaks: 1,
+      fineWater: 1, cloudOctaves: 3,
+    },
+    mobile: {
+      // 1.5 is the cap, not 2 and not 3. A phone reports dpr 3 and 844x390 CSS px; at 3x that is
+      // a 2.96 Mpx backbuffer, at 2x 1.32 Mpx, at 1.5x 0.74 Mpx. The HUD is DOM and stays native
+      // sharp either way, so the only thing 3x buys is sub-pixel detail on a 460 ppi screen that
+      // no one can resolve at 40 mph — and it costs 4x the fill rate on every pass in the frame.
+      maxPR: 1.5, msaa: false,
+      // The ladder aims at 30 fps on a phone, not 60. Without this every rung would fire at once
+      // on a device that is locked to a perfectly playable 30 and never recover.
+      fpsK: 0.5,
+      // First and biggest: BOOT with no planar mirror. In daylight the water falls back to its
+      // sky-fresnel term, which still knows which way each wave face points, and reads as the
+      // opaque grey-green channel the Chicago River actually is. At NIGHT it is a real loss — the
+      // mirror is what puts the lit window grids on the water — so the mirror is something a phone
+      // can EARN back: hold the ON threshold without it and it comes on at a third of the desktop
+      // resolution; drop under 26 and it goes again. A phone never boots with it and a slow one
+      // never sees it.
+      // 54, not 48. Measured, switching the mirror on costs ~40% of the frame — so a phone sitting
+      // at exactly 48 without it lands near 29 WITH it, which is inside the band and therefore
+      // stays: that device parks at 29 fps when it could have had 48, and one extra boat on screen
+      // tips it through 26 and starts the pair oscillating. 54 lands near 32, clear of both the 26
+      // floor and the 30 the whole mobile ladder aims at. reflectKeep is the other half of that
+      // arithmetic — see the probation in the quality loop.
+      reflect: false, reflectScale: 0.30, reflectOff: 26, reflectOn: 54, reflectKeep: 28,
+      // far stays at the desktop 2.6 km. A 700 m mirror measured 194 draw calls cheaper again, but
+      // the reflection camera's far plane is also what the water samples where nothing was drawn,
+      // and out on the open lake the skyline it would cut away IS the shot. Not taken un-verified.
+      reflectFar: 2600,
+      // Shadows stay ON — a boat with no contact shadow floats above the river — but at a quarter
+      // of the texels, plain PCF instead of the soft 3x3, a 200 m sun frustum instead of 360 m
+      // (which also culls two thirds of the casters), and re-rendered every OTHER frame. One
+      // frame of lag in a shadow edge at 30 fps is not a thing an eye can see.
+      shadowMap: 1024, shadowType: 'pcf', shadowHalfCap: 200, shadowEvery: 2,
+      // Bloom stays — the golden-hour glow and the lit windows ARE the look. It just runs its
+      // gaussian at quarter res over two passes instead of half res over four: an eighth of the
+      // fill for a very slightly wider, softer glow. Speed streaks go: six extra full-res taps
+      // in the composite is the single most expensive line of shader in the frame.
+      bloomDiv: 4, blurPasses: 2, streaks: 0,
+      // The two shader octave rungs are deliberately NOT taken. Each is one texture2D over part of
+      // one surface — order 0.1 ms of a 33 ms budget on any GPU that can run this at all — and
+      // both were rendered with and without: dropping the water's close-up octave turns the near
+      // field plastic, and collapsing the sky to one octave turns every cloud into a blob. They
+      // are still rungs on the ladder below, so a device that really is that slow still gets them.
+      fineWater: 1, cloudOctaves: 3,
+    },
+  };
+  let Q = TIERS.desktop;
+  let maxPR = 2;
+
+  // Touch alone is not a phone: a Windows laptop with a touchscreen has a mouse and must keep the
+  // desktop tier. The screen, not the window, sets the size test — a 900 px browser window on a
+  // 27" monitor is still a desktop. UA is a tie-breaker for the one case the media queries miss
+  // (an in-app webview), never the only signal.
+  function detect() {
+    const mm = (q) => !!(window.matchMedia && window.matchMedia(q).matches);
+    const touch = (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window;
+    const s = window.screen || {};
+    const big = Math.max(s.width || window.innerWidth, s.height || window.innerHeight);
+    const small = big <= 1180;                 // every phone, and every tablet short of an iPad Pro
+    const fingerFirst = mm('(pointer: coarse)') || !mm('(any-pointer: fine)');
+    const uaMobile = /Android|iPhone|iPod|iPad|Mobile|Silk|Kindle/i.test(navigator.userAgent || '');
+    return (touch && small && (fingerFirst || uaMobile)) ? 'mobile' : 'desktop';
+  }
+
+  function normTier(v) {
+    if (v == null) return null;
+    v = String(v).toLowerCase();
+    if (v === 'mobile' || v === 'low' || v === 'phone') return 'mobile';
+    if (v === 'desktop' || v === 'high' || v === 'full') return 'desktop';
+    return null;                               // 'auto' and anything unknown means "use detection"
+  }
+
+  // ?tier=mobile forces the phone tier on a desktop so it can be tested; ?tier=desktop gets a fast
+  // tablet the good version. Either sticks in localStorage so the settings UI has somewhere to
+  // write, and ?tier=auto clears it again.
+  const TIER_KEY = 'rr.tier';
+  function readOverride() {
+    let raw = null;
+    try {
+      const q = /[?&#](?:tier|quality)=([\w-]+)/.exec(window.location.search + window.location.hash);
+      if (q) raw = q[1];
+      if (raw) {
+        const t = normTier(raw);
+        if (t) localStorage.setItem(TIER_KEY, t); else localStorage.removeItem(TIER_KEY);
+        return t;
+      }
+      return normTier(localStorage.getItem(TIER_KEY));
+    } catch (e) { return normTier(raw); }      // file:// with storage blocked still honours the URL
+  }
+
+  E.detectedTier = detect();
+  E.tierOverride = readOverride();
+
+  // set once the adaptive ladder has decided this device can afford a mirror the tier did not give
+  // it. Survives theme switches (which re-run applyQuality) so the water never flickers.
+  // reflectTrial counts the quality passes a freshly-enabled mirror still has to survive; reflectWait
+  // is the back-off after a failed trial, in the same units; reflectBackoff is the length of the NEXT
+  // one, doubling on each failure so a device that cannot hold it settles instead of oscillating.
+  let reflectEarned = false, reflectTrial = 0, reflectWait = 0, reflectBackoff = 2;
+  function dropMirror() {
+    RR.Reflect.enabled = false;
+    reflectEarned = false;
+    reflectTrial = 0;
+    reflectWait = reflectBackoff;
+    reflectBackoff = Math.min(40, reflectBackoff * 2);       // 3 s, 6 s, 12 s … capped at a minute
+    if (RR.Water && RR.Water.material) RR.Water.material.uniforms.uReflectStrength.value = 0;
+  }
+
+  function selectTier(name) {
+    E.tier = TIERS[name] ? name : 'desktop';
+    E.mobile = E.tier === 'mobile';
+    Q = TIERS[E.tier];
+    E.quality = Q;
+    reflectEarned = false;
+    reflectTrial = 0; reflectWait = 0; reflectBackoff = 2;
+    maxPR = Math.min(window.devicePixelRatio || 1, Q.maxPR);
+  }
+  selectTier(E.tierOverride || E.detectedTier);
+
+  // Push the current tier onto everything that exists right now. Safe to call at any point in the
+  // boot: the water and sky materials are built long after E.init(), so theme.js calls this again.
+  E.applyQuality = function () {
+    if (RR.Reflect) {
+      RR.Reflect.scale = Q.reflectScale;
+      RR.Reflect.far = Q.reflectFar;
+      if (RR.Reflect.setAllowed) RR.Reflect.setAllowed(Q.reflect || reflectEarned);
+    }
+    if (RR.Post) {
+      if (RR.Post.setTier) RR.Post.setTier(Q);
+      if (RR.Post.streaks > Q.streaks) RR.Post.streaks = Q.streaks;
+    }
+    if (RR.Water && RR.Water.material) {
+      const u = RR.Water.material.uniforms;
+      if (u.uFineDetail && u.uFineDetail.value > Q.fineWater) u.uFineDetail.value = Q.fineWater;
+    }
+    if (RR.Sky && RR.Sky.mat && RR.Sky.mat.uniforms.uCloudOctaves) {
+      const u = RR.Sky.mat.uniforms.uCloudOctaves;
+      if (u.value > Q.cloudOctaves) u.value = Q.cloudOctaves;
+    }
+    if (E.sun) {
+      const sh = E.sun.shadow;
+      if (sh.mapSize.x !== Q.shadowMap) {
+        sh.mapSize.set(Q.shadowMap, Q.shadowMap);
+        if (sh.map) { sh.map.dispose(); sh.map = null; }   // three allocates once; force a rebuild
+        // the rebuild has to happen on the next frame even if the throttle would have skipped it
+        if (renderer) renderer.shadowMap.needsUpdate = true;
+      }
+      const c = sh.camera, half = Math.min(Q.shadowHalfCap, Math.abs(c.right) || Q.shadowHalfCap);
+      c.left = -half; c.right = half; c.top = half; c.bottom = -half;
+      c.updateProjectionMatrix();
+    }
+    if (renderer) {
+      const want = Q.shadowType === 'soft' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+      if (renderer.shadowMap.type !== want) {
+        renderer.shadowMap.type = want;
+        // the filter is a shader define, so every program that reads the map has to be rebuilt
+        if (scene) scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
+      }
+      // only when it actually moved — setSize() reallocates the drawing buffer, and this runs on
+      // every theme switch
+      if (renderer.getPixelRatio() !== maxPR * pixelScale) onResize();
+    }
+  };
+
+  // 'mobile' | 'desktop' force a tier and remember it; 'auto' (or null) returns to detection.
+  // A settings screen calls this; so does ?tier= on the URL.
+  E.setTier = function (name) {
+    const t = normTier(name);
+    try { if (t) localStorage.setItem(TIER_KEY, t); else localStorage.removeItem(TIER_KEY); } catch (e) { /* storage blocked */ }
+    E.tierOverride = t;
+    selectTier(t || E.detectedTier);
+    pixelScale = 1;
+    E.applyQuality();
+    // the presets carry the shadow extents and the water colours, so the tier only really lands
+    // once they are re-applied — but only after init(), or there are no lights to write to yet
+    if (renderer && RR.Theme && RR.Theme.apply) RR.Theme.apply(RR.Theme.mode);
+    return E.tier;
+  };
 
   E.init = function () {
     const canvas = document.getElementById('gl');
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(MAX_PR);
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: Q.msaa, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(maxPR);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 0.95;
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = Q.shadowType === 'soft' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
     renderer.shadowMap.autoUpdate = true;
 
     scene = new THREE.Scene();
@@ -1864,10 +2109,11 @@ window.CHICAGO = {
     const sun = new THREE.DirectionalLight(0xffeed8, 1.85);
     sun.position.copy(E.sunDir).multiplyScalar(E.sunDist);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(Q.shadowMap, Q.shadowMap);
+    const half0 = Math.min(360, Q.shadowHalfCap);
     sun.shadow.camera.near = 100; sun.shadow.camera.far = 3400;
-    sun.shadow.camera.left = -360; sun.shadow.camera.right = 360;
-    sun.shadow.camera.top = 360; sun.shadow.camera.bottom = -360;
+    sun.shadow.camera.left = -half0; sun.shadow.camera.right = half0;
+    sun.shadow.camera.top = half0; sun.shadow.camera.bottom = -half0;
     sun.shadow.bias = -0.00055;
     sun.shadow.normalBias = 0.9;
     sun.layers.enable(E.SKIP_REFLECT);      // lights must reach layer-1 objects too (layers gate illumination)
@@ -1905,14 +2151,21 @@ window.CHICAGO = {
 
     E.renderer = renderer; E.scene = scene; E.camera = camera;
 
-    if (RR.Reflect) RR.Reflect.init();
+    // tier before allocation: the bloom chain and the mirror both size their render targets in
+    // init(), and a phone should never pay for the desktop-sized pair even once
+    if (RR.Post && RR.Post.setTier) RR.Post.setTier(Q);
+    if (RR.Reflect) { RR.Reflect.scale = Q.reflectScale; RR.Reflect.far = Q.reflectFar; RR.Reflect.init(); }
     if (RR.Post) RR.Post.init(renderer);
+    E.applyQuality();
+    console.log(`[RR] quality tier: ${E.tier}${E.tierOverride ? ' (forced)' : ' (detected)'} — `
+      + `${window.innerWidth}x${window.innerHeight} css @${maxPR}x, reflections ${Q.reflect ? 'on' : 'off'}`);
   };
 
   function onResize() {
+    if (!renderer) return;
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setPixelRatio(MAX_PR * pixelScale);
+    renderer.setPixelRatio(maxPR * pixelScale);
     renderer.setSize(window.innerWidth, window.innerHeight);
   }
 
@@ -1956,35 +2209,58 @@ window.CHICAGO = {
 
     // adaptive quality: hold ~60fps on modest GPUs, restore full quality when there's headroom.
     // Degrades gently in order (resolution → reflections → bloom → shadows) and recovers with hysteresis.
+    // Every threshold is scaled by Q.fpsK, which is 1 on desktop (so these numbers are literal) and
+    // 0.5 on a phone, where 30 fps is the target and a 60 fps rung would strip the frame on sight.
+    // Every ceiling is the TIER's, so a rung can never restore something the tier does not allow.
     qualityTimer += dt;
     if (qualityTimer > 1.5) {
       qualityTimer = 0;
       if (E.autoQuality) {
+        const K = Q.fpsK;
         // first rung, above every other: the speed streaks are the only thing here the player
         // never sees the absence of, so they go before a single pixel of resolution does.
         if (RR.Post) {
-          if (fpsEMA < 50 && RR.Post.streaks > 0) RR.Post.streaks = 0;
-          else if (fpsEMA > 57 && RR.Post.streaks < 1) RR.Post.streaks = 1;
+          if (fpsEMA < 50 * K && RR.Post.streaks > 0) RR.Post.streaks = 0;
+          else if (fpsEMA > 57 * K && RR.Post.streaks < Q.streaks) RR.Post.streaks = Q.streaks;
         }
-        if (fpsEMA < 47 && pixelScale > 0.55) { pixelScale = Math.max(0.55, pixelScale - 0.15); onResize(); }
-        else if (fpsEMA > 57 && pixelScale < 1) { pixelScale = Math.min(1, pixelScale + 0.1); onResize(); }
+        if (fpsEMA < 47 * K && pixelScale > 0.55) { pixelScale = Math.max(0.55, pixelScale - 0.15); onResize(); }
+        else if (fpsEMA > 57 * K && pixelScale < 1) { pixelScale = Math.min(1, pixelScale + 0.1); onResize(); }
+        // The mirror is the one rung with its own thresholds rather than scaled ones: the phone
+        // tier boots with it vetoed (allowed=false) and can only earn it back here, on evidence.
+        // It is also the one rung big enough to invalidate the measurement that turned it on — a
+        // second pass over essentially the whole world — so it comes back ON PROBATION and has to
+        // prove it held. Two quality passes (3 s) later the EMA either cleared reflectKeep or the
+        // mirror goes off again and the next attempt waits twice as long. A device that genuinely
+        // cannot afford it therefore stops asking instead of flickering across the band edge; a
+        // device that can pays the 3 s once. Nothing here fires when autoQuality is off.
         if (RR.Reflect) {
-          if (fpsEMA < 40 && RR.Reflect.enabled) {
-            RR.Reflect.enabled = false;
-            if (RR.Water && RR.Water.material) RR.Water.material.uniforms.uReflectStrength.value = 0;
-          } else if (fpsEMA > 54 && !RR.Reflect.enabled) RR.Reflect.enabled = true;
+          if (reflectWait > 0) reflectWait--;
+          if (fpsEMA < Q.reflectOff && RR.Reflect.enabled) {
+            dropMirror();
+          } else if (reflectTrial > 0 && RR.Reflect.enabled) {
+            // on trial: hold the verdict until the EMA has had time to catch up with the new cost
+            if (--reflectTrial === 0 && fpsEMA < Q.reflectKeep) dropMirror();
+            else if (reflectTrial === 0) reflectBackoff = 2;      // it held — forgive the history
+          } else if (fpsEMA > Q.reflectOn && !RR.Reflect.enabled && reflectWait === 0) {
+            reflectEarned = true;
+            if (!RR.Reflect.allowed && RR.Reflect.setAllowed) RR.Reflect.setAllowed(true);
+            RR.Reflect.enabled = true;
+            reflectTrial = 2;
+          }
         }
         // shader rungs before bloom: dome cloud octaves 3 -> 1, then the water's close-up octave.
         // Never swap materials here — a program recompile mid-race stalls far worse than it saves.
         if (RR.Sky && RR.Sky.mat && RR.Sky.mat.uniforms.uCloudOctaves) {
-          RR.Sky.mat.uniforms.uCloudOctaves.value = fpsEMA < 44 ? 1 : (fpsEMA > 55 ? 3 : RR.Sky.mat.uniforms.uCloudOctaves.value);
+          const u = RR.Sky.mat.uniforms.uCloudOctaves;
+          u.value = fpsEMA < 44 * K ? 1 : (fpsEMA > 55 * K ? Q.cloudOctaves : Math.min(u.value, Q.cloudOctaves));
         }
         if (RR.Water && RR.Water.material && RR.Water.material.uniforms.uFineDetail) {
-          RR.Water.material.uniforms.uFineDetail.value = fpsEMA < 44 ? 0 : (fpsEMA > 55 ? 1 : RR.Water.material.uniforms.uFineDetail.value);
+          const u = RR.Water.material.uniforms.uFineDetail;
+          u.value = fpsEMA < 44 * K ? 0 : (fpsEMA > 55 * K ? Q.fineWater : Math.min(u.value, Q.fineWater));
         }
-        if (RR.Post) { if (fpsEMA < 32 && RR.Post.enabled) RR.Post.enabled = false; else if (fpsEMA > 50 && !RR.Post.enabled) RR.Post.enabled = true; }
-        if (fpsEMA < 26 && renderer.shadowMap.enabled) { renderer.shadowMap.enabled = false; E.sun.castShadow = false; }
-        else if (fpsEMA > 52 && !renderer.shadowMap.enabled) { renderer.shadowMap.enabled = true; E.sun.castShadow = E.wantShadows; }
+        if (RR.Post) { if (fpsEMA < 32 * K && RR.Post.enabled) RR.Post.enabled = false; else if (fpsEMA > 50 * K && !RR.Post.enabled) RR.Post.enabled = true; }
+        if (fpsEMA < 26 * K && renderer.shadowMap.enabled) { renderer.shadowMap.enabled = false; E.sun.castShadow = false; }
+        else if (fpsEMA > 52 * K && !renderer.shadowMap.enabled) { renderer.shadowMap.enabled = true; E.sun.castShadow = E.wantShadows; }
       }
     }
 
@@ -1998,6 +2274,17 @@ window.CHICAGO = {
     // one global clock: pause sets timeScale 0 (whole map freezes), photo slo-mo sets 0.25.
     // simTime advances by the same scaled dt so t-driven animations freeze/slow in lockstep.
     step(dt * (E.timeScale != null ? E.timeScale : 1));
+
+    // The shadow map is a whole extra pass over every caster in the sun frustum. On a phone it is
+    // re-rendered every OTHER frame: the map lags the world by ~16 ms, which no eye reads on a
+    // soft-edged ground shadow, and it hands back half of the cost of having shadows at all.
+    if (renderer.shadowMap.enabled && Q.shadowEvery > 1) {
+      shadowPhase = (shadowPhase + 1) % Q.shadowEvery;
+      renderer.shadowMap.autoUpdate = false;
+      renderer.shadowMap.needsUpdate = shadowPhase === 0;
+    } else if (!renderer.shadowMap.autoUpdate && Q.shadowEvery <= 1) {
+      renderer.shadowMap.autoUpdate = true;
+    }
 
     if (RR.Reflect && RR.Reflect.enabled) RR.Reflect.update(renderer, scene, camera);
     if (RR.Post && RR.Post.enabled) RR.Post.render(renderer, scene, camera);
@@ -2013,8 +2300,26 @@ window.CHICAGO = {
 /* River Racer — planar reflections: a mirror camera renders the world across the
    water plane (y=0) into a texture the water shader samples. Real skyline mirroring. */
 (function () {
-  const R = { enabled: true, strength: 0.62 };   // strength is per-preset (theme.js writes P.water.refl)
+  // strength is per-preset (theme.js writes P.water.refl); scale and far are per performance tier
+  const R = { strength: 0.62, scale: 0.42, far: 2600, allowed: true };
   let rt, vcam, ready = false;
+
+  // `enabled` is the adaptive ladder's switch; `allowed` is the performance tier's veto. They are
+  // separate because they answer to different owners: the ladder flips `enabled` on a slow second,
+  // and RRTest.pinQuality() forces it true for screenshots — neither of which may put a second
+  // full-scene pass back onto a phone. Setting `enabled` is always honoured, it just cannot win.
+  let want = true;
+  Object.defineProperty(R, 'enabled', {
+    get() { return want && R.allowed; },
+    set(v) { want = !!v; },
+    enumerable: true, configurable: true,
+  });
+  R.setAllowed = function (on) {
+    R.allowed = !!on;
+    // the water shader falls back to its sky-fresnel term the moment this hits zero
+    if (!R.allowed && RR.Water && RR.Water.material) RR.Water.material.uniforms.uReflectStrength.value = 0;
+    else if (R.allowed && R.resize) R.resize();      // R.scale may have changed with the tier
+  };
 
   const reflectorPos = new THREE.Vector3();
   const camPos = new THREE.Vector3();
@@ -2027,7 +2332,8 @@ window.CHICAGO = {
 
   // 0.42-res is plenty — the tap is distorted by the wave normal before it is sampled, so the
   // 29% pixel saving is invisible and it is the largest single win in the frame budget.
-  function size() { return [Math.max(256, (window.innerWidth * 0.42) | 0), Math.max(256, (window.innerHeight * 0.42) | 0)]; }
+  // R.scale is per-tier: a phone that has been handed the mirror back by hand gets a cheaper one.
+  function size() { return [Math.max(256, (window.innerWidth * R.scale) | 0), Math.max(256, (window.innerHeight * R.scale) | 0)]; }
 
   R.init = function () {
     const [w, h] = size();
@@ -2037,8 +2343,10 @@ window.CHICAGO = {
     R.texture = rt.texture;
     R.textureMatrix = textureMatrix;
     ready = true;
-    window.addEventListener('resize', () => { const [w2, h2] = size(); rt.setSize(w2, h2); });
+    window.addEventListener('resize', R.resize);
   };
+
+  R.resize = function () { if (ready) { const [w2, h2] = size(); rt.setSize(w2, h2); } };
 
   R.update = function (renderer, scene, camera) {
     if (!ready || !R.enabled) return;
@@ -2066,7 +2374,7 @@ window.CHICAGO = {
     vcam.fov = camera.fov;
     vcam.aspect = camera.aspect;
     vcam.near = camera.near;
-    vcam.far = 2600;                                  // nothing past 2.6 km survives the ripple + blend
+    vcam.far = R.far;                                 // nothing past 2.6 km survives the ripple + blend
     vcam.updateMatrixWorld();
     vcam.updateProjectionMatrix();
 
@@ -2102,8 +2410,23 @@ window.CHICAGO = {
    bright bits, gaussian-blur them, and add them back for a golden-hour glow.
    Works in display (sRGB) space so the existing colour grade is preserved. */
 (function () {
-  const P = { enabled: true, streaks: 1 };
+  const P = { enabled: true, streaks: 1, lowRes: false };
   let sceneRT, brightRT, blurA, blurB, quad, cam, brightMat, blurMat, compMat, ready = false;
+
+  // Bloom's cost is the gaussian, and the gaussian's cost is resolution x passes. Desktop runs it
+  // at half res over four passes; the phone tier runs quarter res over two — an EIGHTH of the fill
+  // for a glow that is only very slightly wider, because dropping the resolution doubles the
+  // kernel's reach in screen space and very nearly pays the missing passes back. The bright pass
+  // and the composite are unchanged, so the grade is bit-for-bit the same picture underneath.
+  let div = 2, passes = 4;
+  P.setTier = function (q) {
+    if (!q) return;
+    const d = q.bloomDiv || 2, p = q.blurPasses || 4;
+    if (d === div && p === passes) return;
+    div = d; passes = p;
+    P.lowRes = div > 2;
+    P.resize();
+  };
 
   // The grade has two authors. theme.js owns the BASE (day/sunset/dusk/night), the salute chain
   // owns a modulation on top of it, and neither may clobber the other — so the base is kept here
@@ -2176,7 +2499,8 @@ window.CHICAGO = {
   }
 
   P.init = function () {
-    const w = window.innerWidth, h = window.innerHeight, hw = Math.max(1, w >> 1), hh = Math.max(1, h >> 1);
+    const w = window.innerWidth, h = window.innerHeight;
+    const hw = Math.max(1, (w / div) | 0), hh = Math.max(1, (h / div) | 0);
     sceneRT = rt(w, h, true);
     brightRT = rt(hw, hh, false); blurA = rt(hw, hh, false); blurB = rt(hw, hh, false);
     cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -2258,7 +2582,8 @@ window.CHICAGO = {
 
   P.resize = function () {
     if (!ready) return;
-    const w = window.innerWidth, h = window.innerHeight, hw = Math.max(1, w >> 1), hh = Math.max(1, h >> 1);
+    const w = window.innerWidth, h = window.innerHeight;
+    const hw = Math.max(1, (w / div) | 0), hh = Math.max(1, (h / div) | 0);
     sceneRT.setSize(w, h); brightRT.setSize(hw, hh); blurA.setSize(hw, hh); blurB.setSize(hw, hh);
     blurMat.uniforms.res.value.set(hw, hh);
   };
@@ -2290,13 +2615,18 @@ window.CHICAGO = {
     renderer.render(scene, camera);
 
     brightMat.uniforms.tDiffuse.value = sceneRT.texture; pass(renderer, brightMat, brightRT);
-    blurMat.uniforms.tDiffuse.value = brightRT.texture; blurMat.uniforms.dir.value.set(1, 0); pass(renderer, blurMat, blurA);
-    blurMat.uniforms.tDiffuse.value = blurA.texture; blurMat.uniforms.dir.value.set(0, 1); pass(renderer, blurMat, blurB);
-    blurMat.uniforms.tDiffuse.value = blurB.texture; blurMat.uniforms.dir.value.set(1, 0); pass(renderer, blurMat, blurA);
-    blurMat.uniforms.tDiffuse.value = blurA.texture; blurMat.uniforms.dir.value.set(0, 1); pass(renderer, blurMat, blurB);
+    // ping-pong H,V,H,V… — `passes` is 4 on desktop (identical to what it always was) and 2 on a phone
+    let src = brightRT;
+    for (let i = 0; i < passes; i++) {
+      const dst = (i & 1) ? blurB : blurA;
+      blurMat.uniforms.tDiffuse.value = src.texture;
+      blurMat.uniforms.dir.value.set((i & 1) ? 0 : 1, (i & 1) ? 1 : 0);
+      pass(renderer, blurMat, dst);
+      src = dst;
+    }
 
     compMat.uniforms.tScene.value = sceneRT.texture;
-    compMat.uniforms.tBloom.value = blurB.texture;
+    compMat.uniforms.tBloom.value = src.texture;
     quad.material = compMat;
     renderer.setRenderTarget(null);
     renderer.render(quad, cam);
@@ -2443,8 +2773,12 @@ window.CHICAGO = {
     E.wantShadows = P.shadows;                 // dusk light is too grazing to be worth the map
     E.sun.castShadow = P.shadows && E.renderer.shadowMap.enabled;
     const sc = E.sun.shadow.camera;
-    sc.left = -P.shadowHalf; sc.right = P.shadowHalf;
-    sc.top = P.shadowHalf; sc.bottom = -P.shadowHalf;
+    // The phone tier caps the sun frustum at 200 m. That is not just a sharper map on a quarter of
+    // the texels — the shadow pass only draws casters inside this box, so shrinking it from 360 m
+    // is where most of the saving is. Nothing is lost that the chase camera can see.
+    const half = Math.min(P.shadowHalf, (E.quality && E.quality.shadowHalfCap) || Infinity);
+    sc.left = -half; sc.right = half;
+    sc.top = half; sc.bottom = -half;
     sc.far = P.shadowFar;
     sc.updateProjectionMatrix();
     E.trackShadow(E.sun.target.position.x, E.sun.target.position.z);
@@ -2500,6 +2834,11 @@ window.CHICAGO = {
       const u = RR.Water.material.uniforms;
       if (u.uFoamTint) u.uFoamTint.value.setRGB(0.84, 0.86, 0.80);
     }
+
+    // Last word goes to the performance tier — every preset above hands the water a mirror
+    // strength the phone tier does not honour. This is also the one hook in the boot that runs
+    // AFTER the water and sky materials exist, so it is where their per-tier uniforms land.
+    if (E.applyQuality) E.applyQuality();
   };
 
   T.toggle = function () {
@@ -2529,6 +2868,7 @@ window.CHICAGO = {
      W/↑ throttle · S/↓ brake+reverse · A·D/←·→ steer · SHIFT boost   (this file)
      E or SPACE fire item        (polled by powerups.js through I.pressed)
      B or Q look astern          (this file → camera.js)
+     (touch: every one of those is on screen instead — ui/touch.js writes I.touch)
      [ ] cinematic shot          (this file → camera.js)
      F ×5 take the wheel         (this file → main.js, Architecture Tour only)
      C camera · N time of day · G green river · P photo · R reset · SPACE docent · ESC pause  (main.js)
@@ -2579,26 +2919,34 @@ window.CHICAGO = {
   window.addEventListener('keyup', (e) => { keys[e.code] = false; });
   window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
-  // A pad had no item button at all, which with power-ups shipping ON meant a pad player could not
-  // play the default game. powerups.js polls I.pressed('KeyE'), so B/circle answers there — the
-  // routing lives with the other pad bindings instead of teaching another module about gamepads.
-  I.padItem = false;
-  I.pressed = (code) => !!keys[code] || (I.padItem && code === 'KeyE');
+  // ---- touch ----------------------------------------------------------------------------------
+  // What used to live here was "left half of the screen steers by finger x, right half is
+  // throttle": no boost, no item, no brake, no pause — a scheme you could not finish a race with.
+  // The controls are ui/touch.js's now, because the hit zones ARE the widgets and only the widgets
+  // know where they are. This file still owns what they MEAN. touch.js writes these fields and
+  // nothing else; with the overlay absent .on stays false and every merge below is skipped, so a
+  // build without it is exactly the keyboard game.
+  const T = { on: false, steer: 0, throttle: 0, brake: 0, boost: false, lookBack: false, item: false };
+  I.touch = T;
 
-  // touch: left half steers by horizontal position, right half is throttle
-  let touchSteer = 0, touchThrottle = 0;
-  const touches = new Map();
-  function readTouches() {
-    touchSteer = 0; touchThrottle = 0;
-    touches.forEach((t) => {
-      if (t.x < window.innerWidth * 0.5) touchSteer = RR.U.clamp((t.x / (window.innerWidth * 0.25)) - 1, -1, 1);
-      else touchThrottle = 1;
-    });
-  }
-  window.addEventListener('touchstart', (e) => { for (const t of e.changedTouches) touches.set(t.identifier, { x: t.clientX, y: t.clientY }); readTouches(); }, { passive: true });
-  window.addEventListener('touchmove', (e) => { for (const t of e.changedTouches) { const o = touches.get(t.identifier); if (o) { o.x = t.clientX; o.y = t.clientY; } } readTouches(); }, { passive: true });
-  window.addEventListener('touchend', (e) => { for (const t of e.changedTouches) touches.delete(t.identifier); readTouches(); }, { passive: true });
-  window.addEventListener('touchcancel', (e) => { for (const t of e.changedTouches) touches.delete(t.identifier); readTouches(); }, { passive: true });
+  // Is the PRIMARY pointer a finger? Not "does a digitizer exist" — a touchscreen laptop answers
+  // yes to that and its owner is holding a mouse. hud.js and touch.js both key off this.
+  I.hasTouch = (function () {
+    const mm = (q) => !!(window.matchMedia && window.matchMedia(q).matches);
+    const digitizer = (navigator.maxTouchPoints | 0) > 0 || 'ontouchstart' in window;
+    return digitizer && (mm('(pointer: coarse)') || !mm('(pointer: fine)'));
+  })();
+
+  // A pad had no item button at all, which with power-ups shipping ON meant a pad player could not
+  // play the default game. powerups.js polls I.pressed('KeyE'), so B/circle answers there — and so
+  // does the on-screen FIRE button. The routing lives with the other bindings instead of teaching
+  // another module about gamepads and touch.
+  // The latch is for the tap: powerups.js polls on the rising edge of its own frame, and a thumb
+  // can be down and up again between two of those polls.
+  I.padItem = false;
+  let fireLatch = 0;
+  I.touchFire = function () { fireLatch = 2; };
+  I.pressed = (code) => !!keys[code] || ((I.padItem || T.item || fireLatch > 0) && code === 'KeyE');
 
   // ---- free look: drag the world with the pointer -----------------------------------------
   // Only the Architecture Tour's seats read this (RR.Camera.seat), so a drag anywhere else is
@@ -2656,14 +3004,26 @@ window.CHICAGO = {
       break;
     }
 
-    if (touchThrottle > 0) th = Math.max(th, touchThrottle);
-    if (touchSteer !== 0) st = RR.U.clamp(st - touchSteer, -1, 1);
+    // The thumbs, merged the same way the pad is: they RAISE a command, never lower one, so a pad
+    // and a finger on the same boat cannot fight each other.
+    if (T.on) {
+      if (T.throttle > 0) th = Math.max(th, T.throttle);
+      if (T.brake > 0) br = Math.max(br, T.brake);
+      if (T.steer !== 0) st = RR.U.clamp(st - T.steer, -1, 1);   // +T.steer = screen right = starboard
+      if (T.boost) bo = true;
+      if (T.lookBack) lb = true;
+    }
+    if (fireLatch > 0) fireLatch--;
 
     // analog feel on digital keys
     const rate = 6.5;
     I.throttle = RR.U.damp(I.throttle, th, rate, dt);
     I.brake = RR.U.damp(I.brake, br, rate, dt);
-    I.steer = RR.U.damp(I.steer, st, st === 0 ? 9 : 5.5, dt);
+    // A key is a switch and needs the ramp. A thumb on a stick is ALREADY an analog signal, and
+    // 0.18 s of extra smoothing on top of it is the difference between steering the boat and
+    // asking it politely — so a live stick gets the fast approach the keys can't have.
+    const touching = T.on && T.steer !== 0;
+    I.steer = RR.U.damp(I.steer, st, touching ? 9 : st === 0 ? 9 : 5.5, dt);
     I.boost = bo;
     I.lookBack = lb;
     I.padItem = padFire;
@@ -19943,6 +20303,10 @@ window.CHICAGO = {
   /* motion */
   --e-out:cubic-bezier(.16,1,.3,1); --e-pop:cubic-bezier(.2,2.2,.4,1); --e-in:cubic-bezier(.5,0,.75,0);
   --t-micro:120ms; --t-std:220ms; --t-enter:360ms; --t-cel:750ms;
+  /* the phone eats its own edges: a notch at one end of a landscape screen, a home indicator
+     along the bottom. Zero everywhere else, so every calc() below is a no-op on a desktop. */
+  --sat:env(safe-area-inset-top,0px);  --sar:env(safe-area-inset-right,0px);
+  --sab:env(safe-area-inset-bottom,0px); --sal:env(safe-area-inset-left,0px);
 }
 
 /* the single worst thing about the old UI: italics everywhere */
@@ -19955,10 +20319,15 @@ window.CHICAGO = {
                     50% 100%,35.57% 75%,6.70% 75%,21.13% 50%,6.70% 25%,35.57% 25%)}
 
 /* ---------------------------------------------------------------- HUD shell */
+/* Width alone is the wrong question. A 1366x640 laptop window and a 844x390 phone in landscape
+   both read as "wide"; what they are short of is HEIGHT, and the HUD hangs off the top and bottom
+   edges. The height rules below come last and therefore win when both apply — see SHORT SCREENS
+   at the foot of this file for the phone, where the layout changes and not just the type size. */
 #hud{font:400 16px/1 var(--f-ui);color:var(--text);letter-spacing:0}
 @media (max-width:1440px){#hud{font-size:14px}}
 @media (max-width:1180px){#hud{font-size:12.4px}}
 @media (max-width:900px){#hud{font-size:10.6px}}
+@media (min-height:501px) and (max-height:760px){#hud{font-size:min(14px,2.02vh)}}
 
 /* ------------------------------------------- position plate + lap blade (TL) */
 #race-info{position:absolute;left:1.625em;top:1.125em;display:flex;flex-direction:column;gap:.375em;
@@ -20384,8 +20753,12 @@ window.CHICAGO = {
 .menu-item{white-space:nowrap;font:700 1.05em/1 var(--f-ui);letter-spacing:.24em;padding:.76em 2em;border-radius:2px;
   background:var(--panel);border:0;box-shadow:inset 0 0 0 2px var(--rule-soft);
   color:var(--text);transition:all var(--t-micro) var(--e-out);text-align:center;cursor:pointer}
-.menu-item.sel,.menu-item:hover{background:var(--sign-green);color:#fff;
+/* .sel is the state; :hover only ECHOES it, and only on a pointer that can hover. A touch screen
+   fires a phantom hover that then sticks to whatever was tapped last. */
+.menu-item.sel{background:var(--sign-green);color:#fff;
   box-shadow:inset 0 0 0 2px #fff,0 .3em 1.2em rgba(0,105,62,.4);transform:translateX(.4em)}
+@media (hover:hover){.menu-item:hover{background:var(--sign-green);color:#fff;
+  box-shadow:inset 0 0 0 2px #fff,0 .3em 1.2em rgba(0,105,62,.4);transform:translateX(.4em)}}
 .menu-item.sel::before{content:"";display:inline-block;width:.62em;height:.62em;margin-right:.9em;
   vertical-align:-.02em;background:var(--chi-red);
   clip-path:polygon(50% 0%,64.43% 25%,93.30% 25%,78.87% 50%,93.30% 75%,64.43% 75%,
@@ -20394,6 +20767,12 @@ window.CHICAGO = {
 .menu-note{margin-top:1.4em;font:700 .74em/1.85 var(--f-ui);letter-spacing:.14em;color:var(--text-dim);
   text-shadow:0 1px 4px rgba(0,0,0,.9)}
 .menu-note b{color:var(--text)}
+/* HOW TO PLAY is the one screen that is mostly words, so it carries its own measure and type size.
+   These were inline styles until the key table had to be able to disappear on a touchscreen — and
+   an inline display: beats any stylesheet rule that would hide it. */
+.help-note{font:700 13px/1.5 var(--f-ui);max-width:760px;margin-top:10px}
+.help-grid{display:grid;grid-template-columns:max-content 1fr max-content 1fr;gap:.30em 1.1em;text-align:left}
+.help-row{margin-top:.85em;text-wrap:balance}
 
 #select-title{font:400 2.3em/1 var(--f-display);letter-spacing:.03em;color:#fff;
   text-shadow:0 .1em .5em rgba(0,0,0,.8);margin-bottom:.2em}
@@ -20584,8 +20963,9 @@ window.CHICAGO = {
   letter-spacing:.22em;padding:.62em 2.2em}
 .cup-cta .menu-item.primary{font:700 1.42em/1 var(--f-ui);letter-spacing:.18em;padding:.58em 2.2em;
   box-shadow:inset 0 0 0 2px var(--gold)}
-.cup-cta .menu-item.primary.sel,.cup-cta .menu-item.primary:hover{
-  box-shadow:inset 0 0 0 2px #fff,0 .3em 1.2em rgba(0,105,62,.45)}
+.cup-cta .menu-item.primary.sel{box-shadow:inset 0 0 0 2px #fff,0 .3em 1.2em rgba(0,105,62,.45)}
+@media (hover:hover){.cup-cta .menu-item.primary:hover{
+  box-shadow:inset 0 0 0 2px #fff,0 .3em 1.2em rgba(0,105,62,.45)}}
 .cup-note{margin-top:.4em;text-align:center;font:700 .7em/1.7 var(--f-ui);letter-spacing:.18em;
   color:var(--text-dim)}
 
@@ -20616,7 +20996,8 @@ window.CHICAGO = {
 #sound-chip{position:fixed;top:1.15em;right:1.25em;z-index:30;font-size:13px}
 #sound-chip.hidden{display:none}
 .sound-row{margin-top:1.5em;justify-content:center}
-#sound-chip:hover,.sound-row:hover,.opt-row:hover{transform:translateY(-.1em);box-shadow:inset 0 0 0 2px var(--rule)}
+@media (hover:hover){#sound-chip:hover,.sound-row:hover,.opt-row:hover{
+  transform:translateY(-.1em);box-shadow:inset 0 0 0 2px var(--rule)}}
 #sound-chip b,.sound-row b,.opt-row b{color:var(--text);font-weight:700}
 #sound-chip i,.sound-row i,.opt-row i{font-style:normal;font-size:.85em;letter-spacing:.16em;color:var(--text-mute);
   padding:.32em .5em;border-radius:2px;box-shadow:inset 0 0 0 1px var(--rule-soft)}
@@ -20648,6 +21029,24 @@ window.CHICAGO = {
 .opt-row.off svg .x{display:inline}
 #vol-panel .opt-row{margin-top:.2em;justify-content:center}
 
+/* ------------------------------------------------- rotate to landscape (phone) */
+/* The game is a landscape game: the river runs across the frame and the thumbs drive from the two
+   bottom corners. A portrait phone gets this instead of a broken layout. z-index 200 clears
+   #loading (100), #fade (50), #net-ui (60) and the sound chip (30). */
+#rr-rotate{position:fixed;inset:0;z-index:200;display:none;flex-direction:column;align-items:center;
+  justify-content:center;gap:1.1em;text-align:center;background:var(--ink-900);
+  padding:calc(2em + var(--sat)) calc(1.6em + var(--sar)) calc(2em + var(--sab)) calc(1.6em + var(--sal))}
+#rr-rotate .phone{width:3.2em;height:5.6em;border-radius:.5em;box-shadow:inset 0 0 0 3px var(--chi-blue);
+  animation:rotturn 2.6s var(--e-out) infinite}
+#rr-rotate .phone i{display:block;width:34%;height:3px;margin:.45em auto 0;border-radius:2px;
+  background:var(--chi-blue);opacity:.7}
+@keyframes rotturn{0%,26%{transform:rotate(0)}62%,100%{transform:rotate(-90deg)}}
+#rr-rotate h2{font:400 2.3em/1 var(--f-display);letter-spacing:.03em;color:#fff}
+#rr-rotate p{font:700 .8em/1.7 var(--f-ui);letter-spacing:.22em;color:var(--chi-blue)}
+#rr-rotate .crest{display:flex;gap:1.1em}
+#rr-rotate .crest .star6{width:.85em;height:.85em}
+@media (orientation:portrait) and (max-width:620px){#rr-rotate{display:flex;font-size:16px}}
+
 /* --------------------------------------------------------------- loading ---*/
 #loading{background:var(--ink-900)}
 #loading #load-title{font:400 2.4em/1 var(--f-display)!important;letter-spacing:.04em!important;color:#fff}
@@ -20656,6 +21055,222 @@ window.CHICAGO = {
 #loading .msg{font:700 .72em/1 var(--f-ui);letter-spacing:.34em;color:var(--chi-blue)}
 #load-stars{display:flex;gap:1.1em}
 #load-stars .star6{width:.7em;height:.7em;opacity:.55}
+
+/* ======================================================== A PHONE, LANDSCAPE ==*/
+/* 844x390. Every max-width breakpoint above already fired — 844 is "narrow" — and none of them
+   noticed that the axis in short supply is the 390px HEIGHT. Two things change here, and the
+   second matters more than the first: the type scales off the SHORT axis, and the layout moves.
+   The desktop HUD hangs its heaviest furniture in the four corners; on a phone the two BOTTOM
+   corners are where the thumbs live (they are steering the boat), the notch eats one end of the
+   long edge and the home indicator the bottom. So everything climbs into the top third and the
+   two lower corners are left empty. Nothing here is a shrink of the desktop layout. */
+@media (max-height:500px){
+  #hud{font-size:clamp(8.5px,2.72vh,12px)}
+
+  /* TOP LEFT — the plate and the blade lie down side by side instead of stacking */
+  #race-info{left:calc(1em + var(--sal));top:calc(.7em + var(--sat));
+    flex-direction:row;align-items:center;gap:.45em}
+  #pos-plate{width:3.6em;height:3.6em}
+  #pos-big{font-size:2.5em}
+  #pos-suffix{font-size:.75em;margin-top:.42em}
+  #pos-total{right:.42em;bottom:.30em;font-size:.52em}
+  #lap-line{font-size:.66em;padding:.5em .7em;letter-spacing:.14em}
+
+  /* LEFT, under it — the dial loses its speed arc and its ticks and becomes what a phone player
+     actually needs from it: the boost ring, with the number in the middle of it. Both were
+     three-pixel hairlines at this size, and the bottom-right corner they used to live in is now
+     somebody's thumb. */
+  #speedo{left:calc(1em + var(--sal));right:auto;top:calc(4.6em + var(--sat));bottom:auto;
+    width:6em;height:6em;text-align:center}
+  #spd-arc,#spd-ticks{display:none}
+  #spd-boost{left:0;top:0;right:auto;bottom:auto;width:100%;height:100%}
+  #speed-num{left:0;right:auto;top:26%;bottom:auto;width:100%;font-size:2.05em;text-align:center}
+  #speed-unit{left:0;right:auto;top:62%;bottom:auto;width:100%;font-size:.55em;
+    letter-spacing:.24em;text-indent:.24em;text-align:center}
+  #boost-legend{left:0;right:auto;bottom:-1.1em;width:100%;transform:none}
+  #boost-label{font-size:.52em} #prime{margin-bottom:.2em;font-size:.54em}
+
+  /* TOP CENTRE — one line of clock, the gaps tucked straight under it */
+  #timer{top:calc(.6em + var(--sat));padding:.35em .95em .4em}
+  #timer small{font-size:.5em;letter-spacing:.24em;margin-bottom:.14em}
+  #timer-num{font-size:1.55em}
+  #delta{margin-top:.18em;font-size:.8em}
+  /* 6.2em of THIS element's own .66em type = 4.1em of the HUD's, which clears the timer plate.
+     The em trap the timer offsets document, one more time. */
+  #gaps{top:calc(6.2em + var(--sat));font-size:.66em;gap:.9em}
+  /* the torpedo call comes off the right edge and onto the centre line, where the eye already is */
+  #incoming{left:50%;right:auto;top:8.6em;bottom:auto;transform:translate(-50%,-.7em)}
+  #incoming.on{transform:translate(-50%,0)}
+
+  /* TOP RIGHT — the map was 143x191 here, a fifth of the screen. 85x113 is a map; that was a wall */
+  #minimap{right:calc(.8em + var(--sar));top:calc(.7em + var(--sat));width:8em;height:10.67em}
+  /* the chips move under it: their old home is inside the right thumb's reach */
+  #chips{right:calc(.8em + var(--sar));top:calc(11.9em + var(--sat));bottom:auto;align-items:flex-end}
+  .chip{font-size:.62em;padding:.4em .7em}
+
+  /* BOTTOM CENTRE — the one strip of the bottom edge that no thumb covers. The socket keeps its
+     well, its brackets and its blade; the header rail, the key rail (there is no key) and the
+     blurb line go, because 390px of screen cannot afford a caption. */
+  #item-slot{bottom:calc(.35em + var(--sab))}
+  #item-box{width:4.6em;height:4.6em}
+  #item-head,#item-foot,#item-sub{display:none}
+  #item-well{left:6%;right:6%;top:6%;bottom:6%}
+  #item-name{margin-top:.4em;min-width:0;font-size:.6em;padding:.42em .7em;
+    letter-spacing:.14em;text-indent:.14em}
+  #item-pips{margin-top:.28em;min-height:1.1em;gap:.25em}
+  .pip{font-size:.52em;padding:.3em .45em .26em}
+  /* 6.6em of this element's own 1.5em type = 9.9em of the HUD's: clear of the socket below it,
+     and narrow enough to stay out of the right-hand button stack */
+  #item-call{font-size:1.5em;bottom:6.6em;max-width:56vw}
+
+  /* the rival ticker is the gap line's own information in longer words: the gap line stays */
+  #ticker{display:none}
+  /* The landmark blade, squeezed into the last free band on the left: the steering pad claims
+     everything below 62% of the height, so the blade sits above it and gives up its architect
+     line to do so — the NAME is the callout, the credit was always the footnote.
+     font-size FIRST: index.html pins this element at 15px and nothing above resets it, so without
+     that line every em offset here would resolve against 15px and the blade would land 60px low. */
+  #landmark-tag{font-size:1em;left:calc(1em + var(--sal));top:calc(12.2em + var(--sat));
+    bottom:auto;max-width:17em}
+  #lt-name{font-size:1em} #lt-blade{padding:.4em .8em} #lt-sub{display:none}
+  #docent{left:50%;right:auto;bottom:calc(.5em + var(--sab));transform:translateX(-50%);
+    max-width:80vw;font-size:.68em;line-height:1.45;padding:.6em .9em}
+  #docent h4{font-size:1.4em}
+
+  /* the celebration furniture, sized to the short axis */
+  #countdown{top:38%} #cd-num{font-size:8.6em} #cd-star{width:8.4em;height:8.4em;margin:-4.2em 0 0 -4.2em}
+  #placement-big{font-size:7.4em} #placement-sub{font-size:1em;letter-spacing:.34em}
+  #placement .stars{margin-top:.6em;gap:.7em}
+  #wrongway{font-size:2em} #checkpoint-flash{font-size:1.5em}
+  #cine .bar{height:8vh}
+
+  /* ---------------------------------------------------------------- menus ---*/
+  /* Nothing may be clipped by a 390px viewport, and a screen that cannot fit scrolls rather than
+     hiding its own BACK button. A "safe" centre keeps a short screen centred without letting a
+     tall one lose its top edge to the centring. */
+  #menu{font-size:min(11.5px,3vh);overflow-y:auto;overscroll-behavior:contain;
+    justify-content:center;justify-content:safe center;
+    padding:calc(.5em + var(--sat)) calc(.6em + var(--sar)) calc(.5em + var(--sab)) calc(.6em + var(--sal))}
+  #select-title{font-size:1.65em;margin-bottom:.15em}
+  #select-sub{font-size:.66em;padding:.4em .9em;margin-bottom:.9em}
+  .menu-list{margin-top:1.1em;min-width:16em;gap:.34em}
+  .menu-item{font-size:1em;padding:.55em 1.4em}
+  .menu-note{margin-top:.8em;font-size:.66em;line-height:1.6}
+  .help-note{font-size:11px;max-width:96vw;margin-top:.3em}
+  .help-row{margin-top:.6em}
+
+  /* the title: a landscape screen is two columns, not one long one, so the list gets the height */
+  #menu.title-screen{display:grid;align-content:center;align-content:safe center;justify-content:center;
+    justify-items:center;grid-template-columns:auto minmax(13em,20em);gap:.3em 2.2em;font-size:11px;
+    padding:calc(.5em + var(--sat)) calc(.6em + var(--sar)) calc(.5em + var(--sab)) calc(.6em + var(--sal))}
+  #menu.title-screen .stars{grid-column:1;grid-row:1;margin:0;gap:1.2em}
+  #menu.title-screen .starcol{width:auto;gap:0}
+  #menu.title-screen .starcol span{display:none}
+  #menu.title-screen .starcol .star6{width:1.3em;height:1.3em}
+  #menu.title-screen #title{grid-column:1;grid-row:2;font-size:min(9.6vh,42px)}
+  #menu.title-screen #subtitle{grid-column:1;grid-row:3;font-size:.82em;letter-spacing:.3em;
+    text-indent:.3em;margin-top:.5em}
+  #menu.title-screen #switches{grid-column:1;grid-row:4;margin-top:1em;gap:.5em}
+  #menu.title-screen .menu-list{grid-column:2;grid-row:1/5;align-self:center;
+    margin:0;width:100%;max-width:none;gap:.3em}
+  /* eight rows once a championship is running: 44px each would not fit, and a row this wide is
+     a comfortable target at 38 */
+  #menu.title-screen .menu-item{padding:.5em 1em;font-size:1em;min-height:38px}
+  #menu.title-screen .menu-note{display:none}
+
+  /* the showroom: plate top-left, hulls along the foot, the boat itself in the clear middle.
+     Both offsets are pre-divided by the element's OWN type, per the em trap: .52em of the title's
+     1.5em and 4.63em of the sub's .62em are 9px and 33px of an 11.5px menu. The display face
+     overshoots its line box by half a line, so a title parked at its own em height loses its caps
+     off the top of the screen. */
+  #menu.showroom #select-title{top:calc(.52em + var(--sat));font-size:1.5em}
+  #menu.showroom #select-sub{top:calc(4.63em + var(--sat));font-size:.62em}
+  #ride-panel{left:calc(.6em + var(--sal));top:calc(5.2em + var(--sat));transform:none;
+    width:12.6em;padding:.6em .75em}
+  #ride-panel h3{font-size:1.25em;margin:.1em 0 .3em}
+  #ride-panel .desc{font-size:.66em;line-height:1.45}
+  #radar{width:8em;height:8em;margin:.2em auto}
+  #spec-sheet{display:none}
+  #livery{gap:.4em;margin-top:.5em;flex-wrap:wrap}
+  #cards{gap:.6em}
+  .card{width:11.6em;padding:.55em}
+  .card canvas{height:4.6em}
+  .card .desc{min-height:0;font-size:.64em;line-height:1.4}
+  #cards.dock{bottom:calc(.4em + var(--sab));gap:.5em;max-width:100vw}
+  #cards.dock .card{width:6.1em;padding:.4em .45em}
+  #cards.dock .card canvas{height:3.4em}
+  #cards.dock .card h3{font-size:.8em;min-height:2.2em}
+
+  /* results: the HULL column is the first thing to go — it is the one cell nobody reads twice */
+  #results-list{min-width:0;width:min(96vw,42em);margin-top:.4em}
+  .result-head .h,.result-row .h{display:none}
+  .result-head,.result-row{grid-template-columns:3em 1fr 5em 4.4em;gap:.7em;padding:.34em .8em}
+  .result-head.cup,.result-row.cup{grid-template-columns:3em 1fr 5em 4.4em 2.8em}
+  .result-head{letter-spacing:.14em}
+  .result-row{font-size:.8em}
+  .result-row .p{font-size:1.35em}
+  #medal-strip{margin:.5em 0 .1em;padding:.5em 1.1em;font-size:.7em}
+  #record-banner{margin:.5em 0;padding:.5em 1em;font-size:.8em;letter-spacing:.2em}
+
+  /* the championship board: the bracket says what the table already says, and the table is the
+     one that carries the whole season */
+  #cup-board{width:min(97vw,60em);gap:.5em;font-size:min(10.5px,2.8vh)}
+  .cup-bracket{display:none}
+  .cup-title{font-size:2.1em} .cup-crest{margin-bottom:.3em} .cup-crest .star6{width:.62em;height:.62em}
+  .cup-kicker{margin-top:.5em;font-size:.72em}
+  .cup-row{grid-template-columns:3em minmax(5em,1fr) repeat(4,3.6em) 3em 3.6em 2.4em;
+    gap:.5em;padding:.16em .6em}
+  .cup-row.head{padding:.45em .6em .4em;font-size:.62em;letter-spacing:.1em}
+  .cup-row.head .rh i{margin-top:.3em}
+  .cup-row.line{font-size:.78em}
+  .cup-cell{padding:.16em 0}
+  .cup-cell .pp{font-size:1.2em} .cup-cell .pv{font-size:.6em}
+  .cup-tot b{font-size:1.5em} .cup-tot i{font-size:.58em}
+  .cup-champ{padding:.6em 1em .7em} .cup-champ .who{font-size:2.4em}
+  .cup-cta{gap:.28em}
+  .cup-cta .menu-item{min-width:0;min-height:36px;width:min(90vw,30em);font-size:.86em;padding:.4em 1.2em}
+  .cup-cta .menu-item.primary{font-size:1.05em;padding:.4em 1.2em}
+  .cup-note{margin-top:.25em;font-size:.62em}
+
+  /* pause: the volume panel stays (it is the only mixer there is), the key legend goes */
+  #vol-panel{margin-top:.9em;min-width:15em;gap:.4em;font-size:.66em}
+  #pause-flag .star6{width:4em;height:4em;margin-top:-2em;margin-left:-2em}
+  #sound-chip{top:calc(.55em + var(--sat));right:calc(.55em + var(--sar))}
+}
+
+/* ============================================================ TOUCH INPUT ====*/
+/* Not a size question — a finger question, and an iPad answers yes to it as well as a phone.
+   Anything you have to hit is at least 44px on its shortest side, nothing is reachable by hover
+   alone, and no legend promises a key that this device does not have.
+   The two defaults come FIRST: a media query adds no specificity, so a plain rule written after
+   one simply beats it. */
+.t-hint{display:none}
+.back-chip{position:fixed;left:calc(.7em + var(--sal));top:calc(.7em + var(--sat));z-index:31;
+  display:none;align-items:center;justify-content:center;gap:.5em;min-height:44px;padding:.7em 1.1em;
+  border:0;border-radius:2px;background:var(--panel-hi);box-shadow:inset 0 0 0 2px var(--rule-soft);
+  color:var(--text-dim);font:700 13px/1 var(--f-ui);letter-spacing:.2em;cursor:pointer;
+  pointer-events:auto}
+@media (hover:none) and (pointer:coarse){
+  .menu-item{display:flex;align-items:center;justify-content:center;min-height:44px;
+    padding-top:.5em;padding-bottom:.5em}
+  #sound-chip,.sound-row,.opt-row{min-height:44px;box-sizing:border-box;padding:.7em 1em}
+  #sound-chip{font-size:15px}
+  /* "PRESS M" on a device with no M */
+  #sound-chip i,.sound-row i,.opt-row i{display:none}
+  #livery i{width:2.2em;height:2.2em}
+  #vol-panel input[type=range]{height:40px}
+  /* the key wall is a keyboard legend; the controls are on the glass */
+  #boost-hint{display:none}
+  /* …and so is the gold E on the item box, which promises a key this device does not have. The
+     word beside it stays: the foot then reads FIRE, which is what the pad on the glass says too.
+     Written after the rule that shows it and at the same specificity, so this simply wins. */
+  #item-slot.held #item-key{display:none}
+  .k-hint{display:none}
+  .t-hint{display:inline}
+  .t-hint.b{display:block}
+  /* BKSP is how every picker went back, and there is no BKSP. A chip in the corner instead. */
+  .back-chip{display:flex}
+}
 `;
 
   K.init = function () {
@@ -20665,7 +21280,23 @@ window.CHICAGO = {
     s.id = 'rr-ui';
     s.textContent = K.css;
     (document.head || document.documentElement).appendChild(s);
+    mountRotate();
   };
+
+  // The rotate prompt is pure CSS state — one media query shows it — but the markup has to exist
+  // before the first portrait frame, which is why it goes up with the stylesheet rather than
+  // waiting for a menu. index.html is not ours to edit, so it is built here.
+  const ROTATE = '<div class="phone"><i></i></div><h2>ROTATE YOUR DEVICE</h2>' +
+    '<p>RIVER RACER RUNS IN LANDSCAPE</p>' +
+    '<div class="crest"><i class="star6"></i><i class="star6"></i><i class="star6"></i><i class="star6"></i></div>';
+  function mountRotate() {
+    if (document.getElementById('rr-rotate')) return;
+    if (!document.body) { document.addEventListener('DOMContentLoaded', mountRotate, { once: true }); return; }
+    const d = document.createElement('div');
+    d.id = 'rr-rotate';
+    d.innerHTML = ROTATE;
+    document.body.appendChild(d);
+  }
 
   // hexagram path shared by the minimap and every canvas card. Same geometry as the CSS clip-path.
   K.star6 = function (ctx, cx, cy, R, rot) {
@@ -21730,6 +22361,19 @@ window.CHICAGO = {
   const STAR = '<i class="star6"></i>';
   const STAR_CAPS = ['FORT DEARBORN', 'GREAT FIRE 1871', 'COLUMBIAN EXPO 1893', 'CENTURY OF PROGRESS 1933'];
 
+  // A finger, not a mouse. Asked live rather than cached at boot: the same browser window can be
+  // dragged onto a touchscreen, and a tablet in a keyboard case answers differently once docked.
+  // Everything it gates is an ADDITION for touch — nothing a keyboard could do goes away.
+  const coarse = () => !!(window.matchMedia && matchMedia('(hover:none) and (pointer:coarse)').matches);
+
+  // BKSP is how you left a picker, and a phone has no BKSP. One chip, in the corner, on every
+  // screen whose only way back was that key. CSS keeps it invisible to a mouse.
+  const BACK_CHIP = '<button id="rr-back" class="back-chip" type="button">&#9666; BACK</button>';
+  function bindBack(fn) {
+    const b = $('rr-back');
+    if (b) b.addEventListener('click', (e) => { e.preventDefault(); RR.Audio.uiMove(); fn(); });
+  }
+
   MENU.init = function (startRaceCb) {
     root = $('menu');
     onStartRace = startRaceCb;
@@ -21815,7 +22459,7 @@ window.CHICAGO = {
         ${rows.map((r, i) => `<div class="menu-item" data-i="${i}">${r}</div>`).join('')}
       </div>
       <div id="switches"><div id="snd-row" class="sound-row"></div>${puRowHTML()}</div>
-      <div class="menu-note">↑↓ SELECT · ENTER CONFIRM · <b>M</b> SOUND · <b>I</b> POWER-UPS<br>BUILT ON THE REAL CHICAGO RIVER</div>
+      <div class="menu-note"><span class="k-hint">↑↓ SELECT · ENTER CONFIRM · <b>M</b> SOUND · <b>I</b> POWER-UPS<br></span>BUILT ON THE REAL CHICAGO RIVER</div>
     `);
     bindClicks(acts);
     const row = $('snd-row');
@@ -21849,20 +22493,29 @@ window.CHICAGO = {
     const grid = HELP_KEYS.map((r) => `<b>${r[0]}</b><span>${r[1]}</span><b>${r[2]}</b><span>${r[3]}</span>`).join('');
     html(`
       <div id="select-title">HOW TO PLAY</div>
-      <div class="menu-note" style="font-size:13px;max-width:760px;line-height:1.5;margin-top:10px">
-        <div style="display:grid;grid-template-columns:max-content 1fr max-content 1fr;gap:.30em 1.1em;text-align:left">${grid}</div>
-        <div style="margin-top:.85em;text-wrap:balance"><b>GAMEPAD</b> — LEFT STICK steer · RT throttle ·
+      <div class="menu-note help-note">
+        <div class="t-hint b help-row"><b>ON A PHONE</b> — hold it in landscape. Your LEFT thumb steers:
+          put it down anywhere on the left of the screen and the stick comes to you.<br>
+          Your RIGHT thumb has one column, three bands. Hold <b>GO</b> to drive, and
+          <b style="color:#FFC857">SLIDE UP into BOOST WITHOUT LIFTING OFF</b> — that is the whole trick,
+          and it is why boost and throttle share a column. Slide down to <b>REV</b> to brake and back
+          her out of trouble. <b>FIRE</b>, <b>ASTERN</b> and <b>PAUSE</b> are inboard of it.</div>
+        <div class="t-hint b help-row"><b>ARCHITECTURE TOUR</b> — the ride has its own row along the
+          bottom: <b>ABOUT</b> for the building you are passing, <b>SEAT</b> to move around the boat,
+          and <b>TAKE THE WHEEL</b> — tap it five times and she is yours.</div>
+        <div class="k-hint help-grid">${grid}</div>
+        <div class="k-hint help-row"><b>GAMEPAD</b> — LEFT STICK steer · RT throttle ·
           LT brake · A throttle · X boost · B fire item · LB look astern</div>
-        <div style="margin-top:.5em;text-wrap:balance"><b>ARCHITECTURE TOUR</b> — <b>F</b>×5 take the wheel ·
+        <div class="k-hint help-row" style="margin-top:.5em"><b>ARCHITECTURE TOUR</b> — <b>F</b>×5 take the wheel ·
           <b>SPACE</b> about this building · <b>C</b> change seat · DRAG or RIGHT STICK to look around</div>
         <div style="margin-top:.9em;line-height:1.75">
-          <b>SHIFT</b> is boost. The meter is the outer ring of the dial. The two
+          <span class="k-hint"><b>SHIFT</b> is boost. </span>The boost meter is the ring on the dial. The two
           <span style="color:#EF3340">red</span> segments at the bottom are a reserve the engine
           will not burn, and above <span style="color:#FFC857">PRIME</span> boost is 15% stronger.<br>
           Drive into a gold <span style="color:#FFC857">CRATE</span> in the channel and the slot
-          spins you an item. <b>E</b> or <b>SPACE</b> fires it. What you can draw depends on your
-          position: out front you get <b>SHIELD</b> and things to drop behind you, at the back you
-          get <b>TORPEDO</b>, <b>GULL SWARM</b> and <b>SHOCKWAVE</b>. <b>I</b> turns items off.<br>
+          spins you an item.<span class="k-hint"> <b>E</b> or <b>SPACE</b> fires it.</span><span class="t-hint"> The <b>FIRE</b> pad fires it.</span> What you
+          can draw depends on your position: out front you get <b>SHIELD</b> and things to drop
+          behind you, at the back you get <b>TORPEDO</b>, <b>GULL SWARM</b> and <b>SHOCKWAVE</b>.<span class="k-hint"> <b>I</b> turns items off.</span><br>
           Thread the checkpoint buoys — <span style="color:#EF3340">red LEFT</span>,
           <span style="color:#3ED17E">green RIGHT</span>. Gold gates off the racing line pay boost.
           The nine bascule bridges raise and lower on their own all day, like the real ones do.
@@ -21896,8 +22549,9 @@ window.CHICAGO = {
       </div>`).join('');
     const label = cupMode ? 'THE CHICAGO CUP' : tourMode ? 'ARCHITECTURE TOUR' : timeTrial ? 'TIME TRIAL' : 'RACE';
     html(`
+      ${BACK_CHIP}
       <div id="select-title">PICK YOUR RIDE</div>
-      <div id="select-sub">${label} · ←→ SELECT · ENTER CONFIRM · BKSP BACK</div>
+      <div id="select-sub">${label}<span class="k-hint"> · ←→ SELECT · ENTER CONFIRM · BKSP BACK</span><span class="t-hint"> · TAP A HULL, TAP IT AGAIN TO TAKE IT</span></div>
       <div id="ride-panel">
         <div class="tag" id="ride-kind"></div>
         <h3 id="ride-name"></h3>
@@ -21917,6 +22571,7 @@ window.CHICAGO = {
     });
     drawVehicleCards();
     buildLivery();
+    bindBack(showTitle);
     paintSel();
   }
 
@@ -22093,8 +22748,9 @@ window.CHICAGO = {
     sel = Math.max(0, DIFFS.findIndex((d) => d.v === difficulty));
     const rows = DIFFS.map((d, i) => `<div class="menu-item" data-i="${i}">${d.name}</div>`).join('');
     html(`
+      ${BACK_CHIP}
       <div id="select-title">HOW TOUGH ARE THE RIVALS?</div>
-      <div id="select-sub">${cupMode ? 'FOUR ROUNDS AT THIS SETTING · ' : ''}↑↓ SELECT · ENTER RACE · BKSP BACK</div>
+      <div id="select-sub">${cupMode ? 'FOUR ROUNDS AT THIS SETTING' : ''}<span class="k-hint">${cupMode ? ' · ' : ''}↑↓ SELECT · ENTER RACE · BKSP BACK</span><span class="t-hint">${cupMode ? ' · ' : ''}TAP A LEVEL TO RACE</span></div>
       <div class="menu-list">${rows}</div>
       <div class="menu-note" id="diff-desc" style="max-width:520px;">${DIFFS[sel].desc}</div>
     `);
@@ -22104,6 +22760,7 @@ window.CHICAGO = {
       if (cupMode && cupPending && RR.Race.cupBegin) { RR.Race.cupBegin(vehicleIdx, difficulty, 6); cupPending = false; }
       launch();
     }));
+    bindBack(() => { if (cupMode) showVehicles({ cup: true }); else showCourses(); });
     paintSel();
   }
 
@@ -22122,12 +22779,14 @@ window.CHICAGO = {
       </div>`;
     }).join('');
     html(`
+      ${BACK_CHIP}
       <div id="select-title">PICK YOUR COURSE</div>
-      <div id="select-sub">←→ SELECT · ENTER RACE · BKSP BACK</div>
+      <div id="select-sub"><span class="k-hint">←→ SELECT · ENTER RACE · BKSP BACK</span><span class="t-hint">TAP A COURSE, TAP IT AGAIN TO RACE IT</span></div>
       <div id="cards">${cards}</div>
     `);
     bindCards(RR.Race.COURSES.length, (i) => { courseIdx = i; (timeTrial || tourMode) ? launch() : showDifficulty(); });
     drawCourseCards();
+    bindBack(() => showVehicles({ tt: timeTrial, tour: tourMode, cup: cupMode }));
     paintSel();
   }
 
@@ -22223,7 +22882,7 @@ window.CHICAGO = {
     const board = cup && RR.Race.cupBoard ? RR.Race.cupBoard() : null;
     const fresh = board ? board.roundsDone - 1 : -1;
     const round = board && board.rounds[fresh] ? board.rounds[fresh] : null;
-    const head = `<div class="result-head${cup ? ' cup' : ''}"><span>POS</span><span>PILOT</span><span>HULL</span><span>TIME</span><span>GAP</span>${cup ? '<span>PTS</span>' : ''}</div>`;
+    const head = `<div class="result-head${cup ? ' cup' : ''}"><span>POS</span><span>PILOT</span><span class="h">HULL</span><span>TIME</span><span>GAP</span>${cup ? '<span>PTS</span>' : ''}</div>`;
     const title = board ? 'ROUND ' + board.roundsDone + ' RESULT'
       : (results[0] && results[0].boat && results[0].boat.isPlayer ? 'RIVER CHAMP' : 'RACE COMPLETE');
     const sub = board
@@ -22392,7 +23051,7 @@ window.CHICAGO = {
         ${board.done ? cupChampionBand(board) : cupBracket(board, fresh)}
         ${cupSeasonTable(board)}
         <div class="cup-cta">${cta}</div>
-        <div class="cup-note">↑↓ SELECT · ENTER CONFIRM${board.done ? '' : ' · POINTS ' + board.points.join('/')}</div>
+        <div class="cup-note"><span class="k-hint">↑↓ SELECT · ENTER CONFIRM${board.done ? '' : ' · '}</span>${board.done ? '' : 'POINTS ' + board.points.join('/')}</div>
       </div>
     `);
     const newCup = () => { if (RR.Race.cupAbandon) RR.Race.cupAbandon(); cupMode = true; cupPending = true; showVehicles({ cup: true }); };
@@ -22417,7 +23076,7 @@ window.CHICAGO = {
     html(`
       <div id="select-title">RACE COMPLETE</div>
       <div id="select-sub">MULTIPLAYER · ${String(courseId || '').toUpperCase()}</div>
-      <div id="results-list"><div class="result-head"><span>POS</span><span>PILOT</span><span>HULL</span><span>TIME</span><span>GAP</span></div>${rows}</div>
+      <div id="results-list"><div class="result-head"><span>POS</span><span>PILOT</span><span class="h">HULL</span><span>TIME</span><span>GAP</span></div>${rows}</div>
       <div class="menu-list" style="margin-top:1.0em;"><div class="menu-item" data-i="0">TITLE SCREEN</div></div>
     `);
     bindClicks([() => { if (RR.Net && RR.Net.leave) RR.Net.leave(); showTitle(); }]);
@@ -22442,7 +23101,7 @@ window.CHICAGO = {
         <label>MUSIC<input type="range" id="vol-music" min="0" max="100" value="${Math.round(volMusic * 100)}"></label>
         <label>SFX&nbsp;&nbsp;&nbsp;<input type="range" id="vol-sfx" min="0" max="100" value="${Math.round(volSfx * 100)}"></label>
       </div>
-      <div class="menu-note" style="margin-top:1.1em;max-width:790px;line-height:1.75">
+      <div class="menu-note k-hint" style="margin-top:1.1em;max-width:790px;line-height:1.75">
         <b>W/↑</b> throttle · <b>A·D/←·→</b> steer · <b>S/↓</b> brake &amp; reverse · <b>SHIFT</b> boost<br>
         <b style="color:#FFC857">E</b> or <b style="color:#FFC857">SPACE</b> fire the item you are holding ·
         <b style="color:#FFC857">I</b> power-ups on / off<br>
@@ -22585,12 +23244,23 @@ window.CHICAGO = {
       el.addEventListener('mouseenter', () => { sel = +el.dataset.i; paintSel(); });
     });
   }
+  // A card is two things at once: the cursor that drives the showroom (the live 3D hull, the
+  // radar, the spec sheet, the course map) and the confirm button. A mouse separates them with
+  // hover — a finger has nothing to separate them with, so on a touchscreen the first tap is the
+  // look and the second is the choice. Without this a phone player can never see a boat's stats:
+  // the tap that would show them also leaves the screen.
   function bindCards(n, confirm) {
     actions = [];
     for (let i = 0; i < n; i++) actions.push(() => confirm(i));
     root.querySelectorAll('.card').forEach((el) => {
-      el.addEventListener('click', () => { sel = +el.dataset.i; RR.Audio.uiSelect(); confirm(sel); });
-      el.addEventListener('mouseenter', () => { sel = +el.dataset.i; paintSel(); });
+      el.addEventListener('click', () => {
+        const i = +el.dataset.i;
+        if (coarse() && i !== sel) { sel = i; RR.Audio.uiMove(); paintSel(); return; }
+        sel = i; RR.Audio.uiSelect(); confirm(sel);
+      });
+      // a touchscreen fires this ahead of the click it is about to send, which would move the
+      // cursor onto the card before the tap could tell that it had moved
+      el.addEventListener('mouseenter', () => { if (coarse()) return; sel = +el.dataset.i; paintSel(); });
     });
   }
   function paintSel() {
@@ -22640,6 +23310,491 @@ window.CHICAGO = {
   });
 
   RR.Menus = MENU;
+})();
+
+</script>
+<script>
+/* ===== js/ui/touch.js ===== */
+/* River Racer — the on-screen control layer (touch devices only).
+
+   A phone has no keyboard. What this replaces — "left half of the screen steers by finger x, right
+   half is throttle" — could not boost, fire an item, brake, reverse, look astern or pause, which is
+   to say it could not play the game. This is the whole mobile scheme, and it is built around one
+   ergonomic fact: THROTTLE AND BOOST ARE BOTH HOLDS. So they share a single column under the right
+   thumb — slide up out of GO into BOOST and the throttle never lifts.
+
+   Landscape layout (the racing orientation):
+     left   — steer zone, invisible and thumb-sized. The stick ANCHORS WHERE THE THUMB LANDS
+              instead of demanding the thumb find it, and the anchor slides at full lock so the
+              throw stays symmetrical however far the drag ran.
+     right  — throttle column: BOOST / GO / REV, top to bottom. One thumb, no lift, and the gold
+              hairline under BOOST is the tank, so "why is nothing happening" has an answer.
+     inboard — FIRE (big, and gold the moment you are holding something), then ASTERN, then
+              PAUSE, which dispatches ESC so main.js's one pause path stays the only pause path.
+
+   Every finger is tracked by Touch.identifier: steer, throttle, boost and fire are all live at
+   once, and a second finger landing never steals the first one's control. The widgets own the hit
+   zones because the hit zones ARE the widgets; input.js owns what they mean, and this file only
+   ever writes the fields of RR.Input.touch.
+
+   Touch devices only. A laptop with a digitizer still has a mouse as its PRIMARY pointer and must
+   never be shown thumb controls — RR.Input.hasTouch is that test, not "does a digitizer exist". */
+(function () {
+  window.RR = window.RR || {};
+  const TC = { enabled: false };
+
+  // ---------------------------------------------------------------------------- style
+  // No backdrop-filter anywhere: a blurred layer over a full-screen WebGL canvas is a second
+  // composite of the whole frame every frame, which is precisely the budget a phone does not have.
+  const CSS = `
+#rr-touch{position:fixed;inset:0;z-index:8;display:none;pointer-events:none;
+  font:700 clamp(9px,min(2.9vh,1.75vw),15px)/1 var(--f-ui,"Arial Narrow","Helvetica Neue",Helvetica,Arial,sans-serif);
+  color:var(--text,#EAF6FF);-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+  --sl:0px;--sr:0px;--sb:0px;--stp:0px}
+@supports (padding:env(safe-area-inset-left)){
+  #rr-touch{--sl:env(safe-area-inset-left,0px);--sr:env(safe-area-inset-right,0px);
+    --sb:env(safe-area-inset-bottom,0px);--stp:env(safe-area-inset-top,0px)}}
+#rr-touch.on{display:block}
+/* touch-action:none on the surfaces only — the menus are ordinary tappable DOM and must stay so */
+#rr-touch .rt-hit{position:absolute;pointer-events:auto;touch-action:none;
+  -webkit-tap-highlight-color:transparent}
+/* the river itself: no double-tap zoom, no long-press selection, no rubber-band scroll mid-race */
+#gl{touch-action:none}
+html,body{overscroll-behavior:none}
+
+/* The plate has to read against a bright riverbank, not just against water. At .50/.62 the resting
+   captions measured barely legible over the pale seawall and the crowd — a first-thirty-seconds
+   problem, since the PRESSED states are unmistakable. Nudged rather than solved with a slab: the
+   brief here is still "do not obscure the river", and these are small panels at the two edges. */
+#rr-touch .rt-panel{border-radius:3px;background:rgba(4,18,27,.60);
+  box-shadow:inset 0 0 0 2px rgba(126,200,227,.38),0 .3em 1.2em rgba(0,0,0,.45)}
+#rr-touch .rt-cap{font-size:.62em;letter-spacing:.26em;text-indent:.26em;color:rgba(234,246,255,.82);
+  text-shadow:0 1px 3px rgba(0,0,0,.95),0 0 .5em rgba(0,0,0,.7)}
+
+/* ------------------------------------------------------------------------ steering */
+#rt-steer{left:var(--sl);bottom:var(--sb);width:min(46%,30em);height:min(62%,21em)}
+/* a zero-size anchor: JS moves it by transform alone, so a drag never touches layout */
+#rt-stick{position:absolute;left:0;top:0;width:0;height:0;opacity:.46;transition:opacity 160ms linear}
+#rt-steer.act #rt-stick{opacity:.95}
+#rt-track{position:absolute;left:-7.4em;top:-.3em;width:14.8em;height:.6em;border-radius:2px;
+  background:rgba(4,18,27,.55);box-shadow:inset 0 0 0 2px rgba(126,200,227,.30)}
+#rt-track i{position:absolute;left:50%;top:-.55em;width:2px;height:1.7em;margin-left:-1px;
+  background:rgba(126,200,227,.55)}
+#rt-knob{position:absolute;left:-2.1em;top:-2.1em;width:4.2em;height:4.2em;border-radius:3px;
+  display:flex;align-items:center;justify-content:center;gap:.5em;
+  background:rgba(6,22,34,.62);box-shadow:inset 0 0 0 2px var(--chi-blue,#7EC8E3),0 .2em .9em rgba(0,0,0,.5)}
+#rt-knob b{font-size:.8em;line-height:1;color:var(--chi-blue,#7EC8E3)}
+#rt-lab{position:absolute;left:-4em;top:2.9em;width:8em;text-align:center}
+
+/* ------------------------------------------------------------ throttle / boost / rev */
+#rt-thr{right:calc(var(--sr) + .9em);bottom:calc(var(--sb) + .9em);width:9.2em;height:19em;
+  overflow:hidden;display:flex;flex-direction:column;opacity:.92;transition:opacity 160ms linear}
+#rt-thr.g,#rt-thr.r{opacity:1}
+.rt-band{position:relative;display:flex;align-items:center;justify-content:center;
+  box-shadow:inset 0 -2px 0 rgba(126,200,227,.16)}
+#rt-boost{height:30%}
+#rt-go{height:41%}
+#rt-rev{height:29%;box-shadow:none}
+/* the tank, as a hairline: BOOST is the one control that can be pressed and do nothing */
+#rt-tank{position:absolute;left:0;bottom:0;width:100%;height:3px;transform-origin:0 50%;
+  background:var(--gold,#FFC857);opacity:.6}
+#rt-thr.dry #rt-tank{background:var(--chi-red,#EF3340)}
+#rt-thr.dry #rt-boost .rt-cap{color:rgba(234,246,255,.30)}
+#rt-thr.b #rt-boost{background:rgba(255,200,87,.34);box-shadow:inset 0 0 0 2px var(--gold,#FFC857)}
+#rt-thr.g #rt-go{background:rgba(0,105,62,.60);box-shadow:inset 0 0 0 2px #fff}
+#rt-thr.r #rt-rev{background:rgba(239,51,64,.55);box-shadow:inset 0 0 0 2px #fff}
+#rt-thr.b #rt-boost .rt-cap,#rt-thr.g #rt-go .rt-cap,#rt-thr.r #rt-rev .rt-cap{color:#fff}
+
+/* --------------------------------------------------------------- fire / astern / pause */
+#rt-fire{right:calc(var(--sr) + 11.1em);bottom:calc(var(--sb) + .9em);width:7.6em;height:7.6em;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.55em}
+/* the hexagram is uikit's, but this one carries its own clip-path: the FIRE icon is the one place
+   in the game where a missing stylesheet would leave a plain grey square on the control surface */
+#rt-fire .star6{width:2.6em;height:2.6em;background:rgba(159,195,214,.45);
+  clip-path:polygon(50% 0%,64.43% 25%,93.30% 25%,78.87% 50%,93.30% 75%,64.43% 75%,
+                    50% 100%,35.57% 75%,6.70% 75%,21.13% 50%,6.70% 25%,35.57% 25%)}
+#rt-fire.armed{box-shadow:inset 0 0 0 2px var(--gold,#FFC857),0 0 1.2em -.25em rgba(255,200,87,.75),
+  0 .3em 1.2em rgba(0,0,0,.45)}
+#rt-fire.armed .star6{background:var(--gold,#FFC857)}
+#rt-fire.armed .rt-cap{color:var(--gold,#FFC857)}
+#rt-fire.act{background:rgba(255,200,87,.45)}
+#rt-fire.act .rt-cap{color:#fff}
+/* min-height alongside the em height, on both of these: the stack is sized off the SHORT axis so it
+   scales with the screen, and on an SE that put PAUSE at 37px — under the 44px floor everything
+   else here holds to. The floor wins where the em is small and costs nothing where it is not. */
+#rt-astern{right:calc(var(--sr) + 11.1em);bottom:calc(var(--sb) + 9.2em);width:7.6em;height:4em;
+  min-height:44px;display:flex;align-items:center;justify-content:center}
+#rt-astern.act{background:rgba(126,200,227,.34);box-shadow:inset 0 0 0 2px var(--chi-blue,#7EC8E3),
+  0 .3em 1.2em rgba(0,0,0,.45)}
+#rt-astern.act .rt-cap{color:#fff}
+/* PAUSE rides the right-hand stack rather than the top corner: the top of a phone screen is where
+   the HUD lives on every layout it will ever have, and a control that lands on top of the lap
+   blade at one font size lands on top of the timer at the next. */
+#rt-pause{right:calc(var(--sr) + 11.1em);bottom:calc(var(--sb) + 14em);width:7.6em;height:4em;
+  min-height:44px;display:flex;align-items:center;justify-content:center;gap:.62em;opacity:.82}
+#rt-pause i{width:.46em;height:1.5em;border-radius:1px;background:var(--chi-blue,#7EC8E3)}
+#rt-pause.act{opacity:1;background:rgba(126,200,227,.30)}
+
+/* ------------------------------------------------------------------ the architecture tour */
+/* The tour is one of six things on the title screen, and on a phone it was a dead end: you board
+   it, get the full driving stack — STEER, GO, BOOST, FIRE — and none of it does anything, because
+   taking the wheel is F FIVE TIMES and a phone has no F. The docent is SPACE and the seat is C,
+   which it also has none of. So the ride gets its own rail, and while the skipper has the wheel the
+   controls that would lie about being connected stand down.
+   The ritual is kept intact: five taps, with the count showing. It is the tour's one secret and
+   collapsing it to a single button on touch would be a different game on a different device. */
+#rr-touch.ride #rt-steer,#rr-touch.ride #rt-thr,#rr-touch.ride #rt-fire{display:none}
+/* ABOVE the item socket, not beside it: the bottom-centre strip is the one piece of the bottom edge
+   no thumb covers, which is exactly why the item slot is already there. Measured at .9em the rail
+   overlapped the socket 38%. 9.2em is ASTERN's baseline — the rail and the right-hand stack then
+   share one horizontal line, which reads as a deliberate row rather than a near miss. */
+#rt-tour{position:absolute;left:50%;bottom:calc(var(--sb) + 9.2em);transform:translateX(-50%);
+  display:none;align-items:flex-end;gap:.7em;pointer-events:none}
+#rr-touch.tour #rt-tour{display:flex}
+.rt-tb{position:relative;pointer-events:auto;touch-action:none;-webkit-tap-highlight-color:transparent;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.45em;
+  min-height:44px;padding:.75em 1.05em}
+.rt-tb.act{background:rgba(126,200,227,.30);box-shadow:inset 0 0 0 2px var(--chi-blue,#7EC8E3),
+  0 .3em 1.2em rgba(0,0,0,.45)}
+.rt-tb.act .rt-cap{color:#fff}
+/* the five pips ARE input.js's tap counter, read back rather than counted again here */
+#rt-pips{display:flex;gap:.34em}
+#rt-pips i{width:.52em;height:.52em;border-radius:50%;background:rgba(126,200,227,.28);
+  box-shadow:inset 0 0 0 1px rgba(126,200,227,.5)}
+#rt-pips i.lit{background:var(--gold,#FFC857);box-shadow:0 0 .5em rgba(255,200,87,.8)}
+#rr-touch.driving #rt-wheel .rt-cap{color:var(--gold,#FFC857)}
+`;
+
+  const HTML =
+    '<div id="rt-steer" class="rt-hit">' +
+      '<div id="rt-stick">' +
+        '<div id="rt-track"><i></i></div>' +
+        '<div id="rt-knob"><b>◀</b><b>▶</b></div>' +
+        '<div id="rt-lab" class="rt-cap">STEER</div>' +
+      '</div>' +
+    '</div>' +
+    '<div id="rt-thr" class="rt-hit rt-panel">' +
+      '<div class="rt-band" id="rt-boost"><span class="rt-cap">BOOST</span><u id="rt-tank"></u></div>' +
+      '<div class="rt-band" id="rt-go"><span class="rt-cap">GO</span></div>' +
+      '<div class="rt-band" id="rt-rev"><span class="rt-cap">REV</span></div>' +
+    '</div>' +
+    '<div id="rt-fire" class="rt-hit rt-panel"><i class="star6"></i><span class="rt-cap">FIRE</span></div>' +
+    '<div id="rt-astern" class="rt-hit rt-panel"><span class="rt-cap">ASTERN</span></div>' +
+    '<div id="rt-pause" class="rt-hit rt-panel"><i></i><i></i></div>' +
+    '<div id="rt-tour">' +
+      '<div id="rt-about" class="rt-tb rt-panel"><span class="rt-cap">ABOUT</span></div>' +
+      '<div id="rt-wheel" class="rt-tb rt-panel">' +
+        '<span class="rt-cap" id="rt-wheel-cap">TAKE THE WHEEL</span>' +
+        '<span id="rt-pips"><i></i><i></i><i></i><i></i><i></i></span>' +
+      '</div>' +
+      '<div id="rt-seat" class="rt-tb rt-panel"><span class="rt-cap">SEAT</span></div>' +
+    '</div>';
+
+  // band boundaries, as fractions of the column — these ARE the CSS heights above
+  const F_BOOST = 0.30, F_REV = 0.71;
+
+  let root = null, els = null, IN = null, T = null;
+  let shown = false, emPx = 12, steerR = 72, restX = 0, restY = 0;
+  const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+  const findTouch = (list, id) => {
+    for (let i = 0; i < list.length; i++) if (list[i].identifier === id) return list[i];
+    return null;
+  };
+  // touch-action:none is what MAKES these events cancelable, but the compositor's touch-action map
+  // is a frame behind the layout that created it — the first touch after the overlay appears (and,
+  // measured, every touch on a tablet where the phone re-layout never fires) arrives with
+  // cancelable=false. preventDefault on one of those cancels nothing and logs a console error
+  // instead — and a console error is this project's failure condition. So ask before cancelling.
+  const stop = (e) => { if (e.cancelable) e.preventDefault(); };
+
+  // ---------------------------------------------------------------------- steering
+  let steerId = null, steerOx = 0, steerOy = 0, zoneL = 0, zoneT = 0;
+
+  function placeStick(x, y) {
+    els.stick.style.transform = 'translate(' + (x - zoneL).toFixed(1) + 'px,' + (y - zoneT).toFixed(1) + 'px)';
+  }
+  function steerRest() {
+    const r = els.steer.getBoundingClientRect();
+    zoneL = r.left; zoneT = r.top;
+    restX = r.left + Math.min(r.width * 0.5, emPx * 9.2);
+    restY = r.top + Math.max(r.height * 0.5, r.height - emPx * 5.6);
+    placeStick(restX, restY);
+    els.knob.style.transform = 'none';
+  }
+  // Dead zone, then a mild expo: the first two millimetres of thumb travel are noise, and the
+  // hundredth of steer either side of centre is where a boat at 80 mph is actually driven.
+  function applySteer(x) {
+    let dx = x - steerOx;
+    if (dx > steerR) { steerOx = x - steerR; dx = steerR; }
+    else if (dx < -steerR) { steerOx = x + steerR; dx = -steerR; }
+    const dead = steerR * 0.10, span = steerR - dead;
+    let v = 0;
+    if (dx > dead) v = (dx - dead) / span;
+    else if (dx < -dead) v = (dx + dead) / span;
+    T.steer = v < 0 ? -Math.pow(-v, 1.3) : Math.pow(v, 1.3);
+    els.knob.style.transform = 'translateX(' + dx.toFixed(1) + 'px)';
+    placeStick(steerOx, steerOy);
+  }
+  function steerStart(e) {
+    if (steerId === null && e.changedTouches.length) {
+      const t = e.changedTouches[0];
+      const r = els.steer.getBoundingClientRect();
+      zoneL = r.left; zoneT = r.top;
+      steerId = t.identifier; steerOx = t.clientX; steerOy = t.clientY;
+      els.steer.classList.add('act');
+      applySteer(t.clientX);
+    }
+    stop(e);
+  }
+  function steerMove(e) {
+    if (steerId !== null) {
+      const t = findTouch(e.changedTouches, steerId);
+      if (t) { steerOy = t.clientY; applySteer(t.clientX); }
+    }
+    stop(e);
+  }
+  function steerEnd(e) {
+    if (steerId !== null && findTouch(e.changedTouches, steerId)) releaseSteer();
+    stop(e);
+  }
+  function releaseSteer() {
+    steerId = null; T.steer = 0;
+    els.steer.classList.remove('act');
+    steerRest();
+  }
+
+  // ------------------------------------------------------------- throttle / boost / rev
+  // The column takes MORE THAN ONE FINGER, deliberately. Sliding the thumb up out of GO into BOOST
+  // is the intended move, but half the people who pick this up will instead hold GO and stab BOOST
+  // with an index finger — and a scheme where that does nothing reads as a broken boost button. So
+  // the bands are a union over every finger in the column, and throttle beats brake.
+  const thrPts = new Map();
+  let thrTop = 0, thrH = 1;
+
+  function applyThr() {
+    let boost = false, go = false, rev = false;
+    thrPts.forEach((y) => {
+      const f = clamp((y - thrTop) / thrH, 0, 1);
+      if (f < F_BOOST) { boost = true; go = true; } else if (f < F_REV) go = true; else rev = true;
+    });
+    T.throttle = go ? 1 : 0;
+    T.brake = !go && rev ? 1 : 0;
+    T.boost = boost;
+    els.thr.classList.toggle('b', boost);
+    els.thr.classList.toggle('g', go);
+    els.thr.classList.toggle('r', !go && rev);
+  }
+  function thrStart(e) {
+    if (!thrPts.size) {
+      const r = els.thr.getBoundingClientRect();
+      thrTop = r.top; thrH = r.height || 1;
+    }
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const t = e.changedTouches[i];
+      thrPts.set(t.identifier, t.clientY);
+    }
+    applyThr();
+    stop(e);
+  }
+  function thrMove(e) {
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const t = e.changedTouches[i];
+      if (thrPts.has(t.identifier)) thrPts.set(t.identifier, t.clientY);
+    }
+    applyThr();
+    stop(e);
+  }
+  function thrEnd(e) {
+    for (let i = 0; i < e.changedTouches.length; i++) thrPts.delete(e.changedTouches[i].identifier);
+    applyThr();
+    stop(e);
+  }
+  function releaseThr() {
+    thrPts.clear();
+    applyThr();
+  }
+
+  // ---------------------------------------------------------------------- plain buttons
+  function button(el, down, up) {
+    let id = null;
+    const release = () => {
+      if (id === null) return;
+      id = null; el.classList.remove('act');
+      if (up) up();
+    };
+    el.addEventListener('touchstart', (e) => {
+      if (id === null && e.changedTouches.length) {
+        id = e.changedTouches[0].identifier;
+        el.classList.add('act');
+        if (down) down();
+      }
+      stop(e);
+    }, { passive: false });
+    const end = (e) => {
+      if (id !== null && findTouch(e.changedTouches, id)) release();
+      stop(e);
+    };
+    el.addEventListener('touchend', end, { passive: false });
+    el.addEventListener('touchcancel', end, { passive: false });
+    el.addEventListener('touchmove', stop, { passive: false });
+    return release;
+  }
+
+  // Synthesise the key rather than call the handler: main.js owns pausing, the tour handover and the
+  // docent, input.js owns the five-tap chain, and every one of them is already wired to a window
+  // keydown. A second way in is a second way for the two of them to get out of step — and the
+  // five-tap chain in particular has timing state that only its own listener may touch.
+  // keyUP as well as down, always: input.js latches keys[code] on the way down and clears it on the
+  // way up, and its F chord ignores a tap arriving on a key it still believes is held. Without the
+  // release, exactly one tap of TAKE THE WHEEL would ever register.
+  function key(code) {
+    const o = { code, key: code === 'Space' ? ' ' : code, bubbles: true, cancelable: true };
+    window.dispatchEvent(new KeyboardEvent('keydown', o));
+    window.dispatchEvent(new KeyboardEvent('keyup', o));
+  }
+  const pause = () => key('Escape');
+
+  let releaseFire = null, releaseAstern = null, releasePause = null;
+  const releaseTour = [];
+  function releaseAll() {
+    if (!els) return;
+    releaseSteer(); releaseThr();
+    if (releaseFire) releaseFire();
+    if (releaseAstern) releaseAstern();
+    if (releasePause) releasePause();
+    for (const r of releaseTour) r();
+    T.lookBack = false; T.item = false;
+  }
+
+  // --------------------------------------------------------------------------- visibility
+  // The controls belong to the race and to nothing else: the title screen, the showroom, the pause
+  // menu and the results are ordinary tappable DOM, and a throttle column over them is a trap.
+  function wanted() {
+    const hud = document.getElementById('hud');
+    if (!hud || !hud.classList.contains('on')) return false;
+    return !RR.Menus || !RR.Menus.screen || RR.Menus.screen() === 'none';
+  }
+  function setVisible(on) {
+    if (on === shown) return;
+    shown = on;
+    releaseAll();
+    T.on = on;
+    root.classList.toggle('on', on);
+    if (on) layout();
+  }
+  function layout() {
+    emPx = parseFloat(getComputedStyle(root).fontSize) || 12;
+    steerR = emPx * 6.4;
+    steerRest();
+  }
+
+  // Ten times a second, not per frame — this is two class toggles and one transform. It hangs off
+  // the render loop AND a timer: a timer alone starves on a busy main thread, and the loop alone
+  // would leave the controls stale in the seconds before the engine starts.
+  let pollT = 0, lastTank = -1, lastPips = -1;
+  function tick() {
+    const now = performance.now();
+    if (!els || now - pollT < 100) return;
+    pollT = now;
+    setVisible(wanted());
+    if (!shown) return;
+
+    // the ride. `ride` is the state where the driving controls would LIE — aboard, skipper at the
+    // wheel — so that is exactly the state where they stand down.
+    const tour = !!(RR.Tour && RR.Tour.active());
+    const driving = tour && RR.Tour.driving();
+    root.classList.toggle('tour', tour);
+    root.classList.toggle('ride', tour && !driving);
+    root.classList.toggle('driving', driving);
+    if (tour) {
+      if (els.wheelCap.textContent !== (driving ? 'HAND BACK' : 'TAKE THE WHEEL')) {
+        els.wheelCap.textContent = driving ? 'HAND BACK' : 'TAKE THE WHEEL';
+      }
+      const n = IN.fTaps | 0;
+      if (n !== lastPips) {
+        lastPips = n;
+        for (let i = 0; i < els.pips.length; i++) els.pips[i].classList.toggle('lit', i < n);
+      }
+    }
+
+    const held = RR.Powerups && RR.Powerups.heldId ? RR.Powerups.heldId() : null;
+    els.fire.classList.toggle('armed', !!held);
+    const S = RR.Race && RR.Race.state ? RR.Race.state() : null;
+    const b = S && S.player;
+    if (b) {
+      const e = clamp(b.boostEnergy == null ? 1 : b.boostEnergy, 0, 1);
+      if (Math.abs(e - lastTank) > 0.004) { lastTank = e; els.tank.style.transform = 'scaleX(' + e.toFixed(3) + ')'; }
+      // physics.js: 0.15 to light it, 0.02 to keep it lit once it is already burning
+      els.thr.classList.toggle('dry', e <= ((b.boostHeat || 0) > 0.3 ? 0.02 : 0.15));
+    }
+  }
+
+  // ---------------------------------------------------------------------------- init
+  TC.init = function () {
+    if (TC._on) return;
+    IN = RR.Input;
+    if (!IN || !IN.touch || !IN.hasTouch) return;      // desktop mouse users get nothing at all
+    TC._on = true; TC.enabled = true;
+    T = IN.touch;
+
+    const st = document.createElement('style');
+    st.id = 'rr-touch-css';
+    st.textContent = CSS;
+    (document.head || document.documentElement).appendChild(st);
+
+    root = document.createElement('div');
+    root.id = 'rr-touch';
+    root.innerHTML = HTML;
+    document.body.appendChild(root);
+    TC.el = root;
+
+    const $ = (id) => root.querySelector('#' + id);
+    els = {
+      steer: $('rt-steer'), stick: $('rt-stick'), knob: $('rt-knob'),
+      thr: $('rt-thr'), tank: $('rt-tank'),
+      fire: $('rt-fire'), astern: $('rt-astern'), pause: $('rt-pause'),
+      wheel: $('rt-wheel'), wheelCap: $('rt-wheel-cap'), about: $('rt-about'), seat: $('rt-seat'),
+      pips: root.querySelectorAll('#rt-pips i'),
+    };
+
+    els.steer.addEventListener('touchstart', steerStart, { passive: false });
+    els.steer.addEventListener('touchmove', steerMove, { passive: false });
+    els.steer.addEventListener('touchend', steerEnd, { passive: false });
+    els.steer.addEventListener('touchcancel', steerEnd, { passive: false });
+    els.thr.addEventListener('touchstart', thrStart, { passive: false });
+    els.thr.addEventListener('touchmove', thrMove, { passive: false });
+    els.thr.addEventListener('touchend', thrEnd, { passive: false });
+    els.thr.addEventListener('touchcancel', thrEnd, { passive: false });
+
+    releaseFire = button(els.fire, () => { T.item = true; if (IN.touchFire) IN.touchFire(); },
+                                   () => { T.item = false; });
+    releaseAstern = button(els.astern, () => { T.lookBack = true; }, () => { T.lookBack = false; });
+    releasePause = button(els.pause, pause, null);
+    // the ride's three. Every one of them is a key the device does not have, dispatched as the key.
+    releaseTour.push(button(els.wheel, () => key('KeyF'), null));
+    releaseTour.push(button(els.about, () => key('Space'), null));
+    releaseTour.push(button(els.seat, () => key('KeyC'), null));
+
+    // A phone that locks, a call that lands, an orientation change mid-corner: every one of them
+    // can swallow the touchend, and a latched throttle with nobody holding it drives into a wall.
+    const drop = () => releaseAll();
+    window.addEventListener('blur', drop);
+    window.addEventListener('visibilitychange', drop);
+    document.addEventListener('visibilitychange', drop);
+    window.addEventListener('resize', () => { if (shown) layout(); });
+    window.addEventListener('orientationchange', () => { releaseAll(); setTimeout(() => { if (shown) layout(); }, 260); });
+
+    layout();
+    tick();
+    if (RR.Engine && RR.Engine.onUpdate) RR.Engine.onUpdate(tick);
+    setInterval(tick, 250);
+  };
+
+  TC.visible = () => shown;
+  RR.Touch = TC;
+
+  if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', TC.init);
+  else TC.init();
 })();
 
 </script>
@@ -23019,7 +24174,8 @@ window.CHICAGO = {
   #net-ui .row{display:flex;gap:10px}
   #net-ui .row>*{flex:1}
   #net-ui button{margin-top:16px;width:100%;background:var(--sign-green);border:0;box-shadow:inset 0 0 0 2px #fff;color:#fff;font-weight:700;letter-spacing:.2em;padding:12px;border-radius:2px;font-size:15px;cursor:pointer;font-family:inherit}
-  #net-ui button:hover{filter:brightness(1.12)} #net-ui button:disabled{opacity:.5;cursor:default;filter:none}
+  @media (hover:hover){#net-ui button:hover{filter:brightness(1.12)}}
+  #net-ui button:disabled{opacity:.5;cursor:default;filter:none}
   #net-ui button.ghost{background:transparent;box-shadow:inset 0 0 0 2px var(--rule-soft);color:var(--text-dim);font-weight:600}
   #net-ui .seat{display:flex;align-items:center;gap:10px;padding:9px 12px;margin:6px 0;background:var(--panel);border-radius:2px;border:0;box-shadow:inset 0 0 0 2px var(--rule-soft)}
   #net-ui .seat .dot{width:9px;height:9px;border-radius:50%;background:#3ED17E;flex:0 0 auto}
@@ -23037,7 +24193,34 @@ window.CHICAGO = {
   #net-ui ol li .pl{font:400 1.35em/1 var(--f-display);color:var(--gold);width:26px}
   #net-ui ol li.me{box-shadow:inset .28em 0 0 var(--gold)}
   #net-ui ol li .tm{margin-left:auto;opacity:.85;font-family:var(--f-num);font-variant-numeric:tabular-nums}
-  #net-play-btn{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:40;background:var(--sign-green);border:0;box-shadow:inset 0 0 0 2px #fff;color:#fff;font-weight:700;letter-spacing:.22em;padding:11px 22px;border-radius:2px;font-size:14px;cursor:pointer;font-family:var(--f-ui);display:none}
+  #net-play-btn{position:fixed;left:50%;bottom:calc(22px + var(--sab));transform:translateX(-50%);z-index:40;background:var(--sign-green);border:0;box-shadow:inset 0 0 0 2px #fff;color:#fff;font-weight:700;letter-spacing:.22em;padding:11px 22px;border-radius:2px;font-size:14px;cursor:pointer;font-family:var(--f-ui);display:none}
+
+  /* The lobby is a FORM, and a landscape phone gives a form 390px of height. It scrolls inside its
+     own plate rather than running off the top of the screen — where the JOIN button lives — and it
+     keeps clear of the notch and the home indicator. */
+  @media (max-height:560px){
+    #net-ui{padding:calc(4px + var(--sat)) calc(4px + var(--sar)) calc(4px + var(--sab)) calc(4px + var(--sal))}
+    #net-ui .np{max-height:100%;overflow-y:auto;overscroll-behavior:contain;padding:12px 16px;min-width:0;width:min(94vw,420px)}
+    #net-ui h2{font-size:1.3em} #net-ui .sub{font-size:11px;margin-bottom:8px}
+    #net-ui label{margin:8px 0 3px} #net-ui .code{font-size:20px}
+    #net-ui .seat{padding:7px 10px;margin:4px 0} #net-ui .mode{margin:8px 0 2px;padding:7px 10px}
+    #net-ui ol li{padding:6px 10px;margin:4px 0}
+    #net-ui button{margin-top:10px}
+    #net-play-btn{bottom:calc(6px + var(--sab));padding:10px 18px;font-size:13px}
+  }
+  /* an iPhone SE in landscape is 375px tall — the Leave button was the 3px that did not fit */
+  @media (max-height:400px){
+    #net-ui .np{padding:8px 12px}
+    #net-ui h2{font-size:1.15em} #net-ui .sub{margin-bottom:5px}
+    #net-ui label{margin:5px 0 2px} #net-ui .code{font-size:17px}
+    #net-ui .seat{padding:5px 10px;margin:3px 0} #net-ui .mode{margin:5px 0 2px;padding:5px 10px}
+    #net-ui button{margin-top:6px}
+  }
+  /* a thumb needs 44px of anything it has to hit — the room code field most of all */
+  @media (hover:none) and (pointer:coarse){
+    #net-ui input,#net-ui select,#net-ui button,#net-play-btn{min-height:44px}
+    #net-ui .mode button{min-height:38px;padding:8px 14px}
+  }
   `;
 
   function boatOptions(sel) {
@@ -23086,7 +24269,8 @@ window.CHICAGO = {
       <label>YOUR NAME</label><input id="ne-name" maxlength="24" placeholder="e.g. Cam" value="${esc(savedName)}">
       <label>BOAT</label><select id="ne-boat">${boatOptions(savedBoat)}</select>
       <label>ROOM CODE</label>
-      <div class="row"><input id="ne-room" maxlength="12" placeholder="ROOM" value="${esc(roomVal)}" style="text-transform:uppercase">
+      <div class="row"><input id="ne-room" maxlength="12" placeholder="ROOM" value="${esc(roomVal)}" style="text-transform:uppercase"
+        autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false">
       <button class="ghost" id="ne-new" style="margin-top:0;flex:0 0 auto;width:auto;padding:12px 16px">New</button></div>
       <button id="ne-join">JOIN RACE</button>
       <button class="ghost" id="ne-cancel">Cancel</button>
@@ -23422,7 +24606,10 @@ window.CHICAGO = {
     const crew = player.mesh.userData.crew;
     if (crew && crew.skipper) crew.skipper.visible = !on;
     if (RR.HUD.flash) RR.HUD.flash(on ? 'YOU HAVE THE WHEEL' : 'THE SKIPPER HAS THE WHEEL');
-    if (RR.HUD.chip) RR.HUD.chip('near', on ? 'YOU ARE STEERING — W A S D' : 'THE SKIPPER IS STEERING AGAIN', 3000);
+    // …and name the controls this device actually has. "W A S D" on a phone is the same lie the
+    // rest of the touch tier spent its time deleting.
+    const how = RR.Input.hasTouch ? 'YOU ARE STEERING — STEER PAD AND GO' : 'YOU ARE STEERING — W A S D';
+    if (RR.HUD.chip) RR.HUD.chip('near', on ? how : 'THE SKIPPER IS STEERING AGAIN', 3000);
     // Steering her yourself is the whole point of the secret, so that is what unlocks her. From
     // here on she is in the ride picker — announced on a chip of her own, since flash() shows
     // one line at a time and that line belongs to the handover.
@@ -23433,6 +24620,16 @@ window.CHICAGO = {
     RR.Camera.kick(0.3);
     setTourView(on ? 4 : 0);              // hand her over from the HELM shot: you need to see her length
   }
+
+  // The tour, as two questions anyone may ask. ui/touch.js needs both of them every tenth of a
+  // second: a phone has no F to take the wheel with and no SPACE to ask about a building, so the
+  // control layer has to know it is on a ride, and whether that ride is currently being driven,
+  // before it can offer either. Exposed here rather than read off RRTest, which is a test hook and
+  // not an interface — and as two closures rather than a live object, so nothing can write them.
+  RR.Tour = {
+    active: () => !!(raceState && raceState.tour),
+    driving: () => tourDriving,
+  };
 
   // roster (multiplayer) = [{id, name, boatIdx, isSelf}] sorted identically on every client
   function startRace(courseIdx, vehicleIdx, timeTrial, roster, tourMode, cupRound) {
@@ -23634,6 +24831,15 @@ window.CHICAGO = {
     RR.Camera.snapTo(player);
   }
 
+  // One pause path, called from ESC, from the thumb control (which dispatches ESC) and from the
+  // orientation gate below. Anything that stops the world has to stop it the same way, or the two
+  // callers drift and one of them leaves timeScale at 0 with no menu on top of it.
+  function pauseRace() {
+    if (mode !== 'race') return false;
+    mode = 'paused'; RR.Engine.timeScale = 0; RR.Menus.showPause();
+    return true;
+  }
+
   // ---------- global keys ----------
   window.addEventListener('keydown', (e) => {
     // Aboard the tour boat C walks the boat: four places to stand or sit, the helm shot, then the
@@ -23658,12 +24864,135 @@ window.CHICAGO = {
     // both of these used to fall through into the pause branch in the SAME event: leaving photo
     // mode, or menus.js resuming from pause, sets mode='race' and the next line re-paused you.
     if (e.code === 'Escape' && mode === 'photo') togglePhotoMode();
-    else if (e.code === 'Escape' && mode === 'race' && !e.defaultPrevented) {
-      mode = 'paused'; RR.Engine.timeScale = 0; RR.Menus.showPause();
-    }
+    else if (e.code === 'Escape' && mode === 'race' && !e.defaultPrevented) pauseRace();
     RR.Audio.init(); RR.Audio.resume();
   }, { once: false });
   window.addEventListener('pointerdown', () => { RR.Audio.init(); RR.Audio.resume(); });
+
+  // ---------- the phone shell ----------
+  // Everything below is about the PAGE rather than the race, which is why it lives here and not in
+  // engine.js: a handset browser has three habits that make a full-screen canvas game unplayable,
+  // and each one has to be answered once, at the top.
+
+  // 1. THE VIEWPORT IS NOT A CONSTANT. A mobile URL bar slides away and window.innerHeight changes
+  //    under the running game; iOS reports the new size a beat AFTER an orientation change, and the
+  //    `resize` that engine.js resizes the renderer from does not always arrive. visualViewport
+  //    does. So: listen to the signal that is reliable, publish ONE number, and give it to both
+  //    sides — the drawing buffer (engine.js, via the event) and the HUD box (--rr-vh, via CSS).
+  //    It is window.innerHeight and not 100vh deliberately: on iOS 100vh is the URL-bar-HIDDEN
+  //    height whatever the bar is currently doing, which is exactly the gap this has to close.
+  let vpW = 0, vpH = 0, vpQueued = false;
+  function syncViewport() {
+    vpQueued = false;
+    const w = window.innerWidth, h = window.innerHeight;
+    document.documentElement.style.setProperty('--rr-vh', h + 'px');
+    thumbsKnown = false; measureThumbs();            // the stack is sized in vh/vw ems: re-measure
+    if (w === vpW && h === vpH) return;
+    vpW = w; vpH = h;
+    // engine.js (renderer + camera aspect), touch.js (thumb geometry) and uikit's media queries all
+    // hang off this one event. Re-entry is bounded: the size is already stored, so a listener that
+    // asks for another sync finds nothing changed and stops.
+    window.dispatchEvent(new Event('resize'));
+  }
+  function queueViewport() {
+    if (vpQueued) return;
+    vpQueued = true;
+    requestAnimationFrame(syncViewport);
+  }
+
+  // 2. FULLSCREEN AND LANDSCAPE, best effort. Neither can be asked for outside a user gesture, so
+  //    the first tap of the session buys both. Both are allowed to fail silently and nothing is
+  //    permitted to depend on either: iOS Safari has no Fullscreen API for a canvas and no Screen
+  //    Orientation lock at all, so every entry point is feature-tested and every promise is caught.
+  //    (On iOS the answer is the home screen instead — see the apple-mobile-web-app meta tags.)
+  //    Desktop is exempt: a browser that goes fullscreen because you clicked RACE is a browser
+  //    fighting its user.
+  let immersiveTried = false;
+  function lockLandscape() {
+    const so = window.screen && window.screen.orientation;
+    if (!so || typeof so.lock !== 'function') return;
+    try { const p = so.lock('landscape'); if (p && p.catch) p.catch(() => {}); } catch (e) { /* not permitted here */ }
+  }
+  function goImmersive() {
+    if (immersiveTried || !RR.Input || !RR.Input.hasTouch) return;
+    immersiveTried = true;
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+    if (!req || document.fullscreenElement || document.webkitFullscreenElement) { lockLandscape(); return; }
+    try {
+      const p = req.call(el, { navigationUI: 'hide' });
+      if (p && p.then) p.then(lockLandscape, () => {}); else lockLandscape();
+    } catch (e) { lockLandscape(); }
+  }
+
+  // 3. A TABLET IS A TOUCH DEVICE THAT IS NOT A PHONE. uikit's phone HUD is keyed to
+  //    max-height:500px, so an iPad in landscape keeps the DESKTOP layout — dial and chips in the
+  //    bottom-right corner — while touch.js, which keys off hasTouch, puts the throttle column
+  //    there. Publish how wide the control stack actually is and let index.html step the two
+  //    widgets inboard of it. Measured rather than recomputed from touch.js's ems: the overlay is
+  //    display:none until a race, so the first real measurement lands when the HUD comes up.
+  //    BOTH corners, not just the right one: the steering pad is the bottom-LEFT of the same
+  //    screen, and on a tablet the rival ticker and the landmark blade sit entirely inside it —
+  //    your thumb covers the gaps and the building name. So publish the pad's height as well and
+  //    let those two climb above it, the mirror of what --rr-thumbs-w does on the right.
+  let thumbsKnown = false, thumbsWanted = false;     // false on a desktop: this then costs one bool
+  function measureThumbs() {
+    if (thumbsKnown || !thumbsWanted) return;
+    const el = document.getElementById('rt-fire');
+    const sz = document.getElementById('rt-steer');
+    if (!el || !sz) return;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0) return;                        // display:none until the overlay is up
+    thumbsKnown = true;
+    const st = document.documentElement.style;
+    st.setProperty('--rr-thumbs-w', Math.round(window.innerWidth - r.left) + 'px');
+    st.setProperty('--rr-steer-h', Math.round(sz.getBoundingClientRect().height) + 'px');
+  }
+
+  // 4. ROTATING THE PHONE MUST STOP THE RACE. uikit's rotate gate covers the screen in portrait,
+  //    but covering the screen is not stopping the boat: measured at 31.9 m/s with a finger on GO,
+  //    the hull still ran 17 m blind behind the gate — far enough to find a seawall or miss a
+  //    checkpoint you cannot see. Every phone player rotates by accident at least once, and losing a
+  //    race to it is the one failure this whole workstream would not be forgiven for.
+  //    The predicate is matchMedia with the gate's OWN query text rather than a width/height
+  //    comparison of our own: two ways of asking "is the gate up" is two answers waiting to differ,
+  //    and the wrong half of that pair pauses a landscape race or leaves a portrait one running.
+  const ROTATE_Q = '(orientation:portrait) and (max-width:620px)';
+  function watchRotate() {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia(ROTATE_Q);
+    const check = () => { if (mq.matches) pauseRace(); };   // pauseRace no-ops unless mode==='race'
+    // addEventListener is the modern spelling; addListener is what older WebKit answers to, and a
+    // phone browser old enough to need the fallback is exactly the phone this matters on.
+    if (mq.addEventListener) mq.addEventListener('change', check);
+    else if (mq.addListener) mq.addListener(check);
+    // …and a belt-and-braces pass on the resize the rotation itself produces: iOS has been known to
+    // resize without firing the media query listener when the URL bar moves in the same gesture.
+    window.addEventListener('orientationchange', () => setTimeout(check, 120));
+    check();
+  }
+
+  function installShell() {
+    thumbsWanted = !!(RR.Input && RR.Input.hasTouch);
+    if (thumbsWanted) document.documentElement.classList.add('rr-thumbs');
+    watchRotate();
+    syncViewport();
+    window.addEventListener('resize', queueViewport);
+    window.addEventListener('pageshow', queueViewport);
+    // iOS resizes the window some time after it reports the rotation, so ask again as it settles
+    window.addEventListener('orientationchange', () => {
+      queueViewport();
+      for (const ms of [120, 350, 700]) setTimeout(syncViewport, ms);
+    });
+    document.addEventListener('fullscreenchange', () => { queueViewport(); setTimeout(syncViewport, 260); });
+    document.addEventListener('webkitfullscreenchange', () => { queueViewport(); setTimeout(syncViewport, 260); });
+    const vv = window.visualViewport;
+    if (vv) { vv.addEventListener('resize', queueViewport); vv.addEventListener('scroll', queueViewport); }
+    // touchend, not touchstart: Safari only counts the END of a tap as a user gesture, and a
+    // click covers the pointer devices that never send a touch at all.
+    window.addEventListener('touchend', goImmersive, { passive: true });
+    window.addEventListener('click', goImmersive);
+  }
 
   // ---------- per-frame ----------
   const aiCtl = { throttle: 0, brake: 0, steer: 0, boost: false };
@@ -23686,6 +25015,7 @@ window.CHICAGO = {
   }
 
   function update(dt, t) {
+    measureThumbs();                             // self-gating: a no-op the moment the stack is measured
     if (RR.Life) RR.Life.update(dt, t);          // crowds + traffic animate in every scene
     if (RR.Fireworks) RR.Fireworks.update(dt);
     if (mode === 'menu' || mode === 'results') {
@@ -23969,6 +25299,22 @@ window.CHICAGO = {
       RR.Camera.snapTo(player);
     },
     night: (m) => { if (RR.Theme) RR.Theme.apply(typeof m === 'string' ? m : (m ? 'night' : 'day')); },
+    // the phone shell, as facts rather than assumptions: does the HUD's box agree with the drawing
+    // buffer, are the thumb controls up, and did fullscreen/orientation actually take
+    shell: () => ({
+      touch: !!(RR.Input && RR.Input.hasTouch),
+      overlay: !!(RR.Touch && RR.Touch.visible && RR.Touch.visible()),
+      tier: RR.Engine.tier,
+      vw: window.innerWidth, vh: window.innerHeight,
+      cssVh: getComputedStyle(document.documentElement).getPropertyValue('--rr-vh').trim(),
+      hudH: Math.round($('hud').getBoundingClientRect().height),
+      canvas: [RR.Engine.renderer.domElement.width, RR.Engine.renderer.domElement.height],
+      dpr: window.devicePixelRatio || 1,
+      fullscreen: !!(document.fullscreenElement || document.webkitFullscreenElement),
+      fsApi: !!document.documentElement.requestFullscreen,
+      lockApi: !!(window.screen && window.screen.orientation && window.screen.orientation.lock),
+    }),
+    immersive: () => { immersiveTried = false; goImmersive(); return true; },
     // hold full quality (disable adaptive downgrade) — used by visual tests on the software renderer
     pinQuality: () => { RR.Engine.setAutoQuality(false); if (RR.Reflect) RR.Reflect.enabled = true; if (RR.Post) RR.Post.enabled = true; },
     // A fresh boot already lands on the title screen, so this is only a way BACK to it from a race
@@ -23993,7 +25339,7 @@ window.CHICAGO = {
   // nothing left to skip. Harness scripts that still ask for it get the way back to the title.
   window.RRTest.skipOpening = window.RRTest.toTitle;
 
-  function bootOnce() { if (!booted) { booted = 1; boot(); } }
+  function bootOnce() { if (!booted) { booted = 1; installShell(); boot(); } }
   window.addEventListener('DOMContentLoaded', bootOnce);
   if (document.readyState !== 'loading') bootOnce();
 })();

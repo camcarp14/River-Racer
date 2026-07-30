@@ -7,6 +7,7 @@
      W/↑ throttle · S/↓ brake+reverse · A·D/←·→ steer · SHIFT boost   (this file)
      E or SPACE fire item        (polled by powerups.js through I.pressed)
      B or Q look astern          (this file → camera.js)
+     (touch: every one of those is on screen instead — ui/touch.js writes I.touch)
      [ ] cinematic shot          (this file → camera.js)
      F ×5 take the wheel         (this file → main.js, Architecture Tour only)
      C camera · N time of day · G green river · P photo · R reset · SPACE docent · ESC pause  (main.js)
@@ -57,26 +58,34 @@
   window.addEventListener('keyup', (e) => { keys[e.code] = false; });
   window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
-  // A pad had no item button at all, which with power-ups shipping ON meant a pad player could not
-  // play the default game. powerups.js polls I.pressed('KeyE'), so B/circle answers there — the
-  // routing lives with the other pad bindings instead of teaching another module about gamepads.
-  I.padItem = false;
-  I.pressed = (code) => !!keys[code] || (I.padItem && code === 'KeyE');
+  // ---- touch ----------------------------------------------------------------------------------
+  // What used to live here was "left half of the screen steers by finger x, right half is
+  // throttle": no boost, no item, no brake, no pause — a scheme you could not finish a race with.
+  // The controls are ui/touch.js's now, because the hit zones ARE the widgets and only the widgets
+  // know where they are. This file still owns what they MEAN. touch.js writes these fields and
+  // nothing else; with the overlay absent .on stays false and every merge below is skipped, so a
+  // build without it is exactly the keyboard game.
+  const T = { on: false, steer: 0, throttle: 0, brake: 0, boost: false, lookBack: false, item: false };
+  I.touch = T;
 
-  // touch: left half steers by horizontal position, right half is throttle
-  let touchSteer = 0, touchThrottle = 0;
-  const touches = new Map();
-  function readTouches() {
-    touchSteer = 0; touchThrottle = 0;
-    touches.forEach((t) => {
-      if (t.x < window.innerWidth * 0.5) touchSteer = RR.U.clamp((t.x / (window.innerWidth * 0.25)) - 1, -1, 1);
-      else touchThrottle = 1;
-    });
-  }
-  window.addEventListener('touchstart', (e) => { for (const t of e.changedTouches) touches.set(t.identifier, { x: t.clientX, y: t.clientY }); readTouches(); }, { passive: true });
-  window.addEventListener('touchmove', (e) => { for (const t of e.changedTouches) { const o = touches.get(t.identifier); if (o) { o.x = t.clientX; o.y = t.clientY; } } readTouches(); }, { passive: true });
-  window.addEventListener('touchend', (e) => { for (const t of e.changedTouches) touches.delete(t.identifier); readTouches(); }, { passive: true });
-  window.addEventListener('touchcancel', (e) => { for (const t of e.changedTouches) touches.delete(t.identifier); readTouches(); }, { passive: true });
+  // Is the PRIMARY pointer a finger? Not "does a digitizer exist" — a touchscreen laptop answers
+  // yes to that and its owner is holding a mouse. hud.js and touch.js both key off this.
+  I.hasTouch = (function () {
+    const mm = (q) => !!(window.matchMedia && window.matchMedia(q).matches);
+    const digitizer = (navigator.maxTouchPoints | 0) > 0 || 'ontouchstart' in window;
+    return digitizer && (mm('(pointer: coarse)') || !mm('(pointer: fine)'));
+  })();
+
+  // A pad had no item button at all, which with power-ups shipping ON meant a pad player could not
+  // play the default game. powerups.js polls I.pressed('KeyE'), so B/circle answers there — and so
+  // does the on-screen FIRE button. The routing lives with the other bindings instead of teaching
+  // another module about gamepads and touch.
+  // The latch is for the tap: powerups.js polls on the rising edge of its own frame, and a thumb
+  // can be down and up again between two of those polls.
+  I.padItem = false;
+  let fireLatch = 0;
+  I.touchFire = function () { fireLatch = 2; };
+  I.pressed = (code) => !!keys[code] || ((I.padItem || T.item || fireLatch > 0) && code === 'KeyE');
 
   // ---- free look: drag the world with the pointer -----------------------------------------
   // Only the Architecture Tour's seats read this (RR.Camera.seat), so a drag anywhere else is
@@ -134,14 +143,26 @@
       break;
     }
 
-    if (touchThrottle > 0) th = Math.max(th, touchThrottle);
-    if (touchSteer !== 0) st = RR.U.clamp(st - touchSteer, -1, 1);
+    // The thumbs, merged the same way the pad is: they RAISE a command, never lower one, so a pad
+    // and a finger on the same boat cannot fight each other.
+    if (T.on) {
+      if (T.throttle > 0) th = Math.max(th, T.throttle);
+      if (T.brake > 0) br = Math.max(br, T.brake);
+      if (T.steer !== 0) st = RR.U.clamp(st - T.steer, -1, 1);   // +T.steer = screen right = starboard
+      if (T.boost) bo = true;
+      if (T.lookBack) lb = true;
+    }
+    if (fireLatch > 0) fireLatch--;
 
     // analog feel on digital keys
     const rate = 6.5;
     I.throttle = RR.U.damp(I.throttle, th, rate, dt);
     I.brake = RR.U.damp(I.brake, br, rate, dt);
-    I.steer = RR.U.damp(I.steer, st, st === 0 ? 9 : 5.5, dt);
+    // A key is a switch and needs the ramp. A thumb on a stick is ALREADY an analog signal, and
+    // 0.18 s of extra smoothing on top of it is the difference between steering the boat and
+    // asking it politely — so a live stick gets the fast approach the keys can't have.
+    const touching = T.on && T.steer !== 0;
+    I.steer = RR.U.damp(I.steer, st, touching ? 9 : st === 0 ? 9 : 5.5, dt);
     I.boost = bo;
     I.lookBack = lb;
     I.padItem = padFire;
