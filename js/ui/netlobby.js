@@ -1,7 +1,13 @@
 /* River Racer — online lobby / name entry / results overlay.
    The real lobby + leaderboard live in Slack; this is the thin in-game surface that
-   the Slack "Play" button drops you into (via ?room=CODE&name=NAME&boat=IDX), plus a
-   manual PLAY ONLINE entry so it also works from a shared link without Slack. */
+   the Slack "Play" button drops you into (via ?room=CODE&name=NAME&boat=IDX).
+   THERE IS ONE WAY IN BY HAND: the MULTIPLAYER row on the title screen, which calls
+   openEntry() — the same call, with the same (absent) arguments, that the floating
+   PLAY ONLINE button used to make. The button was deleted rather than repositioned:
+   it was a second copy of a control the title menu already carries, it was pinned to
+   the viewport rather than to a screen, and it therefore floated on over the boat
+   cards on PICK YOUR RIDE and over the course cards after them. A deep link still
+   opens this form on its own (see the ?room= handler in init). */
 (function () {
   const UI = {};
   const $ = (s, r) => (r || document).querySelector(s);
@@ -39,7 +45,6 @@
   #net-ui ol li .pl{font:400 1.35em/1 var(--f-display);color:var(--gold);width:26px}
   #net-ui ol li.me{box-shadow:inset .28em 0 0 var(--gold)}
   #net-ui ol li .tm{margin-left:auto;opacity:.85;font-family:var(--f-num);font-variant-numeric:tabular-nums}
-  #net-play-btn{position:fixed;left:50%;bottom:calc(22px + var(--sab));transform:translateX(-50%);z-index:40;background:var(--sign-green);border:0;box-shadow:inset 0 0 0 2px #fff;color:#fff;font-weight:700;letter-spacing:.22em;padding:11px 22px;border-radius:2px;font-size:14px;cursor:pointer;font-family:var(--f-ui);display:none}
 
   /* The lobby is a FORM, and a landscape phone gives a form 390px of height. It scrolls inside its
      own plate rather than running off the top of the screen — where the JOIN button lives — and it
@@ -52,7 +57,6 @@
     #net-ui .seat{padding:7px 10px;margin:4px 0} #net-ui .mode{margin:8px 0 2px;padding:7px 10px}
     #net-ui ol li{padding:6px 10px;margin:4px 0}
     #net-ui button{margin-top:10px}
-    #net-play-btn{bottom:calc(6px + var(--sab));padding:10px 18px;font-size:13px}
   }
   /* an iPhone SE in landscape is 375px tall — the Leave button was the 3px that did not fit */
   @media (max-height:400px){
@@ -64,7 +68,7 @@
   }
   /* a thumb needs 44px of anything it has to hit — the room code field most of all */
   @media (hover:none) and (pointer:coarse){
-    #net-ui input,#net-ui select,#net-ui button,#net-play-btn{min-height:44px}
+    #net-ui input,#net-ui select,#net-ui button{min-height:44px}
     #net-ui .mode button{min-height:38px;padding:8px 14px}
   }
   `;
@@ -82,17 +86,6 @@
     if (root) return;
     const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
     root = document.createElement('div'); root.id = 'net-ui'; document.body.appendChild(root);
-
-    const btn = document.createElement('button'); btn.id = 'net-play-btn'; btn.textContent = '▸ PLAY ONLINE';
-    btn.onclick = () => UI.openEntry(); document.body.appendChild(btn);
-    // show the button only on the title/menu (not mid-race). Check right away and keep
-    // polling: the P2P transport global may finish loading a beat after boot.
-    const refreshBtn = () => {
-      const onMenu = RR.Menus && RR.Menus.screen && (RR.Menus.screen() === 'title' || RR.Menus.screen() === 'vehicle' || RR.Menus.screen() === 'course');
-      btn.style.display = (!RR.Net.active && onMenu && UI.transportFactory()) ? 'block' : 'none';
-    };
-    refreshBtn();
-    setInterval(refreshBtn, 300);
 
     RR.Net.on('roster', renderWaiting);
     RR.Net.on('start', () => hide());

@@ -1,8 +1,11 @@
 /* River Racer — planar reflections: a mirror camera renders the world across the
    water plane (y=0) into a texture the water shader samples. Real skyline mirroring. */
 (function () {
-  // strength is per-preset (theme.js writes P.water.refl); scale and far are per performance tier
-  const R = { strength: 0.62, scale: 0.42, far: 2600, allowed: true };
+  // strength is per-preset (theme.js writes P.water.refl); scale and far are per performance tier.
+  // `painted` is false until the target has real pixels in it — engine.js reads it so a mirror
+  // that is only re-rendered every other frame still renders the frame it is switched on, rather
+  // than blending one frame of an empty black target onto the river.
+  const R = { strength: 0.62, scale: 0.42, far: 2600, allowed: true, painted: false };
   let rt, vcam, ready = false;
 
   // `enabled` is the adaptive ladder's switch; `allowed` is the performance tier's veto. They are
@@ -34,7 +37,22 @@
   // 0.42-res is plenty — the tap is distorted by the wave normal before it is sampled, so the
   // 29% pixel saving is invisible and it is the largest single win in the frame budget.
   // R.scale is per-tier: a phone that has been handed the mirror back by hand gets a cheaper one.
-  function size() { return [Math.max(256, (window.innerWidth * R.scale) | 0), Math.max(256, (window.innerHeight * R.scale) | 0)]; }
+  //
+  // The floor is on the TEXEL COUNT, not on each axis. It used to be max(256, ...) per side, and
+  // on a 844x390 phone that turned a 253x117 request into a 256x256 SQUARE: the target is sampled
+  // by screen-space UV, so a square target on a 2.16:1 view spends 56% of its texels on vertical
+  // resolution the screen cannot use while the horizontal axis — the one you actually read a
+  // skyline reflection along — sits at 256 for 1266 backbuffer pixels. Same budget reshaped to the
+  // view's aspect is 375x173: 46% more horizontal resolution for the identical fill and not one
+  // extra draw call. A desktop never reaches the floor (537x302 at 1280x720), so this is
+  // bit-for-bit the same target there.
+  const MIN_TEXELS = 65000;
+  function size() {
+    let w = window.innerWidth * R.scale, h = window.innerHeight * R.scale;
+    const k = Math.sqrt(MIN_TEXELS / Math.max(1, w * h));
+    if (k > 1) { w *= k; h *= k; }
+    return [Math.max(32, w | 0), Math.max(32, h | 0)];
+  }
 
   R.init = function () {
     const [w, h] = size();
@@ -47,7 +65,7 @@
     window.addEventListener('resize', R.resize);
   };
 
-  R.resize = function () { if (ready) { const [w2, h2] = size(); rt.setSize(w2, h2); } };
+  R.resize = function () { if (ready) { const [w2, h2] = size(); rt.setSize(w2, h2); R.painted = false; } };
 
   R.update = function (renderer, scene, camera) {
     if (!ready || !R.enabled) return;
@@ -94,6 +112,7 @@
     renderer.setRenderTarget(prev);
     renderer.shadowMap.autoUpdate = shadowWas;
     if (W.group) W.group.visible = wv;
+    R.painted = true;
 
     const u = W.material.uniforms;
     u.uReflect.value = rt.texture;

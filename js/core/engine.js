@@ -5,8 +5,11 @@
   let renderer, scene, camera;
   let updateFns = [];
   let last = 0, simTime = 0, running = false;
-  // -1 so the very first throttled frame renders the map rather than sampling an empty one
-  let fpsEMA = 60, qualityTimer = 0, pixelScale = 1, shadowPhase = -1;
+  // `frame` is the free-running frame counter the two throttled passes phase off. It starts at 0
+  // and is bumped at the top of tick(), so the very first frame is frame 1 and renders BOTH the
+  // shadow map and the mirror rather than sampling empty ones; from frame 2 they alternate.
+  let fpsEMA = 60, qualityTimer = 0, pixelScale = 1, sceneRes = 1, frame = 0;
+  function applySceneRes() { if (RR.Post && RR.Post.setSceneScale) RR.Post.setSceneScale(sceneRes); }
 
   // ---------------------------------------------------------------------------------------
   // PERFORMANCE TIERS
@@ -22,8 +25,9 @@
   // Each field is a named, reversible decision — see the mobile row for what a phone gives up.
   const TIERS = {
     desktop: {
-      maxPR: 2, msaa: true, fpsK: 1,
+      maxPR: 2, sceneResMax: 1, msaa: true, fpsK: 1,
       reflect: true, reflectScale: 0.42, reflectFar: 2600, reflectOff: 40, reflectOn: 54, reflectKeep: 42,
+      reflectEvery: 1,
       shadowMap: 2048, shadowType: 'soft', shadowHalfCap: Infinity, shadowEvery: 1,
       bloomDiv: 2, blurPasses: 4, streaks: 1,
       fineWater: 1, cloudOctaves: 3,
@@ -32,8 +36,34 @@
       // 1.5 is the cap, not 2 and not 3. A phone reports dpr 3 and 844x390 CSS px; at 3x that is
       // a 2.96 Mpx backbuffer, at 2x 1.32 Mpx, at 1.5x 0.74 Mpx. The HUD is DOM and stays native
       // sharp either way, so the only thing 3x buys is sub-pixel detail on a 460 ppi screen that
-      // no one can resolve at 40 mph — and it costs 4x the fill rate on every pass in the frame.
-      maxPR: 1.5, msaa: false,
+      // no one can resolve at 40 mph.
+      maxPR: 1.5,
+      // …but read the comment on sceneScale in post.js before believing that maxPR is what makes
+      // this game sharp, because for as long as post has been on it has not been. The world is
+      // rendered into post's scene target and that target is sized in CSS pixels, so on this phone
+      // the world is drawn at 844x390 and stretched over the 1266x585 buffer no matter what maxPR
+      // says. Verified by wrapping the renderer's own setRenderTarget: at maxPR 1.5 the scene
+      // target is 844x390, and at maxPR 2 it is still 844x390.
+      //
+      // sceneResMax is the fix, and it is where the phone's fill budget now goes: the ladder may
+      // climb post's scene target from 1.0 x CSS (today, exactly) to 1.5 x CSS, which is 1266x585
+      // — the world rendered 1:1 into the buffer it is composited into, 2.25x the pixels it has
+      // now, and no resampling anywhere in the chain. Nothing else in this renderer antialiases
+      // (the `msaa` flag never reaches the world on either tier, because the scene goes into a
+      // plain render target), so this is the ONLY lever on aliasing and the largest single
+      // difference between "mobile port" and "sharp" in the whole frame. Zero draw calls, zero
+      // triangles: it is 2.25x the world's fragments and 2.25x the bloom chain's, which with the
+      // composite, shadow and mirror passes unmoved takes the frame from 1.70 to 2.24 Mpx of
+      // fragment work — about a third more, for 2.25x the resolution of the picture itself.
+      // It is EARNED, not given, for the same reason the mirror is: a phone still boots rendering
+      // exactly what it renders today, so no device ever pays for a heavier first frame, and the
+      // climb is +0.125 per 1.5 s quality pass and only while the EMA is clearing 57 x fpsK
+      // (28.5 fps). Four small steps, each measured before the next, which is self-limiting in a
+      // way the mirror's single 40% cliff is not — it stops the moment the extra fill stops
+      // clearing the bar instead of committing and finding out afterwards. A phone that never
+      // clears 28.5 never moves off 1.0.
+      sceneResMax: 1.5,
+      msaa: false,
       // The ladder aims at 30 fps on a phone, not 60. Without this every rung would fire at once
       // on a device that is locked to a perfectly playable 30 and never recover.
       fpsK: 0.5,
@@ -44,13 +74,38 @@
       // can EARN back: hold the ON threshold without it and it comes on at a third of the desktop
       // resolution; drop under 26 and it goes again. A phone never boots with it and a slow one
       // never sees it.
-      // 54, not 48. Measured, switching the mirror on costs ~40% of the frame — so a phone sitting
-      // at exactly 48 without it lands near 29 WITH it, which is inside the band and therefore
-      // stays: that device parks at 29 fps when it could have had 48, and one extra boat on screen
-      // tips it through 26 and starts the pair oscillating. 54 lands near 32, clear of both the 26
-      // floor and the 30 the whole mobile ladder aims at. reflectKeep is the other half of that
-      // arithmetic — see the probation in the quality loop.
-      reflect: false, reflectScale: 0.30, reflectOff: 26, reflectOn: 54, reflectKeep: 28,
+      // 44, and it used to be 54. The threshold is not a taste, it is arithmetic on what the
+      // mirror costs: a phone sitting at X without it lands near X x m with it, and the answer has
+      // to clear the 30 fps the whole mobile ladder aims at with room over the 26 floor, or the
+      // device parks in the band at a frame rate it did not have to accept. Every-frame the mirror
+      // measured m ~ 0.6, so 54 was the lowest threshold that landed near 32. reflectEvery below
+      // captures it every OTHER frame, which halves the extra pass and takes m to ~0.75 — so 44 is
+      // now the number that lands in the same place (44 x 0.75 = 33). That is the whole point of
+      // the change: at 54 a mid-range Android sitting at 45 fps never saw the skyline on the water
+      // at night no matter how long it drove. reflectKeep 28 is the other half of the arithmetic —
+      // see the probation in the quality loop.
+      reflect: false, reflectScale: 0.30, reflectOff: 26, reflectOn: 44, reflectKeep: 28,
+      // The mirror is a whole extra pass over essentially the whole world — the single most
+      // expensive thing in this frame, measured on an iPhone 14 at +46% draw calls and +46%
+      // triangles — and it tolerates a frame of lag BETTER than the shadow map does, not worse.
+      // A planar reflection of a fixed skyline is fixed in WORLD space: the texture matrix is
+      // built from the same camera that captured the target and travels with it, so re-using last
+      // frame's capture puts the same skyline on the same water. Only three things actually lag —
+      // moving boats (1.3 m at 40 m/s, under a rippled 0.62 reflectivity), parallax occlusion, and
+      // water a turning camera has just swung onto. Measured, not assumed: capture the mirror, yaw
+      // the camera, render the next frame WITHOUT re-capturing, and difference it against the same
+      // frame with a fresh capture. At 4 deg of yaw per frame the whole lower half of the picture
+      // differs by a mean of 0.2/255 with a worst single pixel of 26 and NOTHING over 24; at an
+      // absurd 10 deg (a 300 deg/s yaw at 30 fps, quicker than this hull turns) it is 0.29 and 29.
+      // For scale, the mirror's own contribution over that same region is a mean of 1.17 and a
+      // worst pixel of 107 — the staleness is a fifth of the thing it is staleness IN.
+      // Widening the capture cone to cover the swing was tried and NOT taken: it moved the worst
+      // edge pixel from 8 to 7 and cost 10% of the mirror's resolution, which is the one thing in
+      // that trade you can actually see.
+      // engine.js phases this OPPOSITE the shadow pass so a phone never pays for both extra passes
+      // in the same frame: with both every-other and in phase the cost sawtooths 2:1 frame to
+      // frame, and that judder is worse than either pass.
+      reflectEvery: 2,
       // far stays at the desktop 2.6 km. A 700 m mirror measured 194 draw calls cheaper again, but
       // the reflection camera's far plane is also what the water samples where nothing was drawn,
       // and out on the open lake the skyline it would cut away IS the shot. Not taken un-verified.
@@ -60,11 +115,17 @@
       // (which also culls two thirds of the casters), and re-rendered every OTHER frame. One
       // frame of lag in a shadow edge at 30 fps is not a thing an eye can see.
       shadowMap: 1024, shadowType: 'pcf', shadowHalfCap: 200, shadowEvery: 2,
-      // Bloom stays — the golden-hour glow and the lit windows ARE the look. It just runs its
-      // gaussian at quarter res over two passes instead of half res over four: an eighth of the
-      // fill for a very slightly wider, softer glow. Speed streaks go: six extra full-res taps
-      // in the composite is the single most expensive line of shader in the frame.
-      bloomDiv: 4, blurPasses: 2, streaks: 0,
+      // Bloom stays — the golden-hour glow and the lit windows ARE the look. The RESOLUTION is
+      // what costs: quarter res is a sixteenth of the fill of full res, so the phone keeps
+      // bloomDiv 4 and desktop's 2 stays out of reach (half res would be four times this chain).
+      // The PASS COUNT is nearly free at that size — one extra H+V pair is 0.04 Mpx of a 1.70 Mpx
+      // frame at the boot resolution and 0.09 of 2.24 once the scene target has been earned, 2 to
+      // 4% either way, and exactly two more draw calls — and two passes was visibly too few:
+      // a single 5-tap gaussian at quarter res leaves the halo boxy, with
+      // quarter-res stair-steps readable in the glow around every lit cornice at golden hour.
+      // Four passes rounds it off. Measured and looked at side by side; this is the best return
+      // per millisecond on the whole list.
+      bloomDiv: 4, blurPasses: 4, streaks: 0,
       // The two shader octave rungs are deliberately NOT taken. Each is one texture2D over part of
       // one surface — order 0.1 ms of a 33 ms budget on any GPU that can run this at all — and
       // both were rendered with and without: dropping the water's close-up octave turns the near
@@ -154,8 +215,12 @@
       RR.Reflect.far = Q.reflectFar;
       if (RR.Reflect.setAllowed) RR.Reflect.setAllowed(Q.reflect || reflectEarned);
     }
+    // a tier switch can leave the scene resolution above the new tier's ceiling (mobile may earn
+    // 1.5, desktop is pinned at 1), so clamp it back before it is pushed onto post
+    if (sceneRes > (Q.sceneResMax || 1)) sceneRes = Q.sceneResMax || 1;
     if (RR.Post) {
       if (RR.Post.setTier) RR.Post.setTier(Q);
+      if (RR.Post.setSceneScale) RR.Post.setSceneScale(sceneRes);
       if (RR.Post.streaks > Q.streaks) RR.Post.streaks = Q.streaks;
     }
     if (RR.Water && RR.Water.material) {
@@ -289,6 +354,10 @@
     camera.updateProjectionMatrix();
     renderer.setPixelRatio(maxPR * pixelScale);
     renderer.setSize(window.innerWidth, window.innerHeight);
+    // post's scene target is clamped to the drawing buffer, so it has to be re-sized whenever the
+    // buffer moves. Its own window listener only fires on a real window resize, and the ladder
+    // changes the pixel ratio without one. It no-ops when nothing actually changed.
+    if (RR.Post && RR.Post.resize) RR.Post.resize();
   }
 
   // shadow camera follows a world position (the player) so the map stays sharp
@@ -321,6 +390,7 @@
   }
 
   function tick(now) {
+    frame++;
     let dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     E.rawDt = dt;                    // real wall-clock dt (camera swings, UI use this)
@@ -345,8 +415,28 @@
           if (fpsEMA < 50 * K && RR.Post.streaks > 0) RR.Post.streaks = 0;
           else if (fpsEMA > 57 * K && RR.Post.streaks < Q.streaks) RR.Post.streaks = Q.streaks;
         }
-        if (fpsEMA < 47 * K && pixelScale > 0.55) { pixelScale = Math.max(0.55, pixelScale - 0.15); onResize(); }
-        else if (fpsEMA > 57 * K && pixelScale < 1) { pixelScale = Math.min(1, pixelScale + 0.1); onResize(); }
+        // Resolution, on two knobs now instead of one, and spent in the order that returns the
+        // most picture per fragment. sceneRes is the size of post's scene target, which IS the
+        // world's resolution; pixelScale is the backbuffer the composite lands in. Climbing goes
+        // buffer first (so the composite is never upscaling into a bigger target than it needs)
+        // and then the scene; shedding goes scene first, because a phone in trouble should give
+        // back the expensive knob before it gives back the cheap one. Both floors and the buffer
+        // ceiling are exactly what they always were, so a device that never clears the bar renders
+        // precisely what it rendered before, and the bottom of the ladder is unmoved at 0.55.
+        // Every step is small and 1.5 s apart, which makes the climb self-limiting: it stops the
+        // moment the extra fill stops clearing 57 x fpsK, instead of committing to a cliff and
+        // finding out afterwards the way the mirror has to. That is why this rung needs no
+        // probation and the mirror does.
+        // On desktop sceneResMax is 1 and sceneRes can never leave 1, so this is the same two
+        // lines it has always been there.
+        const srMax = Q.sceneResMax || 1;
+        if (fpsEMA < 47 * K) {
+          if (sceneRes > 1) { sceneRes = Math.max(1, sceneRes - 0.125); applySceneRes(); }
+          else if (pixelScale > 0.55) { pixelScale = Math.max(0.55, pixelScale - 0.15); onResize(); }
+        } else if (fpsEMA > 57 * K) {
+          if (pixelScale < 1) { pixelScale = Math.min(1, pixelScale + 0.1); onResize(); }
+          else if (sceneRes < srMax) { sceneRes = Math.min(srMax, sceneRes + 0.125); applySceneRes(); }
+        }
         // The mirror is the one rung with its own thresholds rather than scaled ones: the phone
         // tier boots with it vetoed (allowed=false) and can only earn it back here, on evidence.
         // It is also the one rung big enough to invalidate the measurement that turned it on — a
@@ -397,18 +487,39 @@
     // simTime advances by the same scaled dt so t-driven animations freeze/slow in lockstep.
     step(dt * (E.timeScale != null ? E.timeScale : 1));
 
-    // The shadow map is a whole extra pass over every caster in the sun frustum. On a phone it is
-    // re-rendered every OTHER frame: the map lags the world by ~16 ms, which no eye reads on a
-    // soft-edged ground shadow, and it hands back half of the cost of having shadows at all.
+    // The two extra world passes — the shadow map and the mirror — are both throttled on a phone,
+    // and they are throttled IN OPPOSITE PHASE. The shadow map takes the even frames, the mirror
+    // the odd ones, so a phone renders exactly one extra pass per frame instead of two on one
+    // frame and none on the next. That matters more than either saving on its own: with both
+    // every-other and in phase, the measured cost sawtoothed 482 / 680 draw calls frame to frame,
+    // and a 41% swing at 30 fps is judder you can feel even though the average is unchanged.
+    // Frame 1 is the exception and does both, because on frame 1 the alternative is sampling an
+    // empty shadow map and an empty mirror.
+    //
+    // The shadow map is a whole extra pass over every caster in the sun frustum. On a phone it
+    // lags the world by ~16 ms, which no eye reads on a soft-edged ground shadow, and it hands
+    // back half of the cost of having shadows at all.
     if (renderer.shadowMap.enabled && Q.shadowEvery > 1) {
-      shadowPhase = (shadowPhase + 1) % Q.shadowEvery;
       renderer.shadowMap.autoUpdate = false;
-      renderer.shadowMap.needsUpdate = shadowPhase === 0;
+      renderer.shadowMap.needsUpdate = frame === 1 || (frame % Q.shadowEvery) === 0;
     } else if (!renderer.shadowMap.autoUpdate && Q.shadowEvery <= 1) {
       renderer.shadowMap.autoUpdate = true;
     }
 
-    if (RR.Reflect && RR.Reflect.enabled) RR.Reflect.update(renderer, scene, camera);
+    if (RR.Reflect && RR.Reflect.enabled) {
+      // …and the mirror on the other phase. `painted` is the safety catch: the ladder can switch
+      // the mirror on at any frame parity, and blending one frame of an empty black target onto
+      // the river would be a visible flash, so an unpainted target always renders immediately.
+      const every = Q.reflectEvery || 1;
+      if (every <= 1 || !RR.Reflect.painted || (frame % every) === 1) {
+        RR.Reflect.update(renderer, scene, camera);
+      }
+    } else if (RR.Reflect) {
+      // A mirror that has been off has nothing current to re-use — the boat may be a kilometre
+      // down the river by the time the ladder hands it back — so clear the latch and make the
+      // frame it comes back on a fresh capture, whatever parity that frame happens to be.
+      RR.Reflect.painted = false;
+    }
     if (RR.Post && RR.Post.enabled) RR.Post.render(renderer, scene, camera);
     else renderer.render(scene, camera);
   }

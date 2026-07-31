@@ -432,12 +432,22 @@
 /* the two light-blue bars at the flag's TRUE proportions — the flag is a map of this course */
 /* z-index:-1 keeps the pseudo-element BEHIND #menu's in-flow children. Without it an absolutely
    positioned ::before paints above them and the blur eats the menu's own text. */
-/* Layer one darkens the top and bottom of the flythrough: the star captions and the key line
-   land over a sunlit skyline and an orange jump ramp, and neither survived at full brightness. */
+/* THERE IS NO EDGE SCRIM HERE ANY MORE, and there must never be one again.
+   This rule used to carry a FIRST background layer — the one that paints on top of the flag —
+     rgba(4,18,27,.66) at 0%, .24 at 24%, 0 at 44% … 0 at 60%, .34 at 80%, .66 at 100%
+   to hold the star captions and the key line up over a sunlit skyline. What it actually did,
+   measured with the canvas hidden behind a flat #808080 so that only the DOM can paint: the
+   top row of the title screen came back 47,56,62 against a 128,128,128 backdrop, and so did
+   the bottom row, at all four screen sizes. That is a full-width 66%-black wash pinned to both
+   edges — and the flag band beneath it cuts it off with a hard step at 16.6% / 83.3%, which is
+   what turned a vignette into a pair of faint grey-black BARS, on the title screen and on no
+   other screen. Contrast for those two captions is carried by the captions themselves now (see
+   .starcol span and #menu.title-screen .menu-note): a text-shadow is bound to its own glyphs
+   and can never paint a strip across the screen.
+   The cinematic letterbox (#cine) is a different thing and still works — it is opt-in, main.js
+   turns it on for photo mode and the shot rig, and it is opacity 0 the rest of the time. */
 #menu.title-screen::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:-1;
-  background:linear-gradient(180deg,rgba(4,18,27,.66) 0,rgba(4,18,27,.24) 24%,rgba(4,18,27,0) 44%,
-      rgba(4,18,27,0) 60%,rgba(4,18,27,.34) 80%,rgba(4,18,27,.66) 100%),
-    linear-gradient(180deg,transparent 0 16.6%,rgba(126,200,227,.13) 16.6% 33.3%,
+  background:linear-gradient(180deg,transparent 0 16.6%,rgba(126,200,227,.13) 16.6% 33.3%,
     transparent 33.3% 66.6%,rgba(126,200,227,.13) 66.6% 83.3%,transparent 83.3%)}
 #menu.title-screen{padding:1.5vh 0}
 /* The list grows and shrinks with what the save file has unlocked, and the whole screen has to
@@ -448,7 +458,11 @@
 #menu.title-screen .menu-list{margin-top:1.5vh;gap:.42em}
 #menu.title-screen .menu-item{padding:.62em 2em}
 #menu.title-screen .sound-row,#menu.title-screen #switches{margin-top:1.0em}
-#menu.title-screen .menu-note{margin-top:1.0em}
+/* the key line sits at ~85% of the title screen, which is where the bottom half of the deleted
+   edge scrim used to be. Same trade as .starcol span: contrast on the glyphs, nothing on the
+   background. (Phones never see this line — the short-screen block hides it.) */
+#menu.title-screen .menu-note{margin-top:1.0em;
+  text-shadow:0 0 .16em #000,0 0 .32em #000,0 1px 3px #000,0 0 .9em rgba(0,0,0,.95)}
 #title{font:400 clamp(44px,7.2vw,104px)/.90 var(--f-display);letter-spacing:.005em;
   text-align:center;color:#fff;background:none;-webkit-background-clip:border-box;background-clip:border-box;
   filter:none;text-shadow:0 .045em 0 var(--chi-blue-ink),0 .09em .3em rgba(0,0,0,.6)}
@@ -465,9 +479,11 @@
 .starcol:nth-child(2) .star6{animation-delay:.12s} .starcol:nth-child(3) .star6{animation-delay:.24s}
 .starcol:nth-child(4) .star6{animation-delay:.36s}
 /* 9px fixed was sub-legible at any resolution, and translucent red over a sunlit skyline read as
-   noise. Solid flag red on a hard shadow, sized like the rest of the kit. */
+   noise. Solid flag red on a hard shadow, sized like the rest of the kit.
+   The tight opaque halo is what replaced the edge scrim: it buys the same contrast over a bright
+   skyline WITHOUT painting anything outside the glyphs. */
 .starcol span{font:700 clamp(10px,.88vw,14px)/1.25 var(--f-ui);letter-spacing:.12em;color:var(--chi-red);
-  text-align:center;text-shadow:0 1px 2px #000,0 0 .6em rgba(0,0,0,.95)}
+  text-align:center;text-shadow:0 0 .14em #000,0 0 .28em #000,0 1px 2px #000,0 0 .6em rgba(0,0,0,.95)}
 @keyframes starbeat{0%,100%{transform:scale(1);filter:none}
   50%{transform:scale(1.09);filter:drop-shadow(0 0 .5em rgba(239,51,64,.75))}}
 

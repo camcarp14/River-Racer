@@ -4,12 +4,50 @@
 (function () {
   const P = { enabled: true, streaks: 1, lowRes: false };
   let sceneRT, brightRT, blurA, blurB, quad, cam, brightMat, blurMat, compMat, ready = false;
+  let rend = null;                                // kept from init() so sceneSize() can read the pixel ratio
+
+  // ---------------------------------------------------------------------------------------
+  // THE RESOLUTION THE WORLD IS ACTUALLY DRAWN AT.
+  //
+  // This is not the canvas and it is not the device pixel ratio: when post is on, the world is
+  // rendered into sceneRT and everything after that is a full-screen quad, so sceneRT IS the
+  // picture and its size is the only thing that decides how sharp the game looks. It has always
+  // been sized in CSS pixels — window.innerWidth — which on a phone reporting 844x390 css at a
+  // 1.5x pixel ratio means the world is drawn at 844x390 and STRETCHED over a 1266x585 buffer.
+  // Measured with the renderer's own setRenderTarget calls, not inferred: at maxPR 1.5 the scene
+  // target is 844x390, and at maxPR 2 it is still 844x390. The tier's pixel-ratio cap was
+  // therefore never buying the world any resolution at all — only the composite's.
+  //
+  // sceneScale is that size as a multiple of CSS pixels. 1 is exactly what this file has always
+  // done and is what desktop keeps, bit for bit. The phone tier can climb it to 1.5 on evidence,
+  // which makes the world render 1:1 into the buffer it is composited into — 1266x585 instead of
+  // 844x390, 2.25x the pixels, and the single biggest difference between "mobile port" and
+  // "sharp" in this whole renderer. It costs 2.25x the world's fragments and 2.25x the bloom
+  // chain's: on this phone that is 0.33 -> 0.74 Mpx of world and 0.10 -> 0.23 Mpx of bloom, and
+  // with the composite (0.74), the shadow map (0.52 amortised) and the mirror unmoved it is a
+  // 1.70 Mpx frame going to 2.24 — about a third more fragment work, and zero extra draw calls
+  // and zero extra triangles.
+  //
+  // The clamp is the safety rail: never render the world larger than the buffer it lands in, so a
+  // ladder that has pulled the pixel ratio down can never leave this supersampling into it.
+  let sceneScale = 1;
+  P.setSceneScale = function (s) {
+    const v = Math.max(0.25, Math.min(4, +s || 1));
+    if (v === sceneScale) return;
+    sceneScale = v;
+    P.resize();
+  };
+  function sceneSize() {
+    const pr = rend ? rend.getPixelRatio() : 1;
+    const s = Math.min(sceneScale, Math.max(0.1, pr));
+    return [Math.max(1, Math.round(window.innerWidth * s)), Math.max(1, Math.round(window.innerHeight * s))];
+  }
 
   // Bloom's cost is the gaussian, and the gaussian's cost is resolution x passes. Desktop runs it
-  // at half res over four passes; the phone tier runs quarter res over two — an EIGHTH of the fill
-  // for a glow that is only very slightly wider, because dropping the resolution doubles the
-  // kernel's reach in screen space and very nearly pays the missing passes back. The bright pass
-  // and the composite are unchanged, so the grade is bit-for-bit the same picture underneath.
+  // at half res over four passes; the phone tier runs quarter res over four — a QUARTER of the
+  // fill, because the resolution is what costs and the pass count at that size is nearly free.
+  // The bright pass and the composite are unchanged, so the grade is bit-for-bit the same picture
+  // underneath. Both divisors are of the SCENE target, so the chain follows sceneScale.
   let div = 2, passes = 4;
   P.setTier = function (q) {
     if (!q) return;
@@ -90,8 +128,9 @@
     return t;
   }
 
-  P.init = function () {
-    const w = window.innerWidth, h = window.innerHeight;
+  P.init = function (renderer) {
+    rend = renderer || null;
+    const [w, h] = sceneSize();
     const hw = Math.max(1, (w / div) | 0), hh = Math.max(1, (h / div) | 0);
     sceneRT = rt(w, h, true);
     brightRT = rt(hw, hh, false); blurA = rt(hw, hh, false); blurB = rt(hw, hh, false);
@@ -174,11 +213,16 @@
 
   P.resize = function () {
     if (!ready) return;
-    const w = window.innerWidth, h = window.innerHeight;
+    const [w, h] = sceneSize();
     const hw = Math.max(1, (w / div) | 0), hh = Math.max(1, (h / div) | 0);
+    if (sceneRT.width === w && sceneRT.height === h && brightRT.width === hw) return;   // reallocation is not free
     sceneRT.setSize(w, h); brightRT.setSize(hw, hh); blurA.setSize(hw, hh); blurB.setSize(hw, hh);
     blurMat.uniforms.res.value.set(hw, hh);
   };
+  // the size the world is actually being drawn at, for anything that needs to report it. A
+  // renderer that cannot answer this question is how the scene target sat at CSS resolution
+  // behind a tier that thought it was setting the resolution.
+  P.sceneSize = function () { return ready ? [sceneRT.width, sceneRT.height] : null; };
 
   function pass(renderer, mat, target) {
     quad.material = mat;

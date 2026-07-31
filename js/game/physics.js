@@ -53,6 +53,28 @@
     boat.resetLock = 1.2;
   };
 
+  // ---- poling off ----
+  // A hull in sustained contact at walking pace cannot always drive out of it. P.bounce's
+  // wall-follow assist has already swung her parallel to whatever she is touching, so ahead runs
+  // her along it and astern runs her back along it; against a pier she just circles the thing,
+  // shedding to the bounce every frame the speed the throttle keeps putting back. Nothing in the
+  // hull model separates the two — the astern pivot walk used to, as a side effect, because it
+  // translated the centre of mass sideways, and ai.js's unstick manoeuvre (throttle 0, brake 1,
+  // full opposite lock) is tuned around exactly that. With the walk gone, two boats on the North
+  // Shore course sat on the same lake pier for 15.8 s, measured, against 2.4-5.0 s before.
+  // So put the separation where it belongs — in the contact, not in the steering model. This is
+  // the crew poling off: it exists only while she is actually touching, only below walking pace,
+  // and only while somebody is asking for ahead or astern, so it is never felt out in the channel.
+  // n points into free water at both call sites (waterQuery's normal runs bank -> centreline, and
+  // hitObstacle's is the direction the penetration is resolved along).
+  function poleOff(boat, nx, nz, ctl, dt) {
+    const sp = Math.hypot(boat.vel.x, boat.vel.z);
+    if (sp >= 7 || (ctl.throttle <= 0.25 && ctl.brake <= 0.25)) return;
+    const off = 9.0 * (1 - sp / 7) * dt;                  // fades out entirely by 7 m/s
+    boat.vel.x += nx * off;
+    boat.vel.z += nz * off;
+  }
+
   // ctl: {throttle 0..1, brake 0..1, steer -1..1, boost bool}
   P.update = function (boat, dt, ctl, t) {
     const spec = boat.spec;
@@ -119,12 +141,16 @@
     // Backing down, the ROTATION still follows the stick: push left and her head comes left. The
     // physically faithful thing is to invert it — a hull going astern steers from her stern, the
     // way a car does in reverse — and it was in here, and from a chase camera it read as the boat
-    // ignoring you. What actually makes her feel stern-steered is the pivot term below, not a sign.
+    // ignoring you.
     const targetAng = ctl.steer * spec.turn * speedFactor * steerAuthority;
     // asymmetric: bite hard into the turn, let the wheel unwind lazily. This is where punch lives.
     const turningIn = Math.abs(targetAng) > Math.abs(boat.angVel);
     boat.angVel = U().damp(boat.angVel, targetAng, turningIn ? 11.0 : 6.5, dt);
-    boat.heading = U().wrapAngle(boat.heading + boat.angVel * dt);
+    // Hold on to the yaw actually integrated this frame — the hull-tracking term below has to turn
+    // the velocity through exactly this angle, and boat.angVel is scrubbed again three lines down
+    // on a bump frame, which would silently desync the two.
+    const dHead = boat.angVel * dt;
+    boat.heading = U().wrapAngle(boat.heading + dHead);
 
     if (boat.bumpRecover > 0) boat.angVel *= 0.55;      // a real hit costs you the wheel for a beat
     boat.bumpRecover = Math.max(0, (boat.bumpRecover || 0) - dt);
@@ -157,17 +183,40 @@
       // lateral grip. Planing shrinks the wetted area, so the hull genuinely holds less.
       const gripEff = spec.grip * (1 - 0.30 * planeF);
       speedL *= Math.exp(-gripEff * dt);
-      // stern step-out: only once planing, scaled by how hard you're asking of the hull
-      const slipGain = (spec.drift || 0.5) * planeF * U().clamp(speed / topSpeed, 0, 1);
-      speedL += ctl.steer * speed * 0.075 * slipGain * dt;
-      // Going astern a hull pivots about her stern, not her middle: helm over and the bow sweeps
-      // the wide arc while the stern stays more or less put. That is a lateral WALK of the centre
-      // of mass, so model it as one — this, and not an inverted wheel, is what makes backing and
-      // filling read as a boat rather than a car in a car park.
-      if (speedF < -0.2) {
-        const arm = Math.min(3.0, boat.hullLen * 0.30) * U().clamp(-speedF / 3, 0, 1);
-        speedL = U().damp(speedL, boat.angVel * arm, 6, dt);
-      }
+      // ---- she goes where she points ----
+      // The velocity below is rebuilt in THIS frame's basis, so unless something carries it round
+      // with the yaw, the heading simply rotates out from under it and the only thing that ever
+      // re-aligns the two is gripEff. That is a first-order lag, and at racing speed it is enormous:
+      // measured, the hull ran 26-34 deg of slip at full lock — a quarter turn of crab between where
+      // her nose points and where she is actually going, in every corner, all race. The old stern
+      // step-out (speedL += ctl.steer * speed * 0.075 * slipGain) then pushed that same lateral
+      // velocity further the way the wheel was already going, so hard cornering was a sideways skate
+      // that also ate half the speed. Both are what "left is right and right is left" felt like.
+      //
+      // A keel with water on it carries the velocity round with the hull, so rotate the velocity by
+      // the yaw instead of waiting for a damper to mop it up. `bite` is the fraction of this frame's
+      // yaw the water actually takes her through; 1.0 tracks true.
+      //
+      // What she gives up is slipGain, and only there: on plane (planeF), near her top end
+      // (speed/topSpeed), with real lock on (|steer|), on a hull the roster calls loose (spec.drift).
+      // That keeps the whole spread — measured at full lock and settled speed, the LAKESIDE QUEEN
+      // slips 4.0 deg, the FORMULA 5.0, the CFD RIB 5.0, the F1H2O 6.8, the BLACKHAWK 8.8 and the
+      // PODRACER 10.8 — a trace of slide at the limit and nothing at all in an ordinary corner
+      // (1.0-3.0 deg at half lock, where the old model was already at 12-15).
+      // 0.34 is measured, not taste: 0.20 leaves three of six hulls unable to break traction at all,
+      // 0.50 is back to a 16 deg crab on the loose hulls.
+      const slipGain = (spec.drift || 0.5) * planeF *
+        U().clamp(speed / topSpeed, 0, 1) * Math.abs(ctl.steer);
+      const bite = dHead * (1 - 0.34 * slipGain);
+      const cb = Math.cos(bite), sb = Math.sin(bite);
+      const carried = speedF * cb - speedL * sb;              // exact rotation, not the small-angle
+      speedL = speedF * sb + speedL * cb;                     // form, which grows |v| ~10%/s at lock
+      speedF = carried;
+      // (The astern pivot walk that used to sit here — speedL damped toward boat.angVel * a stern
+      // arm, so the centre of mass crabbed sideways while backing — is gone. It cost 25-38 deg of
+      // slip going astern AND about half the sternway the gear had just given you, so getting out
+      // of a dead end read as the boat wandering off on her own. She now backs along her own keel
+      // like she does everything else: 0.5-5.4 deg of slip astern under full lock.)
       // counter-steer: catching a slide with opposite lock recovers grip and pays boost. This is
       // the one skill expression in the game, so it is obvious and it is worth it.
       boat.drifting = Math.abs(speedL) > 2.2 &&
@@ -293,6 +342,7 @@
       // than a sheet-pile quay does. The graze is still cheap: P.bounce scales everything by how
       // squarely you hit, which is what keeps a 24 m chamber passable at racing pace.
       P.bounce(boat, wq.nx, wq.nz, wq.path === 'lock' ? 0.36 : 0.28);
+      poleOff(boat, wq.nx, wq.nz, ctl, dt);
     }
     // Obstacles are capsules a couple of metres thick and dt can reach 50 ms on a bad frame, which
     // at speed is a stride long enough to step straight over a pier or a guide wall. When the step
@@ -313,6 +363,7 @@
       boat.pos.x += ob.nx * ob.pen;
       boat.pos.z += ob.nz * ob.pen;
       P.bounce(boat, ob.nx, ob.nz, 0.40);                 // pier fender: slightly livelier
+      poleOff(boat, ob.nx, ob.nz, ctl, dt);
     }
     // cache this frame's current for the next integration step (wq aliases a shared scratch)
     const flow = RR.River.flow || 0;
