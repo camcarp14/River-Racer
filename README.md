@@ -37,22 +37,51 @@ Along the banks, modeled from their actual footprints and heights:
 | **Architecture Tour** | No clock, no rivals. You ride the *Wacker Belle*, a 30 m river tour boat, while the docent names what you are passing. She keeps a secret |
 | **Multiplayer** | Real cross-machine P2P rooms — share a link, everyone brings their own boat |
 
+## Driving it
+
+Boost is **earned, not waited for**. The meter only trickles back up while you are flat out with
+the wheel near centre; everything else has to be gone and got:
+
+- **Catch a slide.** When the stern lets go, steer *into* it. Catching it recovers grip and pays
+  boost, once per slide and sized by how far out she was. Merely holding lock through a corner
+  pays nothing — you are just pushing wide.
+- **Thread the buoys.** Red left, green right. A central line through the pair pays more than a
+  scrape past one, and a clean streak pays more again.
+- **Take the gold gates.** They sit off the racing line on purpose: a metre of your time for the
+  biggest single payout on the course.
+- **Get air**, off a ramp or a lake swell, and **draft** a rival's wake.
+
+Lifting the throttle is a **coast**, not a brake — you can trim ten per cent for a bend and keep
+it — and `S` is the fast way down when you actually need to stop. A throttle inside a quarter of a
+second of GO is a **perfect start** and pays a kick; sitting on it early is a jump start and costs
+you half a second on the line.
+
+Every course keeps a **best time per hull** and a four-tier medal ladder — BRONZE, SILVER, GOLD
+and AUTHOR — scaled to the boat you drove, so a lap in the slow one is measured against the slow
+one. The results card shows the whole ladder and how far off the next rung you were.
+
 ## Power-ups
 
 Gold crates ride the channel — drive through one and the slot spins you an item. The draw is
-**weighted by race position**: the leader pulls defensive scraps, the tail pulls the mean stuff, so
-a lead is never safe and the race is not decided by whoever gets out first. The AI uses them too.
+**weighted by race position**: out front you mostly pull a SHIELD and things to leave behind you,
+at the back you pull the TORPEDO and the GULLS. So a lead is never safe, and the race is not
+decided by whoever gets out first. The AI uses them too.
 
-| Item | What it does |
-|---|---|
-| **Turbo** | Fills the tank and kicks |
-| **Fender** | Absorbs one hit or hazard |
-| **Wake Slick** | Dropped astern — whoever hits it loses the back end |
-| **River Dye** | The St Patrick's green, dumped as a blinding cloud for anyone following |
-| **Deep Dish** | You go heavy: bulldoze on contact, at a cost to your top end |
-| **Bow Wave** | A shove that knocks nearby rivals off their line |
-| **Gull Swarm** | A flock in the face of everyone ahead of you |
-| **Gale Off The Lake** | A gust that shoves the whole field ahead of you sideways |
+| Item | What it does | Drawn most by |
+|---|---|---|
+| **Shield** | Blocks the next item, or one hard crash | the leader |
+| **Turbo** | A three-second burst well past your top end | anyone |
+| **Oil Slick** | Three slicks astern; whoever hits one spins | mid-field and up |
+| **Green Dye** | A blinding green cloud behind you | mid-field |
+| **Deep Dish** | You go heavy and shove boats aside | mid-field and back |
+| **Shockwave** | A blast of water that throws nearby boats off | the chasing pack |
+| **Gull Swarm** | A flock in the face of the four boats ahead | the back |
+| **Torpedo** | Homes up the river onto the next boat ahead | last place |
+
+Nothing chains: a boat that has just been hit, spun or blinded is **immune for two and a half
+seconds**, so the tail cannot be juggled from one item into the next. Rivals fire on a tier-scaled
+cadence — roughly six items a minute at ROOKIE against twelve at LEGEND — and they reach for a
+crate no further than you do.
 
 On by default; toggle with `I` or from the title and pause screens.
 
