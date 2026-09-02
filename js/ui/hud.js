@@ -796,9 +796,11 @@
       if (ww !== lastWrong) { els.wrong.style.display = ww ? 'block' : 'none'; lastWrong = ww; }
 
       // ghost delta in a time trial, gaps + ticker in a race
+      // 5 Hz, not 10: the two gap <b> nodes and the two ticker rows were 8.7 DOM mutations a
+      // second between them, and a gap in tenths does not read any better twice as often.
       tickerT -= dt;
       if (tickerT <= 0) {
-        tickerT = 0.1;
+        tickerT = 0.2;
         if (race.timeTrial) {
           H.setGaps(null, null);
           els.ticker.classList.toggle('on', false);

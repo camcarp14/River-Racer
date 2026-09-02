@@ -320,6 +320,7 @@
   animation:chipin 220ms var(--e-out) both}
 @keyframes chipin{from{opacity:0;transform:translateX(1.2em)}to{opacity:1;transform:none}}
 .chip.draft{color:var(--chi-blue)} .chip.drift{color:var(--gold)}
+.chip.air{color:var(--chi-blue)}    /* airtime pays boost too, and nothing said so */
 .chip.near{color:#3ED17E}          .chip.reset,.chip.bad{color:var(--chi-red)}
 .chip.gold,.chip.item{color:var(--gold)}
 

@@ -1433,7 +1433,10 @@
       if (o === b || o.finished) continue;
       const dx = o.pos.x - b.pos.x, dz = o.pos.z - b.pos.z;
       const d2 = dx * dx + dz * dz;
-      if (d2 > rr * rr || d2 < 1e-4) continue;
+      // the ring is the heavy boat's bite; it bites when a HULL enters it, so the victim's own
+      // radius counts — a speedboat centred 10 m out has her side inside a 9.7 m ring
+      const reach = rr + (o.radius || 0);
+      if (d2 > reach * reach || d2 < 1e-4) continue;
       const so = st(o);
       const own = mine(o);                   // the hull being run over decides that it was
       if (!vulnerable(o)) { if (heavyOwned) b.bumpRecover = 0; continue; }

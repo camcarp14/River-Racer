@@ -322,7 +322,7 @@
     // -38.3 dBFS three seconds into the pause, i.e. the engine roars on under the menu at whatever
     // throttle you were carrying. e.exGain and e.sub are inside e.out, so one gain is enough, and
     // doUpdate re-targets it on the next feed — resume needs no code at all.
-    if (engine) setT(engine.out.gain, EPS, 0.25);
+    if (engine) setT(engine.out.gain, EPS, 0.06);
     if (engine) setT(engine.sprayGain.gain, EPS, 0.12);
     if (rivalVoices) for (var i = 0; i < rivalVoices.length; i++) setT(rivalVoices[i].g.gain, EPS, 0.20);
     if (sendGain) setT(sendGain.gain, EPS, 0.25);

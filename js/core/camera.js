@@ -286,14 +286,18 @@
     // IN and DOWN with speed, not out. The boom used to EXTEND at 0.10 m per m/s, which pushed the
     // lens 4 m further back exactly as the FOV punch opened up — the two cancelled and 85 mph
     // looked like 40. Low and close is what makes a bascule coming at you read as a wall.
-    const back = (m.back + spd * m.backSpd) * (1 - 0.14 * spdN * m.spdK) * (1 - 0.55 * recov) * swingK;
+    const back0 = (m.back + spd * m.backSpd) * (1 - 0.14 * spdN * m.spdK) * (1 - 0.55 * recov);
+    // …and in to ~9 m through a look-back, but never inside 0.56 of the mode's own boom: at 30 m/s
+    // the speed term has already taken 10% off, and 0.55x of what is left is 8.1 m — under the
+    // 0.55*back = 9.08 m the lens has to keep off the hull.
+    const back = swing ? Math.max(back0 * swingK, 0.56 * m.back) : back0;
 
     // Never demand the lens sit further inside the channel than the boat itself does — a boat
     // grinding along the quay would otherwise reject every boom length and suck the camera in.
     toWater(boat.pos.x, boat.pos.z, 0);
     const boatClear = cq.clear;
     const edge = U().clamp(Math.min(m.edge, boatClear - 0.4), -3, m.edge);
-    const chPath = cq.path, chD = cq.d;
+    const chPath = cq.path, chD = cq.d, chTx = cq.tx, chTz = cq.tz;
     const chSign = (cq.tx * sA + cq.tz * cA) >= 0 ? 1 : -1;     // which way along the reach is behind the lens
     // the hull's own lateral offset in the channel, so the fallback pose trails on the same side
     const chLat = chPath ? (boat.pos.x - cq.qx) * -cq.tz + (boat.pos.z - cq.qz) * cq.tx : 0;
@@ -307,11 +311,18 @@
     if (!clean) {
       toWater(boat.pos.x + ox, boat.pos.z + oz, 0);
       const astern = cq.clear;
-      const wch = swing ? 1 : U().clamp((edge - astern) / 6, 0, 1);
+      const wch = U().clamp((edge - astern) / 6, 0, 1);
       if (wch > 0 && chPath) {
-        U().pathAt(chPath, chD - chSign * back, cpt);
+        // Where along the reach the fallback sits. chSign flips at 90 degrees of a look-back swing,
+        // which puts the fallback point a full boom AHEAD of a lens that is still a boom astern and
+        // flies the spring straight THROUGH the hull — measured dh 1.06 m mid-channel. Through the
+        // swing, project the orbit offset onto the reach instead: the same point when the pose is
+        // astern, and continuous all the way round.
+        const along = swing ? (ox * chTx + oz * chTz) : -chSign * back;
+        const latOff = swing ? chLat + (oz * chTx - ox * chTz) : chLat;
+        U().pathAt(chPath, chD + along, cpt);
         const lim = Math.max(0, cpt.w - Math.max(edge, 0.5));
-        const lat = U().clamp(chLat, -lim, lim);
+        const lat = U().clamp(latOff, -lim, lim);
         ox = U().lerp(ox, cpt.x - cpt.tz * lat - boat.pos.x, wch);
         oz = U().lerp(oz, cpt.z + cpt.tx * lat - boat.pos.z, wch);
       } else if (astern >= edge) clean = true;               // the plain shot is fine, no search
