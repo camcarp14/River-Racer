@@ -63,11 +63,11 @@ On by default; toggle with `I` or from the title and pause screens.
 | **Main Stem Sprint** | Wolf Point → ten bridges → the lock → finish at the lighthouse |
 | **Full River Run** | Goose Island down the North Branch, the full Main Stem, out past the pier |
 | **South Branch Charge** | Chinatown → under Willis Tower → the Loop bridges → the lock |
-| **Lake Michigan Circuit** | 3 laps of open-water chop between the pier, lighthouse and breakwater |
+| **Lake Michigan Circuit** | 2 laps of open-water chop between the pier, lighthouse and breakwater |
 
 ## Boats
 
-Pick your ride in a **live 3D showroom** — the boat idles on the lake chop with the skyline behind it while you compare **SPEED / ACCEL / CONTROL / BOOST**. Five hulls, genuinely balanced: speed always costs control. The **F1H2O tunnel-hull** is the fastest thing on the river and the most slippery; the offshore **V-hull** needs the whole channel to turn; the **jet ski** and the varnished **'47 mahogany runabout** are slower but glued down — and the runabout packs the strongest boost. Every cockpit has a **real driver** at the helm: a leaning jet-ski rider, a helmeted F1 pilot under the canopy, a flat-capped captain at the wooden wheel, a firefighter in high-vis. Pick your poison before each race: **ROOKIE, SKIPPER or LEGEND** rivals — legends run the perfect line and never lift. Cross the line first and the **1ST place pop** says so before the leaderboard does.
+Pick your ride in a **live 3D showroom** — the boat idles on the lake chop with the skyline behind it while you compare **SPEED / ACCEL / CONTROL / BOOST**. Six hulls, and speed genuinely costs control: every boat pays a **top-end steering tax** scaled to how loose she is, so the fastest thing on the water keeps less than half her wheel at full chat while the jet ski keeps nine tenths of hers. The **F1H2O tunnel-hull** is the quickest of the racing boats and the most slippery; the offshore **V-hull** needs the whole channel to turn; the **jet ski** and the varnished **'47 mahogany runabout** give away top end and take it back in the bends — and the runabout packs the strongest boost. Course records are kept **per hull**, so a lap in the slow boat is measured against the slow boat. Every cockpit has a **real driver** at the helm: a leaning jet-ski rider, a helmeted F1 pilot under the canopy, a flat-capped captain at the wooden wheel, a firefighter in high-vis. Pick your poison before each race: **ROOKIE, SKIPPER or LEGEND** rivals — legends run the perfect line and never lift. Cross the line first and the **1ST place pop** says so before the leaderboard does.
 
 **Original music, zero audio files**: a soulful Chicago-house groove on the title screen and a driving 126 BPM race track once the flag drops — all synthesized live in WebAudio, with the engines mixed low so the music rides on top.
 
@@ -80,20 +80,22 @@ Pick your ride in a **live 3D showroom** — the boat idles on the lake chop wit
 | `W` / `↑` | Throttle |
 | `S` / `↓` | Brake / reverse |
 | `A` `D` / `←` `→` | Steer |
-| `Shift` | Boost (drains fast, refills slow — spend it wisely) |
+| `Shift` | Boost (drains fast; the meter only trickles back while you are flat out) |
 | `C` | Camera (chase / close / hull) |
 | `N` | Time of day (day / sunset / **dusk** / night) |
 | `G` | Dye the river green (St. Patrick's Day) |
-| `E` | Fire the item you are holding |
-| `B` | Hold to look astern |
+| `E` / `Space` | Fire the item you are holding |
+| `B` / `Q` | Hold to look astern |
 | `P` | Photo mode (orbit camera, HUD off) |
 | `[` `]` | Cycle cinematic camera shots |
 | `M` | Sound on / off (the game boots silent) |
 | `I` | Power-ups on / off (menus only) |
-| `R` | Reset to course |
+| `R` | Reset to course (costs boost and a second of throttle) |
 | `Esc` | Pause |
 
-Gamepad (left stick + triggers) and touch (left half steers, right half throttles) both work.
+Gamepad: **left stick** steers, **RT/LT** throttle and brake, **A** throttle, **X** boost, **B** fires your item, **LB** looks astern, **Start** pauses, **Back** resets, and the d-pad works the menus.
+
+Touch: a **steering pad** in the bottom-left corner and a **throttle column** in the bottom-right with GO, BOOST and reverse, plus **FIRE** and **PAUSE** — every key above that matters in a race is a control on the glass, not a keyboard binding a phone does not have.
 
 ## Under the hood
 
