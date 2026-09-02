@@ -112,10 +112,16 @@
     // driving (0 rookie · 0.55 skipper · 1 legend), so nobody tunes one and mis-tunes the other.
     // AI_FIRE_GAP is the minimum seconds between one rival's shots. Measured without it: 19.1
     // (ROOKIE) / 21.3 (SKIPPER) / 15.0 (LEGEND) items per minute from the field, while the player
-    // drew ONE crate a race — a rookie race was a torpedo range. AI_ITEMS_PER_MIN is what the gap
-    // is aimed at with five rivals, and what the bar measures: <= 6 rookie, <= 9 skipper, <= 12
-    // legend (5 rivals * 60 / gap is the ceiling; crate supply keeps them well under it).
-    AI_FIRE_GAP: [12.0, 3.0], AI_ITEMS_PER_MIN: [6, 9, 12],
+    // drew ONE crate a race — a rookie race was a torpedo range.
+    //
+    // The gap has to be sized against how often a rival actually FINDS a crate, or it never binds.
+    // Measured at 12 s: a rival fires about every 28 s anyway, so the field still ran 10.8 (ROOKIE)
+    // and 11.1 (SKIPPER) a minute — and ROOKIE, the learning tier, was throwing MORE than LEGEND,
+    // which is the wrong way round however low the total. 70 s at ROOKIE is what the tier's own
+    // supply needs to be cut against: it lands the field at 4-5 a minute there and ~9 at SKIPPER.
+    // LEGEND is left unbound at 3 s because it is not the gap that limits a legend — patience is
+    // (9 s, they hoard for a target worth having), and they measure ~5 a minute of their own accord.
+    AI_FIRE_GAP: [70.0, 3.0], AI_ITEMS_PER_MIN: [6, 9, 12],
   };
   PU.K = K;
 
