@@ -34,7 +34,9 @@
   MENU.screen = () => screen;
   MENU.selection = () => ({ vehicleIdx, courseIdx });
 
+  let screenT = 0;                 // when the current screen was drawn — the confirm debounce reads it
   function html(s) {
+    screenT = performance.now();
     root.innerHTML = s;
     root.classList.remove('off');
     root.classList.toggle('showroom', screen === 'vehicle');
@@ -169,6 +171,9 @@
           behind you, at the back you get <b>TORPEDO</b>, <b>GULL SWARM</b> and <b>SHOCKWAVE</b>.<span class="k-hint"> <b>I</b> turns items off.</span><br>
           Thread the checkpoint buoys — <span style="color:#EF3340">red LEFT</span>,
           <span style="color:#3ED17E">green RIGHT</span>. Gold gates off the racing line pay boost.
+          So do the things nobody tells you about: <b>catching a slide</b> (steer INTO it as the
+          stern lets go), <b>air</b> off a ramp or a lake swell, and <b>drafting</b> a rival's wake.
+          The meter only trickles back up when you are flat out, so boost is earned, not waited for.
           The nine bascule bridges raise and lower on their own all day, like the real ones do.
           A raised span gives you more clearance, not less — you can always get under.
         </div>
@@ -403,6 +408,10 @@
       <div id="select-title">HOW TOUGH ARE THE RIVALS?</div>
       <div id="select-sub">${cupMode ? 'FOUR ROUNDS AT THIS SETTING' : ''}<span class="k-hint">${cupMode ? ' · ' : ''}↑↓ SELECT · ENTER RACE · BKSP BACK</span><span class="t-hint">${cupMode ? ' · ' : ''}TAP A LEVEL TO RACE</span></div>
       <div class="menu-list">${rows}</div>
+      <!-- the one sentence that says what these three words MEAN was the least readable text in
+           the game: a plain note in dim ink over a bright live flythrough. It gets a panel
+           (uikit's #diff-desc rule) rather than putting the whole picker behind the scrim — the
+           difficulty screen is meant to sit over the live river like the other pickers. -->
       <div class="menu-note" id="diff-desc" style="max-width:520px;">${DIFFS[sel].desc}</div>
     `);
     bindClicks(DIFFS.map((d) => () => {
@@ -418,15 +427,23 @@
   // ---------- course select ----------
   function showCourses() {
     screen = 'course'; sel = courseIdx;
+    // BEST is the record for the hull you are about to drive, not the overall one: a single
+    // podracer run (61 m/s against the FORMULA's 41) used to stand as THE course record for every
+    // other boat for good, so no other hull could ever post one. The overall line still shows
+    // beside it when a faster boat holds it.
+    const hullId = (RR.Boats.CATALOG[vehicleIdx] || {}).id;
     const cards = RR.Race.COURSES.map((c, i) => {
-      const best = RR.Race.best(c.id);
+      const mine = RR.Race.best(c.id, hullId);
+      const any = RR.Race.best(c.id);
+      const alsoAny = any != null && (mine == null || any < mine - 1e-6);
       return `
       <div class="card" data-i="${i}">
         <div class="tag">${c.loop ? c.laps + ' LAPS' : 'SPRINT'}</div>
         <h3>${c.name}</h3>
         <canvas width="220" height="110" id="ccard-${i}"></canvas>
         <div class="desc">${c.desc}</div>
-        <div class="statbar"><span>BEST&nbsp;</span><span style="color:#FFC857">${best ? RR.U.formatTime(best) : '—'}</span></div>
+        <div class="statbar"><span>BEST&nbsp;</span><span style="color:#FFC857">${mine ? RR.U.formatTime(mine) : '—'}</span>${
+          alsoAny ? `<span style="opacity:.6;margin-left:.5em">ANY ${RR.U.formatTime(any)}</span>` : ''}</div>
       </div>`;
     }).join('');
     html(`
@@ -485,17 +502,25 @@
   function fmtGap(d) {
     return d < 60 ? '+' + d.toFixed(2) : '+' + RR.U.formatTime(d);
   }
+  // A row whose boat was still on the water when the card opened carries `projected`: race.js has
+  // worked out where she will cross from her own average speed, so the row says so with a ≈ and
+  // quotes the gap in METRES, which is the honest number. It used to print DNF — for a rival who
+  // was three seconds behind you.
   function resultRows(results, cup) {
     const t0 = results.length && isFinite(results[0].time) ? results[0].time : 0;
     return results.map((r, i) => {
-      const gap = isFinite(r.time) ? (i === 0 ? '+0.00' : fmtGap(r.time - t0)) : '—';
+      const est = !!r.projected;
+      const gap = isFinite(r.time)
+        ? (est && r.gapM != null ? '−' + Math.round(r.gapM) + ' m' : i === 0 ? '+0.00' : fmtGap(r.time - t0))
+        : '—';
       const pts = cup ? `<span class="pts">${RR.Race.CUP_POINTS[Math.min(i, RR.Race.CUP_POINTS.length - 1)]}</span>` : '';
+      const time = isFinite(r.time) ? (est ? '≈' : '') + RR.U.formatTime(r.time) : 'DNF';
       return `
-      <div class="result-row ${cup ? 'cup ' : ''}${r.boat && r.boat.isPlayer ? 'you ' : ''}p${i + 1}">
+      <div class="result-row ${cup ? 'cup ' : ''}${r.boat && r.boat.isPlayer ? 'you ' : ''}${est ? 'est ' : ''}p${i + 1}">
         <span class="p">${i + 1}</span>
         <span class="n">${r.boat && r.boat.isPlayer ? 'YOU' : String(r.boat && r.boat.pilotName || 'RIVAL').toUpperCase()}</span>
         <span class="h">${hullName(r.boat)}</span>
-        <span class="t">${isFinite(r.time) ? RR.U.formatTime(r.time) : 'DNF'}</span>
+        <span class="t">${time}</span>
         <span class="gap">${gap}</span>${pts}
       </div>`;
     }).join('');
@@ -511,38 +536,94 @@
     if (typeof m === 'number') return MEDALS[Math.max(0, Math.min(3, m))] || null;
     return String(m).toUpperCase();
   }
+  // The whole ladder, not just the rung you landed on. A player who missed BRONZE by 1.8 s used to
+  // see NOTHING — no strip at all — and so never learned that a medal ladder exists or how close
+  // they were. The pars are scaled to the hull you actually drove (progress.js hullFactor), so the
+  // strip says which hull they are for.
   function medalStrip(courseId) {
-    let medal = null, prev = null;
+    let medal = null, prev = null, par = null, time = null, hull = null;
     try {
       const P = RR.Progress;
       const s = P && P.summary ? P.summary(courseId) : null;
-      if (s) { medal = medalName(s.medal); prev = medalName(s.prevMedal); }
+      if (s) {
+        medal = medalName(s.medal); prev = medalName(s.prevMedal);
+        par = s.par; time = s.time; hull = s.hull;
+      }
     } catch (e) { /* the strip is never worth an exception */ }
-    if (!medal) return '';
-    const body = (prev && prev !== medal) ? `<s>${prev}</s> → <u>${medal}</u>` : `<u>${medal}</u>`;
-    return `<div id="medal-strip"><i class="star6"></i>MEDAL<span>${body}</span></div>`;
+    if (!par || !isFinite(time)) {
+      if (!medal) return '';
+      const body = (prev && prev !== medal) ? `<s>${prev}</s> → <u>${medal}</u>` : `<u>${medal}</u>`;
+      return `<div id="medal-strip"><i class="star6"></i>MEDAL<span>${body}</span></div>`;
+    }
+    // par is keyed by tier name in progress.js; accept an array too so a reshuffle cannot blank it
+    const tiers = MEDALS.map((name, i) => {
+      const t = Array.isArray(par) ? par[i] : (par[name.toLowerCase()] != null ? par[name.toLowerCase()] : par[name]);
+      return { name, t: typeof t === 'number' && isFinite(t) ? t : null };
+    }).filter((x) => x.t != null);
+    if (!tiers.length) return '';
+    const earnedIdx = medal ? MEDALS.indexOf(medal) : -1;
+    const rungs = tiers.map((x, i) => {
+      const got = earnedIdx >= 0 && i <= earnedIdx;
+      return `<span class="rung${got ? ' got' : ''}${i === earnedIdx ? ' now' : ''}">${x.name} ${RR.U.formatTime(x.t)}</span>`;
+    }).join('');
+    // the next rung up is the target this run just missed — the number that brings you back
+    const next = tiers.find((x) => x.t < time - 1e-6 && (earnedIdx < 0 || MEDALS.indexOf(x.name) > earnedIdx))
+      || tiers.slice().reverse().find((x) => x.t < time - 1e-6);
+    const nextLine = next ? `<span class="next">NEXT: ${next.name} −${(time - next.t).toFixed(2)}s</span>` : '';
+    const move = (prev && medal && prev !== medal) ? `<s>${prev}</s> → ` : '';
+    const head = medal ? `${move}<u>${medal}</u>` : 'NO MEDAL';
+    return `<div id="medal-strip"><i class="star6"></i>MEDAL<span>${head}</span>` +
+      `<div class="ladder">${rungs}${nextLine}</div>` +
+      (hull ? `<div class="ladder-note">TARGETS FOR ${up(hullNameOf(hull))}</div>` : '') + `</div>`;
+  }
+  function hullNameOf(id) {
+    const v = RR.Boats && RR.Boats.CATALOG ? RR.Boats.CATALOG.find((x) => x.id === id) : null;
+    return v ? v.name : id;
   }
 
   MENU.showResults = function (results, courseId) {
     screen = 'results'; sel = 0;
     const prevBest = bestAtStart;
     const me = results.find((r) => r.boat && r.boat.isPlayer);
-    const record = !!(me && isFinite(me.time) && (!prevBest || me.time < prevBest - 1e-6));
+    // The banner needs a mark to have BEATEN. On a first finish there is none, and calling that a
+    // course record devalued the banner on the one screen where it first appears — so the first
+    // run says what it actually is.
+    const first = !prevBest && !!(me && isFinite(me.time));
+    const record = !!(me && isFinite(me.time) && prevBest && me.time < prevBest - 1e-6);
+    // Read the live race BEFORE anything tears it down: the ghost's time and whether it was beaten
+    // live on the race state, and quitToTitle (below, on every exit) drops it.
+    const S = RR.Race.state ? RR.Race.state() : null;
+    const tt = !!(S && S.timeTrial);
+    const ghostT = S && isFinite(S.ghostTime) ? S.ghostTime : null;
+    const ghostBeaten = !!(S && S.ghostBeaten);
     // cupRecord() BANKS the round — call it exactly once, here, before anything reads the board
     const cup = cupMode && RR.Race.cupRecord ? RR.Race.cupRecord(results) : null;
     const board = cup && RR.Race.cupBoard ? RR.Race.cupBoard() : null;
     const fresh = board ? board.roundsDone - 1 : -1;
     const round = board && board.rounds[fresh] ? board.rounds[fresh] : null;
     const head = `<div class="result-head${cup ? ' cup' : ''}"><span>POS</span><span>PILOT</span><span class="h">HULL</span><span>TIME</span><span>GAP</span>${cup ? '<span>PTS</span>' : ''}</div>`;
+    // A one-boat field is not a podium: the time trial is about the ghost, so it says so.
     const title = board ? 'ROUND ' + board.roundsDone + ' RESULT'
-      : (results[0] && results[0].boat && results[0].boat.isPlayer ? 'RIVER CHAMP' : 'RACE COMPLETE');
-    const sub = board
-      ? 'THE CHICAGO CUP · ROUND ' + board.roundsDone + ' OF ' + board.total + (round ? ' · ' + up(round.name) : '')
-      : 'BEST: ' + (prevBest ? RR.U.formatTime(prevBest) : '—');
+      : tt ? (ghostBeaten ? 'NEW BEST LAP' : ghostT != null ? 'LAP COMPLETE' : 'FIRST LAP SET')
+        : (results[0] && results[0].boat && results[0].boat.isPlayer ? 'RIVER CHAMP' : 'RACE COMPLETE');
+    let sub;
+    if (board) {
+      sub = 'THE CHICAGO CUP · ROUND ' + board.roundsDone + ' OF ' + board.total + (round ? ' · ' + up(round.name) : '');
+    } else if (tt) {
+      const d = ghostT != null && me && isFinite(me.time) ? me.time - ghostT : null;
+      sub = 'TIME TRIAL' + (ghostT != null ? ' · GHOST ' + RR.U.formatTime(ghostT) : ' · NO GHOST YET') +
+        (me && isFinite(me.time) ? ' · YOU ' + RR.U.formatTime(me.time) : '') +
+        (d != null ? ' <b style="color:' + (d < 0 ? '#3ED17E' : '#EF3340') + '">' + (d < 0 ? '−' : '+') + Math.abs(d).toFixed(2) + '</b>' : '');
+    } else {
+      // the difficulty the run was actually raced at: a time set against ROOKIE traffic and one
+      // set against LEGEND are not the same result, and the card never said which it was
+      sub = 'BEST: ' + (prevBest ? RR.U.formatTime(prevBest) : '—') + ' · ' + diffName();
+    }
     html(`
       <div id="select-title">${title}</div>
       <div id="select-sub">${sub}</div>
-      ${record ? '<div id="record-banner">★ NEW COURSE RECORD ★</div>' : ''}
+      ${record ? '<div id="record-banner">★ NEW COURSE RECORD ★</div>'
+        : first ? '<div id="record-banner">FIRST TIME SET · ' + RR.U.formatTime(me.time) + '</div>' : ''}
       <div id="results-list">${head}${resultRows(results, !!cup)}</div>
       ${medalStrip(courseId)}
       <div class="menu-list" style="margin-top:1.0em;">
@@ -553,11 +634,24 @@
         <div class="menu-item" data-i="2">TITLE SCREEN</div>`}
       </div>
     `);
+    // EVERY exit tears the race down first. Only the pause menu's QUIT used to, so the finished
+    // field, the finish arch, the crates and a truthy RR.Race.state() rode out onto the title
+    // screen — where the bridge tender's horn plays under the title music and the lock stalls on
+    // the boat still parked between its sills. quitToTitle is idempotent, so RACE AGAIN can take
+    // the same door before it opens the next race.
     bindClicks(board
-      ? [() => showCupBoard(fresh), () => { cupMode = false; showTitle(); }]
-      : [() => launch(), () => { cupMode = false; showCourses(); }, () => { cupMode = false; showTitle(); }]);
+      ? [() => { quit(); showCupBoard(fresh); }, () => { quit(); cupMode = false; showTitle(); }]
+      : [() => { quit(); launch(); }, () => { quit(); cupMode = false; showCourses(); }, () => { quit(); cupMode = false; showTitle(); }]);
     paintSel();
   };
+  // the one teardown door: main.js's quitToTitle (clearBoats, RR.Race.end, engine + music off,
+  // timeScale back to 1). Safe to call twice and safe to call with no race up.
+  function quit() { if (MENU.onQuit) MENU.onQuit(); }
+  function diffName() {
+    const d = difficulty;
+    const row = DIFFS.find((x) => x.v === d);
+    return row ? row.name : 'SKIPPER';
+  }
 
   // ---------- the championship board ----------
   // Everything the owner asked for on one screen: which round just went, which is next, every
@@ -707,8 +801,8 @@
     `);
     const newCup = () => { if (RR.Race.cupAbandon) RR.Race.cupAbandon(); cupMode = true; cupPending = true; showVehicles({ cup: true }); };
     bindClicks(board.done
-      ? [newCup, () => { cupMode = false; showTitle(); }]
-      : [() => launch(), () => { cupMode = false; showTitle(); }, newCup]);
+      ? [newCup, () => { quit(); cupMode = false; showTitle(); }]
+      : [() => launch(), () => { quit(); cupMode = false; showTitle(); }, newCup]);
     paintSel();
   }
   MENU.showCupBoard = showCupBoard;
@@ -730,7 +824,7 @@
       <div id="results-list"><div class="result-head"><span>POS</span><span>PILOT</span><span class="h">HULL</span><span>TIME</span><span>GAP</span></div>${rows}</div>
       <div class="menu-list" style="margin-top:1.0em;"><div class="menu-item" data-i="0">TITLE SCREEN</div></div>
     `);
-    bindClicks([() => { if (RR.Net && RR.Net.leave) RR.Net.leave(); showTitle(); }]);
+    bindClicks([() => { if (RR.Net && RR.Net.leave) RR.Net.leave(); quit(); showTitle(); }]);
     paintSel();
   };
 
@@ -743,7 +837,7 @@
       <div id="select-title">PAUSED</div>
       <div class="menu-list">
         <div class="menu-item" data-i="0">RESUME</div>
-        <div class="menu-item" data-i="1">RESTART RACE</div>
+        <div class="menu-item" data-i="1">RESTART ${cupMode ? 'ROUND' : 'RACE'}</div>
         <div class="menu-item" data-i="2">QUIT TO TITLE</div>
       </div>
       <div id="vol-panel">
@@ -883,7 +977,10 @@
     if (!tourMode && !timeTrial && !cupMode) rememberRun(courseIdx, vehicleIdx);
     MENU.hide();
     RR.Audio.setMusic(false);
-    onStartRace(courseIdx, vehicleIdx, timeTrial, null, tourMode);
+    // cupMode goes over EXPLICITLY. main.js used to infer a cup round from "this course happens to
+    // be the one the open cup is on next", so a plain RACE → LEGEND on that course silently got a
+    // ROOKIE field under the cup's names, and the difficulty screen lied.
+    onStartRace(courseIdx, vehicleIdx, timeTrial, null, tourMode, !!cupMode);
   }
 
   // ---------- selection plumbing ----------
@@ -945,13 +1042,26 @@
 
   window.addEventListener('keydown', (e) => {
     if (screen === 'none') return;
+    // A menu belongs to whoever is not typing in it. The multiplayer name and room boxes sit over
+    // the title screen, so without this Backspace navigated BACK instead of deleting a character
+    // and Space re-rendered the form out from under the caret — measured: you could not type a
+    // space in your own name.
+    if (typing(e.target)) return;
     RR.Audio.init();
     const vertical = screen === 'title' || screen === 'results' || screen === 'pause' || screen === 'help' ||
       screen === 'difficulty' || screen === 'cup';
     if ((vertical && e.code === 'ArrowUp') || (!vertical && e.code === 'ArrowLeft')) { sel = (sel - 1 + actions.length) % actions.length; RR.Audio.uiMove(); paintSel(); }
     else if ((vertical && e.code === 'ArrowDown') || (!vertical && e.code === 'ArrowRight')) { sel = (sel + 1) % actions.length; RR.Audio.uiMove(); paintSel(); }
-    else if (e.code === 'Enter' || e.code === 'Space') { RR.Audio.uiSelect(); if (actions[sel]) actions[sel](); }
-    else if (e.code === 'Backspace' || e.code === 'Escape') {
+    else if (e.code === 'Enter' || e.code === 'Space') {
+      // A confirm is a PRESS, never a repeat: holding ENTER on the title used to walk title →
+      // vehicle → course → difficulty in 130 ms and start a race nobody chose. The 150 ms after a
+      // screen change is the same guard against the tail of the keystroke that opened it — and it
+      // deliberately does not cover Backspace, so backing out fast stays fast.
+      if (e.repeat || performance.now() - screenT < 150) return;
+      RR.Audio.uiSelect();
+      if (actions[sel]) actions[sel]();
+    } else if (e.code === 'Backspace' || e.code === 'Escape') {
+      if (e.repeat) return;
       if (screen === 'vehicle' || screen === 'help' || screen === 'cup') showTitle();
       else if (screen === 'course') showVehicles({ tt: timeTrial, tour: tourMode, cup: cupMode });
       else if (screen === 'difficulty') { if (cupMode) showVehicles({ cup: true }); else showCourses(); }

@@ -575,6 +575,26 @@
 #medal-strip u{text-decoration:none;color:var(--gold)}
 #medal-strip s{text-decoration:none;color:var(--text-dim)}
 #medal-strip .up{color:var(--gold)}
+/* The whole ladder, not just the rung you landed on: a run 1.8 s outside BRONZE used to draw no
+   strip at all, so the medal ladder was invisible to the player it exists for. The strip wraps
+   rather than growing wide — it sits under a six-row table on a 720p screen. */
+#medal-strip{flex-wrap:wrap;max-width:min(92vw,860px)}
+#medal-strip .ladder{flex:1 1 100%;display:flex;flex-wrap:wrap;justify-content:center;gap:.4em .9em;
+  margin-top:.15em;font:600 .92em/1.5 var(--f-ui);letter-spacing:.10em}
+#medal-strip .rung{color:var(--text-dim)}
+#medal-strip .rung.got{color:var(--text-mute)}
+#medal-strip .rung.now{color:var(--gold);text-decoration:underline}
+#medal-strip .next{color:var(--chi-blue)}
+#medal-strip .ladder-note{flex:1 1 100%;text-align:center;margin-top:.1em;
+  font:600 .80em/1.4 var(--f-ui);letter-spacing:.14em;color:var(--text-dim)}
+/* a projected finish (the boat was still on the water when the card opened) reads as an estimate
+   rather than a crossing — the ≈ is in the markup, this is the rest of the tell */
+.result-row.est .t,.result-row.est .gap{color:var(--text-dim);font-style:italic}
+/* ROOKIE / SKIPPER / LEGEND is the one choice a new player makes blind, and the sentence that
+   explains it was drawn in dim ink straight over the flythrough. A panel, not the whole-screen
+   scrim: this picker belongs over the live river. */
+#diff-desc{background:var(--panel-hi);box-shadow:inset 0 0 0 2px var(--rule-soft);border-radius:2px;
+  padding:.85em 1.3em;color:var(--text-mute);text-shadow:none}
 #record-banner{margin:.9em 0;padding:.7em 1.4em;background:var(--gold);color:var(--ink-900);
   font:700 .95em/1 var(--f-ui);letter-spacing:.28em;text-align:center;border-radius:2px;
   animation:recordin 620ms var(--e-pop) both}

@@ -97,6 +97,20 @@
     if (room) UI.openEntry({ room: room, name: q.get('name'), boat: parseInt(q.get('boat') || '', 10) });
   };
 
+  // The form sits OVER the title screen, so menus.js and input.js are both still listening. They
+  // now ignore events whose target is a text box, but the form owns its own keys as well: Enter
+  // joins, Escape cancels, and nothing inside it reaches the menu at all.
+  function ownKeys(el) {
+    if (!el || el.dataset.rrKeys) return;
+    el.dataset.rrKeys = '1';
+    el.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.code === 'Enter' && !e.repeat) { e.preventDefault(); const j = $('#ne-join'); if (j) j.click(); }
+      else if (e.code === 'Escape' && !e.repeat) { e.preventDefault(); hide(); }
+    });
+    el.addEventListener('keyup', (e) => e.stopPropagation());
+  }
+
   UI.openEntry = function (pre) {
     pre = pre || {};
     const savedName = pre.name || localStorage.getItem('rr_name') || '';
@@ -198,7 +212,7 @@
 
   function minId(roster) { let m = roster[0].id; for (const r of roster) if (r.id < m) m = r.id; return m; }
   function randCode() { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < 4; i++) s += A[Math.floor(Math.random() * A.length)]; return s; }
-  function show() { root.classList.add('on'); }
+  function show() { root.classList.add('on'); ownKeys(root); }
   function hide() { root.classList.remove('on'); }
   UI.show = show; UI.hide = hide;
 

@@ -98,7 +98,7 @@
     RR.Menus.onVehicleFocus = (i) => {
       const liv = RR.Menus.livery ? RR.Menus.livery() : null;
       if (showIdx === i && showBoat && showBoat.userData.livery === liv) return;
-      if (showBoat) RR.Engine.scene.remove(showBoat);
+      if (showBoat) { RR.Engine.scene.remove(showBoat); if (RR.Race.disposeObject) RR.Race.disposeObject(showBoat); }
       showBoat = RR.Boats.build(liverySpec(RR.Boats.CATALOG[i]));
       showBoat.userData.livery = liv;
       showBoat.position.set(SHOW.x, 0.3, SHOW.z);
@@ -109,7 +109,13 @@
       RR.Engine.scene.add(showBoat);
       showIdx = i;
     };
-    RR.Menus.onResume = () => { mode = 'race'; RR.Engine.timeScale = 1; };
+    RR.Menus.onResume = () => {
+      mode = 'race'; RR.Engine.timeScale = 1;
+      // SPACE both confirms a menu row and fires your item, and the key is still down on the frame
+      // the race resumes: powerups polls a rising edge, so unpausing threw whatever you were
+      // holding. armKey tells it the key was already down.
+      if (RR.Powerups && RR.Powerups.armKey) RR.Powerups.armKey();
+    };
     RR.Menus.onQuit = quitToTitle;
     setupNet();
     if (RR.NetUI) RR.NetUI.init();
@@ -143,7 +149,12 @@
 
   // ---------- race lifecycle ----------
   function clearBoats() {
-    for (const b of boats) RR.Engine.scene.remove(b.mesh);
+    for (const b of boats) {
+      RR.Engine.scene.remove(b.mesh);
+      // the hull's geometry and its own textures go with it: six hulls a race, every race, was
+      // most of what a long session leaked to the GPU
+      if (RR.Race && RR.Race.disposeObject) RR.Race.disposeObject(b.mesh);
+    }
     RR.FX.clearBoats();
     boats = []; pilots = []; remotes = []; player = null;
   }
@@ -263,6 +274,8 @@
   // roster (multiplayer) = [{id, name, boatIdx, isSelf}] sorted identically on every client
   function startRace(courseIdx, vehicleIdx, timeTrial, roster, tourMode, cupRound) {
     clearBoats();
+    clearAutopilot();                                 // never drive race N with race N-1's pilot
+    deniedT = 0; payT = 0; lastPos = 0; posSettle = 0;
     if (RR.HUD.resetSession) RR.HUD.resetSession();
     if (RR.Feel && RR.Feel.cancelFinale) RR.Feel.cancelFinale();   // a finish beat must not open over a new race
     RR.Engine.timeScale = 1;                          // clear any pause/photo slo-mo from a prior race
@@ -338,8 +351,16 @@
       // the same names, at the difficulty the cup began at. race.js stores that roster; without it
       // the standings table can only say "RIVAL 3".
       const board = RR.Race.cup ? RR.Race.cup() : null;
-      const isCupRound = !!(board && !board.done &&
-        (cupRound === true || (cupRound == null && RR.Race.cupCourseIdx && RR.Race.cupCourseIdx() === courseIdx)));
+      // The cup says so or it is not a cup round. This used to be inferred — "the open cup's next
+      // round happens to be on this course" — so choosing RACE → LEGEND on that course handed you
+      // a ROOKIE field under the cup's names while the difficulty screen said LEGEND. menus.js
+      // passes the flag now.
+      const isCupRound = !!(board && !board.done && cupRound === true);
+      // A one-off race draws five of the twelve names rather than always the same five in the same
+      // order: ai.js hands them out by pilot index, so every race since launch was Wade, Lou,
+      // Stella, Dre, Gus — and "Stella won again" could never mean anything. The cup keeps its own
+      // stored roster, which is the whole point of a season.
+      if (!isCupRound && RR.AI.newField) RR.AI.newField((Date.now() ^ (courseIdx * 2654435761)) >>> 0);
       const names = isCupRound && RR.Race.cupFieldNames ? RR.Race.cupFieldNames() : null;
       const cupDiff = isCupRound && RR.Race.cupDifficulty ? RR.Race.cupDifficulty() : null;
       const diff = cupDiff != null ? cupDiff : (RR.Menus && RR.Menus.difficulty ? RR.Menus.difficulty() : 1);
@@ -367,8 +388,18 @@
       b.onLaunch = () => { if (b.isPlayer) RR.Audio.seagull(); };
       b.onBump = (sev, nx, nz) => {
         RR.FX.splashBurst(b.pos.x, b.pos.y, b.pos.z, sev * 0.6);
-        if (b.isPlayer) { RR.Audio.thud(sev * 0.9); RR.Camera.kick(sev * 0.7); }
-        else { b.bumpRecover = Math.max(b.bumpRecover || 0, 0.30 + sev * 0.55); }  // a solid hit rattles the AI
+        if (b.isPlayer) {
+          RR.Audio.thud(sev * 0.9); RR.Camera.kick(sev * 0.7);
+          // Contact used to rattle only the AI, so body-checking a LEGEND at speed was free and
+          // was the cheapest way to beat one. A HARD hit costs the player the wheel too — but
+          // briefly, and only a hard one: control feel is this game's first principle.
+          if (sev > 0.6) b.bumpRecover = Math.max(b.bumpRecover || 0, 0.15);
+        } else {
+          // …and a rival who initiated the lean pays half, so leaning on somebody can actually gain
+          const p = pilots.find((x) => x.boat === b);
+          const init = p && p.shoveHold > 0;
+          b.bumpRecover = Math.max(b.bumpRecover || 0, (0.30 + sev * 0.55) * (init ? 0.5 : 1));
+        }
       };
       // hull slap: the texture that stops the ride feeling like ice
       b.onSlap = (k) => {
@@ -378,9 +409,36 @@
         }
         RR.FX.spray(b.pos.x, b.pos.y + 0.1, b.pos.z, 0, 2.2 + k * 3, 0, 2, 2.0 + k * 2, 1.1);
       };
+      if (!b.isPlayer) continue;
+      // THE CATCH. physics.js pays a caught slide once, sized by the slip; this is the half that
+      // tells you it happened, which is the whole of how anyone learns the mechanic exists.
+      b.onCatch = (pay, slipDeg) => {
+        if (RR.HUD.chip) RR.HUD.chip('drift', 'CAUGHT IT +' + pay.toFixed(2) + ' · ' + Math.round(slipDeg) + '°', 1500);
+        RR.Camera.kick(0.15);
+        if (RR.Audio.boostGate) RR.Audio.boostGate();
+      };
+      // SHIFT on a dry tank was indistinguishable from a broken key.
+      b.onBoostDenied = () => {
+        if (deniedT > 0) return;
+        deniedT = 1.2;
+        if (RR.HUD.boostDenied) RR.HUD.boostDenied();
+        if (RR.Audio.boostDenied) RR.Audio.boostDenied();
+        if (RR.HUD.chip) RR.HUD.chip('bad', 'NO BOOST — TANK LOW', 1100);
+      };
+      b.onBoostStart = () => { if (RR.Audio.boostIgnite) RR.Audio.boostIgnite(); };
     }
 
-    RR.Race.onCount = (n) => { RR.HUD.countdown(n); if (n > 0) RR.Audio.countdownBeep(false); else { RR.Audio.countdownBeep(true); RR.Audio.airhorn(); } };
+    RR.Race.onCount = (n) => {
+      RR.HUD.countdown(n);
+      if (n > 0) RR.Audio.countdownBeep(false);
+      else { RR.Audio.countdownBeep(true); RR.Audio.airhorn(); }
+      // Rivals light the full-tank boost on the first racing frame, and nothing ever told a new
+      // player they could. At ROOKIE and SKIPPER, say so on the grid — once, on the three.
+      if (n === 3 && !raceState.tour && !raceState.timeTrial &&
+          (RR.Menus.difficulty ? RR.Menus.difficulty() : 1) <= 1.0 && RR.HUD.chip) {
+        RR.HUD.chip('near', RR.Input.hasTouch ? 'HOLD BOOST AT GO' : 'HOLD SHIFT AT GO', 3200);
+      }
+    };
     // THE BUOY RULE. race.js pays the gate itself now — between the buoys 0.10-0.26 by line
     // quality and clean-gate streak, outside them 0.06 — so the flat +0.45 that used to live here
     // is gone. All this adds is the tell: a clean line reads +BOOST, a wide one reads WIDE.
@@ -392,7 +450,35 @@
       if (RR.HUD.chip) RR.HUD.chip(clean ? 'near' : 'bad', clean ? '+BOOST' : 'WIDE — LESS BOOST', 1100);
       else RR.HUD.flash(clean ? '+BOOST' : 'WIDE');
     };
-    RR.Race.onLap = () => { RR.Audio.checkpoint(); };
+    // THE BELL LAP. The moment that decides a two-lap race — the one the AI already empties its
+    // tank for — used to pass with a checkpoint chime and a line of small text reading 'LAP 2/2'.
+    RR.Race.onLap = (lap) => {
+      const laps = (raceState && raceState.course && raceState.course.laps) || 1;
+      const final = lap >= laps - 1;
+      RR.HUD.flash(final ? 'FINAL LAP' : 'LAP ' + Math.min(laps, lap + 1));
+      RR.Audio.checkpoint();
+      if (final) {
+        RR.Audio.airhorn();
+        if (RR.Audio.setMusicIntensity) RR.Audio.setMusicIntensity(1);
+        if (RR.HUD.chip) RR.HUD.chip('near', 'LAST TIME ROUND — SPEND THE TANK', 2600);
+      }
+    };
+    // A rival crossing ahead of you is the win going, and it was silent.
+    RR.Race.onRivalFinish = (b, pos) => {
+      if (!b || pos > 3) return;                      // only the places worth hearing about
+      if (RR.HUD.chip) RR.HUD.chip('bad', String(b.pilotName || 'RIVAL').toUpperCase() + ' FINISHED · ' + pos + RR.U.ordinal(pos), 2200);
+      if (RR.Audio.rivalFinish) RR.Audio.rivalFinish();
+      else if (RR.Audio.airhorn) RR.Audio.airhorn();
+    };
+    // THE START, paid and named. race.js decides the verdict on the frame of GO.
+    RR.Race.onPerfectStart = () => {
+      if (RR.HUD.chip) RR.HUD.chip('gold', 'PERFECT START', 1800);
+      RR.Camera.kick(0.22);
+      RR.Audio.airhorn();
+    };
+    RR.Race.onJumpStart = () => {
+      if (RR.HUD.chip) RR.HUD.chip('bad', 'JUMP START — HELD BACK', 1800);
+    };
     // race.js already pays the boost, kicks the camera and rings the chime; all this adds is the
     // gate's name, so the player learns WHICH line paid.
     RR.Race.onBoostGate = (gate) => {
@@ -400,7 +486,20 @@
     };
     RR.Race.onPlayerFinish = (pos, time) => {
       if (raceState.mp && RR.Net.active) RR.Net.sendFinish(time);   // tell the room my elapsed time
-      RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.showPlacement(pos);
+      // A time trial is a one-boat field, so 'pos' is always 1 and the finish used to stage a
+      // champion's fanfare whether or not you beat the ghost — the one number the mode is about.
+      if (raceState.timeTrial) {
+        const gt = raceState.ghostTime;
+        const beaten = !!raceState.ghostBeaten;
+        RR.Audio.finishFanfare(beaten); RR.Audio.airhorn();
+        if (gt != null && isFinite(gt)) {
+          const d = time - gt;
+          RR.HUD.flash((d < 0 ? '−' : '+') + Math.abs(d).toFixed(2) + (beaten ? '  NEW BEST' : ''));
+        } else RR.HUD.flash('LAP SET  ' + RR.U.formatTime(time));
+        if (!beaten) return;                       // the confetti belongs to a lap you actually won
+      } else {
+        RR.Audio.finishFanfare(pos === 1); RR.Audio.airhorn(); RR.HUD.showPlacement(pos);
+      }
       const g = raceState && raceState.finishGate;
       if (g) {
         if (RR.FX.confetti) RR.FX.confetti(g.x, 12, g.z, 260);
@@ -412,6 +511,9 @@
       }
     };
     RR.Race.onRaceOver = (results) => {
+      // photo mode holds the world at 0.25x and the cine bars over the screen; the results card
+      // is neither of those, and nothing downstream ever put the clock back
+      if (mode === 'photo') togglePhotoMode();
       mode = 'results';
       RR.HUD.show(false);
       RR.Audio.stopEngine();
@@ -423,7 +525,9 @@
     RR.Audio.startEngine(player.spec.engine || player.spec.kind);   // the tour boat runs a diesel
     if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(true);
     RR.HUD.show(true);
-    RR.Camera.setMode(0);
+    // the camera you chose is the camera you get: C used to be forgotten at every race start, so a
+    // hull-cam player pressed it twice before every single race. (The tour overrides it below.)
+    RR.Camera.setMode(RR.Camera.savedMode ? RR.Camera.savedMode() : 0);
     RR.Camera.snapTo(player);
     if (tourMode) {
       tourCam = 0;
@@ -436,7 +540,6 @@
   function quitToTitle() {
     mode = 'menu';
     if (RR.Feel && RR.Feel.cancelFinale) RR.Feel.cancelFinale();
-    RR.Engine.timeScale = 1;
     docent = null; tourDriving = false;
     RR.Input.onFTap = null; RR.Input.onFiveF = null;
     RR.HUD.show(false);
@@ -444,7 +547,20 @@
     if (RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(false);
     clearBoats();
     if (RR.Race.end) RR.Race.end();
+    clearAutopilot();
     raceState = null;
+    // AFTER Race.end, not before: end() calls cancelFinale, whose reset() writes back whatever
+    // feel.js has adopted as the base — and if the quit came from the pause menu that base is 0.
+    // Written first, the title screen inherited a frozen clock until the next race started.
+    RR.Engine.timeScale = 1;
+  }
+  // the harness autopilot captures the boat and route of the race it was made in, so a second race
+  // in the same page was driven by a pilot steering a dead hull down the old course
+  function clearAutopilot() {
+    const T = window.RRTest;
+    if (!T || !T._autopilot) return;
+    if (T._origInput) RR.Input.update = T._origInput;
+    T._autopilot = null;
   }
 
   function resetToCourse() {
@@ -454,6 +570,9 @@
     player.heading = Math.atan2(pt.tx, pt.tz);
     player.vel.x = 0; player.vel.z = 0; player.angVel = 0;
     player.airborne = false; player.vy = 0;
+    // the same stale-hint clear the teleport hook does: a water query hinted at where she WAS
+    // drags her back toward it from where she now is
+    player.hint = {}; player.routeHint = null;
     // a free tow back to the line has to cost something, or the wall is a shortcut
     if (RR.Physics.resetPenalty) RR.Physics.resetPenalty(player);   // −0.30 boost, 1.2 s dead throttle
     if (RR.HUD.chip) RR.HUD.chip('bad', 'RESET −1.2s', 1400);
@@ -477,7 +596,10 @@
       if (raceState && raceState.tour) setTourView(tourCam + 1);
       else RR.Camera.cycle();
     }
-    if (e.code === 'KeyR' && mode === 'race') resetToCourse();
+    // R only while the race is actually running: on the grid it charged the −0.30 boost penalty
+    // before the flag, and in the three seconds after the line it cancelled the finale's release
+    // shot (Camera.snapTo drops it) — the one cinematic the whole finish is built around.
+    if (e.code === 'KeyR' && mode === 'race' && raceState && raceState.phase === 'racing') resetToCourse();
     if (e.code === 'KeyN' && RR.Theme) { const m = RR.Theme.toggle(); if (RR.HUD && RR.HUD.flash) RR.HUD.flash(m.toUpperCase()); }
     if (e.code === 'KeyG' && RR.Theme && RR.Theme.toggleGreenRiver) {
       const on = RR.Theme.toggleGreenRiver();
@@ -628,6 +750,9 @@
   let tagCooldown = 0;
   let nearTag = null;               // the landmark you are alongside right now (Architecture Tour)
   let rivalT = 0;
+  let deniedT = 0;                  // one dry-boost click per 1.2 s, not one per frame of the press
+  let lastPos = 0, posSettle = 0;   // rank callouts: what we last announced, and the settle window
+  let payT = 0;                     // boost-payout chips: at most one per 0.8 s
   const rivalBuf = [];              // hoisted: the doppler list must not allocate per frame
 
   // photo mode: drop the whole world into 0.25x slo-mo and swing a cinematic camera.
@@ -639,8 +764,44 @@
     } else if (mode === 'photo') {
       mode = 'race'; RR.HUD.show(true); RR.Engine.timeScale = 1;
       if (RR.HUD.cine) RR.HUD.cine(false);
+      if (RR.Powerups && RR.Powerups.armKey) RR.Powerups.armKey();   // P is a key too
       if (player) RR.Camera.snapTo(player);
     }
+  }
+
+  // The three most emotionally loaded things in a race — passing somebody, being passed, and the
+  // tank paying you for something you did — happened silently. A rank change was a number flip and
+  // a 400 ms ring on the plate; it never said WHO, so five rivals stayed interchangeable red dots.
+  // Debounced twice over: nothing in the first six seconds (the grid shuffle is not a pass) and
+  // nothing that reverses inside 1.5 s (trading places through a bridge is one event, not four).
+  function raceCallouts(dt) {
+    deniedT = Math.max(0, deniedT - dt);
+    payT = Math.max(0, payT - dt);
+    posSettle = Math.max(0, posSettle - dt);
+    if (!raceState || !player || raceState.phase !== 'racing' || raceState.tour) { lastPos = player ? player.racePos || 0 : 0; return; }
+    // the boost economy, said out loud: a caught slide has its own chip, and this is the rest
+    const pay = player.lastPay;
+    if (pay && payT <= 0 && pay.kind !== 'catch' && pay.amount > 0.02) {
+      payT = 0.8;
+      if (RR.HUD.chip) RR.HUD.chip('drift', (pay.kind === 'air' ? 'AIR' : String(pay.kind).toUpperCase()) + ' +' + pay.amount.toFixed(2), 1200);
+    }
+    player.lastPay = null;
+    const p = player.racePos || 0;
+    if (!lastPos) { lastPos = p; return; }
+    if (raceState.time < 6 || posSettle > 0 || p === lastPos) { if (p !== lastPos && posSettle <= 0) lastPos = p; return; }
+    const gained = p < lastPos;
+    // whoever is now on the other side of you is the boat the place changed hands with
+    const other = boats.filter((b) => b !== player && !b.finished)
+      .sort((a, b) => Math.abs((a.racePos || 0) - p) - Math.abs((b.racePos || 0) - p))[0];
+    const name = other && other.pilotName ? String(other.pilotName).toUpperCase() : (gained ? 'A RIVAL' : 'A RIVAL');
+    if (RR.HUD.chip) {
+      RR.HUD.chip(gained ? 'gold' : 'bad',
+        'P' + p + (gained ? ' ▲ PASSED ' : ' ▼ ') + name, 1600);
+    }
+    if (RR.Audio.passTick) RR.Audio.passTick(gained);
+    else if (RR.Audio.uiMove) RR.Audio.uiMove();
+    lastPos = p;
+    posSettle = 1.5;
   }
 
   function update(dt, t) {
@@ -668,14 +829,14 @@
         if (cam.fov !== 50) { cam.fov = 50; cam.updateProjectionMatrix(); }
         return;
       }
-      if (showBoat && RR.Menus.screen() !== 'vehicle') { RR.Engine.scene.remove(showBoat); showBoat = null; showIdx = -1; }
+      if (showBoat && RR.Menus.screen() !== 'vehicle') { RR.Engine.scene.remove(showBoat); if (RR.Race.disposeObject) RR.Race.disposeObject(showBoat); showBoat = null; showIdx = -1; }
       // attract flythrough behind the menus
       const main = RR.River.paths.main;
       if (main) RR.Camera.flyover(dt, main);
       RR.Race.animateGates && raceState && RR.Race.animateGates(t);
       return;
     }
-    if (showBoat) { RR.Engine.scene.remove(showBoat); showBoat = null; showIdx = -1; }   // never leak into a race
+    if (showBoat) { RR.Engine.scene.remove(showBoat); if (RR.Race.disposeObject) RR.Race.disposeObject(showBoat); showBoat = null; showIdx = -1; }   // never leak into a race
     if (mode === 'paused') return;                   // timeScale 0 already froze the map; skip the sim entirely
     if (!raceState || !player) return;
     // in photo mode the sim below still runs — just at 0.25x via engine.timeScale — so the
@@ -696,7 +857,11 @@
       docent.ctl.boost = false;                       // she does not have a boost button
       pc = docent.ctl;
     } else {
-      pc = racing && !player.finished ? RR.Input : { throttle: player.finished ? 0.25 : 0, brake: 0, steer: RR.Input.steer * 0.4, boost: false };
+      // On the grid the wheel does nothing. It used to pass 0.4 of the stick, and physics' idle
+      // prop wash turns a hull with no way on: a player fidgeting through the countdown started
+      // the race 22 degrees off, pointed at the quay. (After the flag `racing` is true and the
+      // full input goes through, so nothing about driving changes.)
+      pc = racing && !player.finished ? RR.Input : { throttle: player.finished ? 0.25 : 0, brake: 0, steer: 0, boost: false };
     }
     RR.Physics.update(player, dt, pc, t);
     // The tour is a loop, not a one-way trip: at the far end of the route the run starts over at
@@ -792,6 +957,7 @@
     // salute retired nothing pushes the tier off zero, so nothing calls setChainTier any more.
     if (RR.Post && RR.Post.setSpeed) RR.Post.setSpeed(Math.hypot(player.vel.x, player.vel.z) / 46);
 
+    raceCallouts(dt);
     RR.HUD.update(dt, player, raceState);
     RR.Minimap.draw(raceState, player, boats);
 
@@ -892,16 +1058,28 @@
     step: (sec) => RR.Engine.warp(sec == null ? 0.5 : sec),
     selfProgress: () => (player ? { routeD: Math.round(player.routeD), lap: player.lap, finished: !!player.finished } : null),
     warp: (sec) => {
-      // during warp the AI takes the player's wheel so the sim actually progresses
-      if (player && !window.RRTest._autopilot) {
+      // during warp the AI takes the player's wheel so the sim actually progresses.
+      // The pilot captures THIS race's boat and route, so it is rebuilt whenever either moves —
+      // a harness that ran a second race in the same page was steering a dead hull down the old
+      // course, and every measurement taken that way was noise.
+      const T = window.RRTest;
+      if (player && raceState && T._autopilot &&
+          (T._autopilot.boat !== player || T._autopilot.route.path !== raceState.route)) {
+        if (T._origInput) RR.Input.update = T._origInput;
+        T._autopilot = null;
+      }
+      if (player && raceState && !T._autopilot) {
         const p = RR.AI.createPilot(player, { path: raceState.route }, 3, 0.9);
-        window.RRTest._autopilot = p;
-        const realInput = RR.Input.update;
+        T._autopilot = p;
+        if (!T._origInput) T._origInput = RR.Input.update;
+        const realInput = T._origInput;
         RR.Input.update = function (dt) {
           realInput.call(RR.Input, dt);
-          RR.AI.update(p, dt, RR.Engine.time(), player.routeD);
-          RR.Input.throttle = p.ctl.throttle; RR.Input.brake = p.ctl.brake;
-          RR.Input.steer = p.ctl.steer; RR.Input.boost = p.ctl.boost;
+          const q = T._autopilot;
+          if (!q || !player) return;
+          RR.AI.update(q, dt, RR.Engine.time(), player.routeD);
+          RR.Input.throttle = q.ctl.throttle; RR.Input.brake = q.ctl.brake;
+          RR.Input.steer = q.ctl.steer; RR.Input.boost = q.ctl.boost;
         };
       }
       RR.Engine.warp(sec);
