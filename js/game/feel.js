@@ -90,7 +90,7 @@
   // ---- the finish ----------------------------------------------------------------------------
   // The city lets you go: the engine and the music CUT — not fade — and for three seconds there is
   // nothing but wind, a hull coming off plane, and the chase rig releasing onto the skyline.
-  const fin = { stage: -1, t0: 0, cb: null, fired: false };
+  const fin = { stage: -1, t0: 0, cb: null, fired: false, lastN: null };
   const FIN_MUSIC_MS = 3000, FIN_CARD_MS = 3500, FIN_HOLD_MS = 3200;
 
   F.finale = function (cb) {
@@ -98,7 +98,7 @@
       if (typeof cb === 'function' && !fin.cb) fin.cb = cb;
       return;
     }
-    fin.stage = 0; fin.t0 = wallNow(); fin.cb = typeof cb === 'function' ? cb : null; fin.fired = false;
+    fin.stage = 0; fin.t0 = wallNow(); fin.lastN = fin.t0; fin.cb = typeof cb === 'function' ? cb : null; fin.fired = false;
     try {
       if (RR.Audio && RR.Audio.stopEngine) RR.Audio.stopEngine();
       if (RR.Audio && RR.Audio.setRaceMusic) RR.Audio.setRaceMusic(false);
@@ -115,8 +115,14 @@
   // no longer exists. The only caller that should ever want this is a teardown path.
   F.cancelFinale = function () { fin.stage = -1; fin.cb = null; fin.fired = true; F.reset(); };
 
-  function finTick(n) {
-    if (fin.stage < 0) return;
+  // The finale lives on the wall clock, and the wall clock does not pause. While the game is
+  // paused (base 0 — the sim frozen, this tick still running) the anchor slides forward by the
+  // paused wall time, so a pause over the line cannot open the results card the instant you
+  // resume; the beat picks up where it left off.
+  function finTick(n, paused) {
+    if (fin.stage < 0) { fin.lastN = n; return; }
+    if (paused && fin.lastN != null) fin.t0 += n - fin.lastN;
+    fin.lastN = n;
     const el = n - fin.t0;
     if (fin.stage === 0 && el >= FIN_MUSIC_MS) {
       fin.stage = 1;
@@ -147,7 +153,7 @@
       applied = 1;
     }
     const n = wallNow();
-    finTick(n);
+    finTick(n, base === 0);
     applied = combined(n);
     const want = base * applied;
     E.timeScale = want;

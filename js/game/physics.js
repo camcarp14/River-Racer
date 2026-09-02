@@ -39,12 +39,18 @@
       slapPhase: 0, slapT: 0,
       prevThrottle: 0, diveT: 0,
       drifting: false, driftTime: 0, launchArmed: true,
+      // the slide: how long she has been sliding, whether this slide has paid, cooldown to the next pay
+      slideT: 0, slidePaid: false, catchCool: 0, lastPay: null,
       draft: 0, _draftHit: 0,
       rubber: 1,
-      scrapeT: 0, resetLock: 0,
+      scrapeT: 0, contactT: 0, resetLock: 0,
       flowX: 0, flowZ: 0,
+      _steerMag: 0,                                    // |steer| this frame, read by P.bounce
+      shielded: false, shieldHit: 0,                   // powerups.js raises shielded; P.bounce reports shieldHit
     };
   };
+  // powerups.js checks this before trusting boat.shieldHit (the honest absorb below in P.bounce)
+  P.SHIELD_AWARE = true;
 
   // R is a free teleport unless it costs something. FEEL §1.10.
   P.resetPenalty = function (boat) {
@@ -67,10 +73,12 @@
   // and only while somebody is asking for ahead or astern, so it is never felt out in the channel.
   // n points into free water at both call sites (waterQuery's normal runs bank -> centreline, and
   // hitObstacle's is the direction the penetration is resolved along).
+  // 14 m/s^2 fading by 9 m/s (was 9 by 7): a 60 deg nose-in with the throttle held used to grind
+  // at 2-3 m/s for 5-7 s, above ai.js's unstick threshold and below where 9 could reach.
   function poleOff(boat, nx, nz, ctl, dt) {
     const sp = Math.hypot(boat.vel.x, boat.vel.z);
-    if (sp >= 7 || (ctl.throttle <= 0.25 && ctl.brake <= 0.25)) return;
-    const off = 9.0 * (1 - sp / 7) * dt;                  // fades out entirely by 7 m/s
+    if (sp >= 9 || (ctl.throttle <= 0.25 && ctl.brake <= 0.25)) return;
+    const off = 14.0 * (1 - sp / 9) * dt;                 // fades out entirely by 9 m/s
     boat.vel.x += nx * off;
     boat.vel.z += nz * off;
   }
@@ -85,6 +93,8 @@
       ctl = lockCtl;
     }
 
+    boat._steerMag = Math.abs(ctl.steer);                   // P.bounce reads it: no shoulder-off against the wheel
+
     const fx = Math.sin(boat.heading), fz = Math.cos(boat.heading);
     let speedF = boat.vel.x * fx + boat.vel.z * fz;          // signed forward speed
     let speedL = boat.vel.x * fz - boat.vel.z * fx;          // lateral slip
@@ -93,8 +103,10 @@
     // ---- the plane transition ----
     // planeF: 0 = displacement, 1 = fully planing. hump peaks halfway through, which is exactly
     // where a real resistance curve peaks (the boat is dragging its own bow wave uphill).
+    // Signed forward speed, not |v|: a hull backing down at 12-18 m/s is not on plane, and on the
+    // unsigned speed she got planeTurn, the planing grip cut and lift going astern.
     const pSpd = spec.plane || 0;
-    const planeF = pSpd <= 0 ? 1 : U().smoothstep(pSpd * 0.55, pSpd * 1.25, speed);
+    const planeF = pSpd <= 0 ? 1 : U().smoothstep(pSpd * 0.55, pSpd * 1.25, Math.max(0, speedF));
     const hump = 4 * planeF * (1 - planeF);
     boat.planeF = planeF;                                    // HUD / audio / music all read this
     boat.hump = hump;
@@ -110,20 +122,31 @@
       if (boat.onBoostStart) boat.onBoostStart(boat.boostFull);
     }
     if (!boosting && boat._wasBoost && boat.onBoostEnd) boat.onBoostEnd();
+    // the denied edge: SHIFT pressed on a dry tank says so once per press (a dry click, the
+    // reserve segments blink) — measured, the old silence was indistinguishable from a broken key
+    if (ctl.boost && !boat._wasAsk && !canEngage && ctl.throttle > 0.3 && !boat.finished && boat.onBoostDenied) {
+      boat.onBoostDenied(boat.boostEnergy);
+    }
+    boat._wasAsk = !!ctl.boost;
     boat._wasBoost = boosting;
     boat.boostKickT = Math.max(0, (boat.boostKickT || 0) - dt);
-
-    if (boosting) boat.boostEnergy = Math.max(0, boat.boostEnergy - dt * 0.34);   // 2.9 s from full
-    // Passive refill is a trickle, not an allowance. At 0.100/s the meter refilled itself every
-    // ten seconds whatever you did, which made boost a cooldown; at 0.030 a full tank means you
-    // have been brave for a while. Everything else — checkpoints, gates, drift, airtime and a
-    // TURBO out of a crate — pays for risk, and those are the only meaningful supply now.
-    else boat.boostEnergy = Math.min(1, boat.boostEnergy + dt * 0.030);           // 33 s refill
-    boat.boostHeat = U().damp(boat.boostHeat, boosting ? 1 : 0, boosting ? 14 : 5, dt);
 
     const bMul = boosting ? 1 + (spec.boost - 1) * (boat.boostFull || 1) : 1;
     const topSpeed = spec.top * bMul * (boat.rubber || 1) * (1 + (boat.draft || 0) * 0.04);
     const accel = spec.accel * bMul + (boat.boostKickT > 0 ? (spec.boostKick || 9) : 0);
+
+    if (boosting) boat.boostEnergy = Math.max(0, boat.boostEnergy - dt * 0.34);   // 2.9 s from full
+    // Passive refill is a trickle, not an allowance. At 0.100/s the meter refilled itself every
+    // ten seconds whatever you did, which made boost a cooldown; at 0.030 a full tank means you
+    // have been brave for a while — literally: it only runs above 85% of top speed with the wheel
+    // inside half lock, i.e. flat out and pointing where you are going. Measured: the
+    // unconditional 0.030 was 42-74% of every hull's supply, and on speed alone a held-lock corner
+    // (the FORMULA settles at 85.1% of top under full lock) still trickled. Everything else —
+    // checkpoints, gates, the caught slide, airtime and a TURBO out of a crate — pays for risk.
+    else if (speed > 0.85 * topSpeed && Math.abs(ctl.steer) < 0.5) {
+      boat.boostEnergy = Math.min(1, boat.boostEnergy + dt * 0.030);                    // 33 s refill, flat out
+    }
+    boat.boostHeat = U().damp(boat.boostHeat, boosting ? 1 : 0, boosting ? 14 : 5, dt);
 
     // ---- steering: effective with water under the hull, way on, OR wash over the blade ----
     // A rudder needs flow past it, which is why wayOn exists. But a skipper turning in her own
@@ -135,7 +158,10 @@
     const wayOn = U().clamp(speed / 6.5, 0.12, 1);
     const wash = (0.30 + 0.55 * U().clamp(ctl.throttle + ctl.brake, 0, 1)) *
                  (1 - U().smoothstep(2.5, 9.0, speed));
-    const highSpeed = 1 - U().clamp(speed / topSpeed, 0, 1) * 0.34;
+    // The top-end steering tax is per hull (spec.highSpeed; 0.34 was flat): it is what makes the
+    // roster more than a top-speed ladder — the jetski keeps 90% of her wheel at top, the
+    // podracer 45% — and it is the reason her 61 m/s does not win every bend.
+    const highSpeed = 1 - U().clamp(speed / topSpeed, 0, 1) * (spec.highSpeed == null ? 0.34 : spec.highSpeed);
     const planeTurn = 1 + planeF * 0.22;                              // a planing hull pivots flatter
     const speedFactor = Math.max(wayOn, boat.airborne ? 0 : wash) * highSpeed * planeTurn;
     // Backing down, the ROTATION still follows the stick: push left and her head comes left. The
@@ -144,20 +170,27 @@
     // ignoring you.
     const targetAng = ctl.steer * spec.turn * speedFactor * steerAuthority;
     // asymmetric: bite hard into the turn, let the wheel unwind lazily. This is where punch lives.
+    // Turn-in 15 (was 11): with the key ramp at 12 the key-to-90%-yaw is 0.30 s on the jetski,
+    // measured, against 0.38-0.53 — and the input ramp alone could not get there under 0.32.
     const turningIn = Math.abs(targetAng) > Math.abs(boat.angVel);
-    boat.angVel = U().damp(boat.angVel, targetAng, turningIn ? 11.0 : 6.5, dt);
+    boat.angVel = U().damp(boat.angVel, targetAng, turningIn ? 15.0 : 6.5, dt);
     // Hold on to the yaw actually integrated this frame — the hull-tracking term below has to turn
     // the velocity through exactly this angle, and boat.angVel is scrubbed again three lines down
     // on a bump frame, which would silently desync the two.
     const dHead = boat.angVel * dt;
     boat.heading = U().wrapAngle(boat.heading + dHead);
 
-    if (boat.bumpRecover > 0) boat.angVel *= 0.55;      // a real hit costs you the wheel for a beat
+    // a real hit costs you the wheel for a beat — 0.55 per 60 Hz frame, so the same wheel at 20 Hz
+    if (boat.bumpRecover > 0) boat.angVel *= Math.pow(0.55, dt * 60);
     boat.bumpRecover = Math.max(0, (boat.bumpRecover || 0) - dt);
     boat.scrapeT = Math.max(0, (boat.scrapeT || 0) - dt);
+    boat.contactT = Math.max(0, (boat.contactT || 0) - dt);
+    boat.catchCool = Math.max(0, (boat.catchCool || 0) - dt);
 
-    // turning scrubs speed (harder for low-grip hulls)
-    const scrub = Math.abs(boat.angVel) * speed * 0.028 * (4 / (spec.grip + 1));
+    // turning scrubs speed (harder for low-grip hulls: x1.15 runabout, x1.9 F1, x2.15 podracer,
+    // and nothing extra above grip 4, so the BELLE is untouched)
+    const scrub = Math.abs(boat.angVel) * speed * 0.028 * (4 / (spec.grip + 1)) *
+      (1 + 2 * Math.max(0, 1 - spec.grip / 4));
     if (speedF > 0) speedF -= scrub * dt;
 
     // ---- longitudinal forces ----
@@ -172,9 +205,20 @@
         (1 + (spec.hump || 0) * hump * 2.2) * (1 - (boat.draft || 0) * 0.28);
       speedF += ctl.throttle * accel * dt;
       speedF -= drag * speedF * Math.abs(speedF) * dt;
-      speedF -= 0.35 * speedF * dt * (1 - ctl.throttle);     // engine braking / water friction
+      // Engine braking / skin friction goes with the wetted surface. A hull up on plane at racing
+      // speed has almost none, so a lift is a COAST — from settled top to half speed in 1.9 (jetski)
+      // to 3.6 s (FORMULA), measured, against 1.0-1.3 s when the 0.35 ran at every speed and every
+      // lift was a 2.6 g brake. She gets it back as she sits down below 45% of top (the hover hull
+      // has no plane to come off, hence the speed fade), so she still stops in the harbour. The
+      // BELLE never planes and keeps the whole 0.35. Part throttle now settles on the drag law
+      // alone: sqrt(throttle) of top — 0.81 for a 10% trim. ai.js's throttle caps read that law.
+      const skin = 0.35 * (1 - planeF * U().smoothstep(0.15 * topSpeed, 0.45 * topSpeed, speed));
+      speedF -= skin * speedF * dt * (1 - ctl.throttle);
       if (ctl.brake > 0) {
-        if (speedF > 0.5) speedF -= ctl.brake * accel * 1.15 * dt;
+        // 1.5x accel (was 1.15): top to half speed in 0.5-0.9 s, so S is the fast way down, not
+        // a 50% bonus on top of a lift that already did the braking. (The BELLE keeps 1.15 —
+        // spec.brakeBite — she has no brakes to speak of and her handling is measured.)
+        if (speedF > 0.5) speedF -= ctl.brake * accel * (spec.brakeBite == null ? 1.5 : spec.brakeBite) * dt;
         // Astern. 0.30 of her top end and a stern gear that engages in about a second: nobody is
         // going to RACE backwards, but getting out of a dead end has to be a manoeuvre, not a
         // sentence. (Was 0.22 and less than half this bite, which is why it felt like being towed.)
@@ -217,21 +261,44 @@
       // slip going astern AND about half the sternway the gear had just given you, so getting out
       // of a dead end read as the boat wandering off on her own. She now backs along her own keel
       // like she does everything else: 0.5-5.4 deg of slip astern under full lock.)
-      // counter-steer: catching a slide with opposite lock recovers grip and pays boost. This is
-      // the one skill expression in the game, so it is obvious and it is worth it.
-      boat.drifting = Math.abs(speedL) > 2.2 &&
-        Math.sign(ctl.steer) !== Math.sign(speedL) && Math.abs(ctl.steer) > 0.3;
-      if (boat.drifting) {
+      // ---- the slide, and the catch ----
+      // A slide is lateral velocity above a per-hull threshold at racing speed. The CATCH is
+      // steering toward the side the velocity lies on — positive steer is port, and the velocity
+      // lies to port when speedL is positive, so the catch is sign(steer) === sign(speedL). (It was
+      // !==, which is the opposite: holding lock INTO a corner pushes the velocity wide, to the
+      // outside, and that read as 'drifting' 90-96% of the time at full lock and paid a capped
+      // 0.50 per 6 s for doing nothing skilful.) The catch is worth grip and boost; sliding wide is
+      // worth nothing. Pay is per catch, not per second: once, after >= 0.25 s of slide, sized by
+      // the slip (0.05 + 0.015/m/s, cap 0.20), never twice in 2 s, and only to a human — ai.js's
+      // pilots do not weave for boost. boat.drifting is the catch itself (the HUD's DRIFT chip).
+      const slideAt = 2.2 * (spec.drift || 0.5);
+      const sliding = Math.abs(speedL) > slideAt && speed > 0.6 * topSpeed;
+      const catching = sliding && Math.abs(ctl.steer) > 0.3 && Math.sign(ctl.steer) === Math.sign(speedL);
+      if (sliding) boat.slideT = (boat.slideT || 0) + dt;
+      else { boat.slideT = 0; boat.slidePaid = false; }
+      boat.drifting = catching;
+      if (catching) {
         speedL *= Math.exp(-gripEff * 0.55 * dt);            // extra bite while catching it
-        boat.boostEnergy = Math.min(1, boat.boostEnergy + 0.11 * dt);
         boat.driftTime = (boat.driftTime || 0) + dt;
+        if (boat.isPlayer && !boat.slidePaid && boat.slideT >= 0.25 && boat.catchCool <= 0) {
+          const pay = Math.min(0.20, 0.05 + 0.015 * Math.min(8, Math.abs(speedL)));
+          const slipDeg = Math.atan2(Math.abs(speedL), Math.abs(speedF)) * 180 / Math.PI;
+          boat.boostEnergy = Math.min(1, boat.boostEnergy + pay);
+          boat.slidePaid = true; boat.catchCool = 2.0;
+          boat.lastPay = { kind: 'catch', amount: pay, t };
+          if (boat.onCatch) boat.onCatch(pay, slipDeg);
+        }
       } else {
         boat.driftTime = Math.max(0, (boat.driftTime || 0) - dt * 2.5);
       }
     } else {
       speedF -= 0.12 * speedF * dt;                          // just air drag
       boat.drifting = false;
-      boat.boostEnergy = Math.min(1, boat.boostEnergy + 0.10 * dt);   // airtime pays
+      // airtime pays 0.20/s (was 0.10) now that the trickle only runs flat out; the stint's total
+      // is reported as one pay on splashdown so the HUD can print a number, not a blur
+      const airPay = Math.min(1 - boat.boostEnergy, 0.20 * dt);
+      boat.boostEnergy += airPay;
+      boat._airPay = (boat._airPay || 0) + airPay;
     }
     // releasing boost decays instead of snapping: 6 m/s^2 blow-off
     if (speedF > topSpeed) speedF -= Math.min(speedF - topSpeed, 6.0 * dt);
@@ -295,6 +362,8 @@
         boat.pos.y = rideY;
         const impact = Math.min(1, -boat.vy * 0.14 + boat.airTime * 0.2);
         boat.airborne = false; boat.airTime = 0; boat.vy = 0;
+        if ((boat._airPay || 0) > 0.005) boat.lastPay = { kind: 'air', amount: boat._airPay, t };
+        boat._airPay = 0;
         if (boat.onSplashdown) boat.onSplashdown(impact);
       }
     }
@@ -311,10 +380,17 @@
     // ---- jump ramps: ride up the wedge, launch off the lip (speed sets the arc) ----
     if (RR.Ramps) {
       const r = RR.Ramps.query(boat.pos.x, boat.pos.z);
-      if (r) {
+      // The deck is a run-up, not a step: she is on it only if she is RUNNING it — velocity within
+      // ~45 deg of the ramp axis (0.7 of speed) — or already climbing from the foot (took the deck
+      // at prog < 0.3). Clipping a flank at 90 deg used to pop her 3 m up the wedge and back down.
+      const spR = r ? Math.hypot(boat.vel.x, boat.vel.z) : 0;
+      const running = r && (boat.vel.x * r.dirx + boat.vel.z * r.dirz >= 0.7 * spR ||
+        (boat._ramp && boat._rampAcq < 0.3));
+      if (running) {
         if (boat.pos.y <= r.y + 0.6) {
           boat.pos.y = r.y;
           boat.airborne = false; boat.vy = 0; boat.airTime = 0;
+          if (!boat._ramp) boat._rampAcq = r.prog;
           boat._ramp = r;
         }
       } else if (boat._ramp) {
@@ -341,7 +417,7 @@
       // concrete with a timber rub strip bolted to it — so it throws you back a little harder
       // than a sheet-pile quay does. The graze is still cheap: P.bounce scales everything by how
       // squarely you hit, which is what keeps a 24 m chamber passable at racing pace.
-      P.bounce(boat, wq.nx, wq.nz, wq.path === 'lock' ? 0.36 : 0.28);
+      P.bounce(boat, wq.nx, wq.nz, wq.path === 'lock' ? 0.36 : 0.28, dt);
       poleOff(boat, wq.nx, wq.nz, ctl, dt);
     }
     // Obstacles are capsules a couple of metres thick and dt can reach 50 ms on a bad frame, which
@@ -355,14 +431,14 @@
       if (mid) {
         boat.pos.x += mid.nx * mid.pen - boat.vel.x * dt * 0.5;
         boat.pos.z += mid.nz * mid.pen - boat.vel.z * dt * 0.5;
-        P.bounce(boat, mid.nx, mid.nz, 0.40);
+        P.bounce(boat, mid.nx, mid.nz, 0.40, dt);
       }
     }
     const ob = RR.River.hitObstacle(boat.pos.x, boat.pos.z, boat.radius * 0.55);
     if (ob) {
       boat.pos.x += ob.nx * ob.pen;
       boat.pos.z += ob.nz * ob.pen;
-      P.bounce(boat, ob.nx, ob.nz, 0.40);                 // pier fender: slightly livelier
+      P.bounce(boat, ob.nx, ob.nz, 0.40, dt);             // pier fender: slightly livelier
       poleOff(boat, ob.nx, ob.nz, ctl, dt);
     }
     // cache this frame's current for the next integration step (wq aliases a shared scratch)
@@ -412,32 +488,71 @@
   // Separate the normal and the tangent. Bounce the normal, but only SCRUB the tangent, and only
   // in proportion to how squarely you hit — a 5-degree graze off the seawall should cost almost
   // nothing, which is the difference between a river and a bumper-car track.
-  P.bounce = function (boat, nx, nz, restitution) {
+  // dt: the scrub is an IMPULSE on the first frame of a contact and a RATE while it lasts. It used
+  // to be the impulse on every frame, so leaning on a quay pinned every hull at accel*dt/0.06 —
+  // 4.8 m/s at 60 Hz, 10.5 m/s at the engine's 20 Hz clamp, measured: a phone got a gentler wall.
+  P.bounce = function (boat, nx, nz, restitution, dt) {
     const vn = boat.vel.x * nx + boat.vel.z * nz;
     if (vn >= 0) return;
+    if (dt == null) dt = 1 / 60;
     const speed = Math.hypot(boat.vel.x, boat.vel.z);
     const incidence = speed > 0.01 ? Math.min(1, -vn / speed) : 1;   // 0 = graze, 1 = head-on
+    const fx = Math.sin(boat.heading), fz = Math.cos(boat.heading);
+    const fwd = boat.vel.x * fx + boat.vel.z * fz;                    // signed: astern is negative
+    const severity = Math.min(1, -vn / 18);
+    // SHIELD (powerups.js raises boat.shielded while one is up): a hard hit — severity > 0.45,
+    // 8 m/s into the wall — is absorbed: no scrub, a firm 0.5 bounce, no lost wheel, and
+    // boat.shieldHit tells powerups.js to spend the bubble. A softer touch bounces as normal and
+    // keeps it, so a quay scrape no longer eats the leader's most common draw.
+    const absorbed = !!boat.shielded && severity > 0.45;
 
     const tx = boat.vel.x - vn * nx, tz = boat.vel.z - vn * nz;
-    const keep = 1 - 0.06 - 0.62 * incidence * incidence;            // 94% @ 0deg, 32% @ 90deg
+    const sustained = (boat.contactT || 0) > 0;
+    // In sustained contact vn is what the frame accumulated, so the incidence the rate sees is
+    // normalised to a 60 Hz frame — otherwise a 20 Hz step reads 3x squarer and scrubs harder.
+    const incS = speed > 0.01 ? Math.min(1, -vn / (60 * dt) / speed) : 1;
+    let keep = sustained ? Math.exp(-(3.6 + 37 * incS * incS) * dt)          // same loss per second at 60 Hz
+                         : 1 - 0.06 - 0.62 * incidence * incidence;          // 94% @ 0deg, 32% @ 90deg
+    if (absorbed) { keep = 1; restitution = 0.5; }
     const rvn = -restitution * vn;
     boat.vel.x = tx * keep + nx * rvn;
     boat.vel.z = tz * keep + nz * rvn;
+    boat.contactT = 0.12;                                              // sustained until 0.12 s without a touch
 
+    // which way along the wall is 'ahead' — the HULL's forward vector, not the velocity: on the
+    // velocity a hull backing along the quay was swung 170-180 deg onto her stern-ward tangent
+    // (measured, walltrace case D), and the most common recovery in the game flipped the boat.
+    // || 1 covers a nose dead square on.
+    const along = Math.sign(-nz * fx + nx * fz) || 1;
+    const wallHead = Math.atan2(-nz * along, nx * along);
     // wall-follow assist: at shallow incidence, nudge the heading parallel to the quay so the hull
-    // slides down the seawall instead of sticking and spinning.
-    if (incidence < 0.30) {
-      const along = Math.sign(-nz * boat.vel.x + nx * boat.vel.z) || 1;
-      const wallHead = Math.atan2(-nz * along, nx * along);
+    // slides down the seawall instead of sticking and spinning. Ahead only (fwd > 0.2 — a hull
+    // pivoting off a pin has 0.5 m/s of way on when this first fires): astern the plain
+    // reflection is enough, and it does not turn her round.
+    if (incidence < 0.30 && fwd > 0.2) {
       boat.heading = U().wrapAngle(boat.heading +
         U().wrapAngle(wallHead - boat.heading) * Math.min(1, 5.0 * (0.30 - incidence)));
       boat.scrapeT = 0.20;                                           // sustained concrete scrape
     }
+    // shoulder-off: the counterpart of the graze assist for a nose-in at a grind. A hull square
+    // on with the throttle held sat at 2-3 m/s for 5-7 s, measured. It keys on how squarely the
+    // BOW points into the wall (bowIn), not the velocity's incidence, which in a sustained grind
+    // is the sliver the last frame's thrust added. Rotate her toward the tangent her bow already
+    // leans to — but NEVER against a player's wheel (physics.update's feel rule: from a chase
+    // camera a hull that turns on her own reads as the boat ignoring you), so it is for ai.js
+    // pilots and a player who is not steering.
+    const bowIn = -(fx * nx + fz * nz);                                 // 1 = bow square into the wall
+    if (bowIn > 0.5 && !absorbed && Math.hypot(boat.vel.x, boat.vel.z) < 5 &&
+        (!boat.isPlayer || boat._steerMag < 0.2)) {
+      boat.heading = U().wrapAngle(boat.heading +
+        U().wrapAngle(wallHead - boat.heading) * (1 - Math.exp(-21 * bowIn * dt)));   // 0.35*bowIn of the way per 60 Hz frame
+      boat.bumpRecover = Math.max(boat.bumpRecover || 0, 0.15);
+    }
 
-    const severity = Math.min(1, -vn / 18);
+    if (absorbed) boat.shieldHit = Math.max(boat.shieldHit || 0, severity);
     if (severity > 0.12 && boat.crashTimer <= 0) {
       boat.crashTimer = 0.35;
-      boat.bumpRecover = Math.max(boat.bumpRecover || 0, 0.18 + severity * 0.40);
+      if (!absorbed) boat.bumpRecover = Math.max(boat.bumpRecover || 0, 0.18 + severity * 0.40);
       if (boat.onCrash) boat.onCrash(severity, nx, nz);
     }
   };

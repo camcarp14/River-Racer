@@ -94,22 +94,32 @@
   P.wipe = function () { save = blank(); flush(); return save; };
 
   // ---------- times ----------
-  P.bestTime = function (course) {
-    const v = load().times[course];
+  // Two lines per course in the same `times` map: `times[course]` is the OVERALL record (the entry
+  // every older save already carries, so nothing is lost) and `times[course + '_' + hullId]` is
+  // that hull's own. Medals are hull-scaled and ghosts are per (course, hull); until the record
+  // was too, one podracer run (top 61 vs 41) locked BEST for every other boat for good.
+  function timeKey(course, hullId) { return hullId ? course + '_' + hullId : course; }
+  P.bestTime = function (course, hullId) {
+    const v = load().times[timeKey(course, hullId)];
     return typeof v === 'number' && isFinite(v) ? v : null;
   };
-  // Returns true only when the run actually beat the record — the results strip has nothing to
-  // say otherwise. `len` is banked alongside so a menu can quote medal targets for a course
-  // whose route is not currently built.
-  P.recordTime = function (course, time, len) {
-    if (!isFinite(time) || time <= 0) return false;
+  // Strictly better only, on both lines. Returns { overall, hull } (each true only when that line
+  // was actually beaten — the results strip has nothing to say otherwise); a caller that treats
+  // the result as a boolean still reads "the overall record moved". `len` is banked alongside so
+  // a menu can quote medal targets for a course whose route is not currently built.
+  P.recordTime = function (course, time, len, hullId) {
+    const out = { overall: false, hull: false, valueOf() { return this.overall; } };
+    if (!isFinite(time) || time <= 0) return out;
     const s = load();
     if (len > 0) s.lens[course] = len;
     const old = P.bestTime(course);
-    if (old != null && old <= time) { flush(); return false; }
-    s.times[course] = time;
+    if (old == null || time < old) { s.times[course] = time; out.overall = true; }
+    if (hullId) {
+      const oldH = P.bestTime(course, hullId);
+      if (oldH == null || time < oldH) { s.times[timeKey(course, hullId)] = time; out.hull = true; }
+    }
     flush();
-    return true;
+    return out;
   };
 
   // ---------- the chain (retired) ----------
@@ -200,10 +210,11 @@
   };
 
   // Everything a course row on a menu needs, in one call.
-  P.courseRecord = function (course) {
+  P.courseRecord = function (course, hullId) {
     return {
       course,
       time: P.bestTime(course),
+      hullTime: hullId ? P.bestTime(course, hullId) : null,   // the selected hull's own line
       chain: P.bestChain(course),
       medal: P.medalOf(course),
       par: P.parTimes(course),

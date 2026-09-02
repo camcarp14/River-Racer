@@ -12,41 +12,48 @@
   //   slap      hull-slap amplitude multiplier.
   //   torque    radians of static roll at full throttle from single-prop torque reaction.
   //   dive      radians of bow dive on a hard throttle chop.
-  //   drift     stern step-out gain in hard turns.
+  //   drift     how loose the hull is at the limit: scales the slip she gives up at full lock and the
+  //             lateral speed that counts as a slide (2.2 m/s x drift).
+  //   highSpeed top-end steering tax: the fraction of the wheel lost at top speed (was a flat 0.34).
+  //             0.10 on the jetski, 0.55 on the podracer — it is what makes agility bite in a bend.
   //   boostKick m/s^2 of extra thrust for the first 0.45 s of a boost.
   B.CATALOG = [
     {
       id: 'jetski', name: 'RX BLACKHAWK', kind: 'jetski',
       desc: 'Sport jet ski. Whips around bridge piers like a startled duck. Fragile top end, absurd agility.',
-      top: 33, accel: 15.5, turn: 2.5, grip: 3.6, lean: 0.55, boost: 1.22, mass: 0.7,
-      plane: 7.5, hump: 0.22, lift: 0.20, slap: 0.55, torque: 0.010, dive: 0.06, drift: 0.85, boostKick: 11.0,
+      top: 33, accel: 17.0, turn: 2.5, grip: 3.6, lean: 0.55, boost: 1.22, mass: 0.7, highSpeed: 0.10,
+      // drift 0.65 (was 0.85): re-measured once the held-lock grip bug went — with 0.10 of top-end
+      // tax she yaws 2.8 rad/s at top and 0.85 was a 14.8 deg limit slip; 0.65 is 11.
+      plane: 7.5, hump: 0.22, lift: 0.20, slap: 0.55, torque: 0.010, dive: 0.06, drift: 0.65, boostKick: 11.0,
       hull: 0x1b1e26, deck: 0xff3b30, accent: 0xffc857, seat: 0x22262e,
     },
     {
       id: 'speedboat', name: 'FORMULA 350 GT', kind: 'speedboat',
       desc: 'Offshore V-hull muscle. Monster straight-line pace — but it needs the whole channel to turn.',
-      top: 41, accel: 11.5, turn: 1.3, grip: 1.9, lean: 0.34, boost: 1.16, mass: 1.45,
+      top: 41, accel: 11.5, turn: 1.3, grip: 1.9, lean: 0.34, boost: 1.16, mass: 1.45, highSpeed: 0.45,
       plane: 11.5, hump: 0.55, lift: 0.34, slap: 1.00, torque: 0.038, dive: 0.11, drift: 0.55, boostKick: 8.0,
       hull: 0x10315e, deck: 0xf2f4f6, accent: 0xff3b30, seat: 0x1a1d22,
     },
     {
       id: 'f1', name: 'F1H2O PROTOTYPE', kind: 'f1',
       desc: 'Tunnel-hull race cat. The fastest thing on the river — if you can keep it pointed straight.',
-      top: 46, accel: 14.0, turn: 1.6, grip: 2.2, lean: 0.22, boost: 1.14, mass: 0.9,
+      top: 46, accel: 14.0, turn: 1.6, grip: 2.2, lean: 0.22, boost: 1.14, mass: 0.9, highSpeed: 0.40,
       plane: 9.0, hump: 0.30, lift: 0.30, slap: 0.80, torque: 0.022, dive: 0.08, drift: 0.70, boostKick: 9.5,
       hull: 0xffc857, deck: 0x14161c, accent: 0x0f8bd0, seat: 0x14161c,
     },
     {
       id: 'runabout', name: 'LAKESIDE QUEEN ’47', kind: 'runabout',
-      desc: 'Varnished mahogany classic. Slowest in class — but glued to the water, with the strongest boost aboard.',
-      top: 30, accel: 10.0, turn: 2.1, grip: 3.7, lean: 0.30, boost: 1.3, mass: 1.2,
+      desc: 'Varnished mahogany classic. Modest top end — but glued to the water, with the strongest boost aboard.',
+      // 34 / 12 (was 30 / 10): at 30 she finished last on every course by 10-30 s, measured, and
+      // grip that never paid was a pick nobody made.
+      top: 34, accel: 12.0, turn: 2.1, grip: 3.7, lean: 0.30, boost: 1.3, mass: 1.2, highSpeed: 0.15,
       plane: 10.5, hump: 0.62, lift: 0.26, slap: 0.85, torque: 0.042, dive: 0.13, drift: 0.35, boostKick: 12.0,
       hull: 0x6e3b1c, deck: 0x8a5224, accent: 0xe8e2d0, seat: 0x7a1f16,
     },
     {
       id: 'rescue', name: 'CFD MARINE 7-1', kind: 'speedboat',
       desc: 'Fire department rigid inflatable. Punchy, planted, and it bounces off seawalls with dignity.',
-      top: 36, accel: 13.0, turn: 1.85, grip: 3.0, lean: 0.28, boost: 1.2, mass: 1.35,
+      top: 36, accel: 13.0, turn: 1.85, grip: 3.0, lean: 0.28, boost: 1.2, mass: 1.35, highSpeed: 0.25,
       plane: 9.5, hump: 0.45, lift: 0.24, slap: 0.90, torque: 0.030, dive: 0.10, drift: 0.45, boostKick: 9.0,
       hull: 0xd42a1e, deck: 0x1f242b, accent: 0xf5f6f7, seat: 0x14161c,
     },
@@ -57,8 +64,9 @@
       // a channel 60 m wide. hidden: she is crewed for the tour, not offered in the ride picker.
       id: 'tourboat', name: 'WACKER BELLE', kind: 'tourboat', hidden: true,
       desc: 'Open-deck architecture cruiser. Thirty metres, no brakes, and a turning circle that eats most of the Main Stem. Somehow this is fun.',
-      top: 13.5, accel: 2.6, turn: 0.60, grip: 4.4, lean: 0.10, boost: 1.12, mass: 4.6,
+      top: 13.5, accel: 2.6, turn: 0.60, grip: 4.4, lean: 0.10, boost: 1.12, mass: 4.6, highSpeed: 0.34,
       plane: 30, hump: 0.0, lift: 0.0, slap: 0.15, torque: 0.020, dive: 0.03, drift: 0.06, boostKick: 3.5,
+      brakeBite: 1.15,                                      // the racers got 1.5; her stop is measured at 0.87 s to half
       engine: 'runabout',                                   // slow-turning diesel, not a V8
       hull: 0xeef1f4, deck: 0x8a6a44, accent: 0xc0392b, seat: 0x1f5f8b,
     },
@@ -69,9 +77,10 @@
       // run one, where she was to begin with.
       id: 'podracer', name: 'ANAKIN’S PODRACER', kind: 'podracer',
       desc: 'Twin radial turbines on a plasma tether, skimming the river on a cushion of thrust. Untouchable top end — if you can steer the thing.',
-      top: 61, accel: 21.0, turn: 1.55, grip: 1.7, lean: 0.42, boost: 1.18, mass: 0.85,
+      top: 61, accel: 21.0, turn: 1.55, grip: 1.7, lean: 0.42, boost: 1.18, mass: 0.85, highSpeed: 0.62,
       hover: 1.15,                                    // rides ~1.15m above the wave crests
-      plane: 0.0, hump: 0.00, lift: 0.00, slap: 0.00, torque: 0.000, dive: 0.04, drift: 1.00, boostKick: 10.0,
+      // drift 0.85 (was 1.00): 13.9 deg of limit slip without the held-lock grip bug; 0.85 is 12.
+      plane: 0.0, hump: 0.00, lift: 0.00, slap: 0.00, torque: 0.000, dive: 0.04, drift: 0.85, boostKick: 10.0,
       hull: 0xd8a13a, deck: 0xc9ced2, accent: 0xff3ea6, seat: 0x161a1f,   // golden scoops · silver · magenta plasma
     },
   ];

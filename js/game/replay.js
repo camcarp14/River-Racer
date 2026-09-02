@@ -158,7 +158,14 @@
     if (!g || !route) return null;
     const p = R.playAt(g, t, OUT);
     if (!p) return null;
-    const q = U().pathNearest(route, p.x, p.z, g._hint, g._hint != null ? 60 : 0);
+    let q = U().pathNearest(route, p.x, p.z, g._hint, g._hint != null ? 60 : 0);
+    // the hinted window cannot see across the loop seam (same retry as race.js updateProgress):
+    // without it the ghost's distance pins at ~len after its first lap and the lap counter in
+    // race.js never sees the drop, so the chip read a whole lap behind (measured -89 s)
+    if (route.loop && (q.idx > route.n - 6 || q.idx < 4 || q.dist > 25)) {
+      const q2 = U().pathNearest(route, p.x, p.z);
+      if (q2.dist < q.dist - 0.01) q = q2;
+    }
     g._hint = q.idx;
     return q.d;
   };
@@ -171,7 +178,12 @@
     const mesh = RR.Boats.build(spec);
     mesh.traverse((o) => {
       if (!o.isMesh) return;
-      o.material = o.material.clone();
+      // the clone shares the builder's maps (the builder made them for this mesh alone, so they
+      // go with the ghost when RR.Race.disposeObject tears it down); the un-cloned original
+      // never reaches the GPU and is released here rather than left dangling
+      const src = o.material;
+      o.material = src.clone();
+      if (src.dispose) src.dispose();
       o.material.transparent = true;
       o.material.opacity = 0.38;
       o.material.depthWrite = false;
@@ -182,6 +194,12 @@
     mesh.layers.set(1);
     mesh.userData.noFlame = true;
     return mesh;
+  };
+
+  // GPU teardown for a buildMesh() result; race.js owns the traversal (it knows which textures
+  // are session-lifetime) so this only forwards
+  R.disposeMesh = function (mesh) {
+    if (mesh && RR.Race && RR.Race.disposeObject) RR.Race.disposeObject(mesh);
   };
 
   R.clear = function () { R.recording = false; count = 0; baseT = null; };

@@ -51,6 +51,67 @@
 
   // ---------- gate + buoy visuals ----------
   let gateGroup;
+
+  // Per-race GPU allocations are torn down, not just removed: a race start used to leak ~100
+  // geometries and ~8 textures (buoys, finish arch, merged boost gates, the ghost's material
+  // clones), and a long phone session crept toward context loss. Textures that live for the whole
+  // session (checker, finish banner, chevrons, BOOST sign and mat — built once below, marked
+  // rrShared) are skipped; every other map is one this file or boats.js built for this object.
+  // boats.js has no module-level texture cache (every canvasTexture there is inside a builder),
+  // so a boat mesh's maps are its own and main.js may hand boat meshes and the showroom boat here.
+  RACE.disposeObject = function (obj) {
+    if (!obj || !obj.traverse) return;
+    const MAPS = ['map', 'emissiveMap', 'alphaMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'bumpMap'];
+    obj.traverse((o) => {
+      if (o.geometry && o.geometry.dispose) o.geometry.dispose();
+      const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+      for (const m of mats) {
+        if (!m || !m.dispose) continue;
+        for (const k of MAPS) { const t = m[k]; if (t && t.dispose && !t.rrShared) t.dispose(); }
+        m.dispose();
+      }
+    });
+  };
+  // The field's hulls are main.js's meshes, but main.js only removes them (clearBoats) and the
+  // race is the thing that knows when they are dead: 6 x 33 geometries per race, measured, was
+  // the whole of what leaked once the gates were disposed. Only a mesh already OUT of the scene
+  // is touched, so a hull main.js still holds (the showroom boat, a roster kept between rounds)
+  // is never pulled from under it; disposing twice is harmless if main.js does it too.
+  function disposeDeadHulls(state) {
+    if (!state || !state.boats) return;
+    for (const b of state.boats) if (b && b.mesh && !b.mesh.parent) RACE.disposeObject(b.mesh);
+  }
+  // session-lifetime textures: built on the first race, never disposed (see disposeObject)
+  let texCache = null;
+  function sharedTex() {
+    if (texCache) return texCache;
+    const checker = RR.U.canvasTexture(128, 128, (ctx, w, h) => {
+      const n = 8, cs = w / n;
+      for (let x = 0; x < n; x++) for (let y = 0; y < n; y++) {
+        ctx.fillStyle = (x + y) % 2 ? '#141414' : '#f5f5f5';
+        ctx.fillRect(x * cs, y * cs, cs, cs);
+      }
+    });
+    checker.wrapS = checker.wrapT = THREE.RepeatWrapping;
+    const finish = RR.U.canvasTexture(512, 128, (ctx, w, h) => {
+      const cs = 32;
+      for (let x = 0; x < w / cs; x++) for (let r = 0; r < 2; r++) {
+        ctx.fillStyle = (x + r) % 2 ? '#141414' : '#f5f5f5';
+        ctx.fillRect(x * cs, r === 0 ? 0 : h - cs, cs, cs);
+      }
+      ctx.fillStyle = '#0b1e2d'; ctx.fillRect(0, cs, w, h - 2 * cs);
+      ctx.fillStyle = '#ffc857'; ctx.font = 'bold 60px Arial, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('FINISH', w / 2, h / 2 + 2);
+    });
+    const chevron = chevronTex(); chevron.wrapS = chevron.wrapT = THREE.RepeatWrapping;
+    const boostSign = boostSignTex();
+    const boostMat = boostMatTex(); boostMat.wrapS = boostMat.wrapT = THREE.RepeatWrapping;
+    texCache = { checker, finish, chevron, boostSign, boostMat };
+    for (const k in texCache) texCache[k].rrShared = true;
+    return texCache;
+  }
+
   function buoyMesh(color) {
     const c = new THREE.Color(color).convertSRGBToLinear();
     const g = new THREE.Group();
@@ -102,7 +163,7 @@
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-      const tex = chevronTex(); tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      const tex = sharedTex().chevron;
       // Painted-on, not additive: adding gold to deep-blue lake water lands on lime, and on the
       // near-black night lake it clips to pure white. Normal blending keeps the chevrons gold.
       const ribbon = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
@@ -265,9 +326,8 @@
       color: 0x5cffa8, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
     // unlit and fully opaque: the legend has to read at midnight as clearly as at noon
     const signs = new THREE.Mesh(merge(signGeos), new THREE.MeshBasicMaterial({
-      map: boostSignTex(), side: THREE.FrontSide }));
-    const matTex = boostMatTex();
-    matTex.wrapS = matTex.wrapT = THREE.RepeatWrapping;
+      map: sharedTex().boostSign, side: THREE.FrontSide }));
+    const matTex = sharedTex().boostMat;
     // Normal blending, not additive: green added to the river's own green clips straight to white
     // (the same trap the lake ribbon fell into), and a white gate says nothing at all.
     const mats = new THREE.Mesh(merge(matGeos), new THREE.MeshBasicMaterial({
@@ -338,25 +398,9 @@
     U().pathAt(route, Math.min(fd, route.len - 1), pt);
     const gOff = Math.max(9, pt.w + 3);
     const ang = Math.atan2(pt.tx, pt.tz);
-    const checkerTex = RR.U.canvasTexture(128, 128, (ctx, w, h) => {
-      const n = 8, cs = w / n;
-      for (let x = 0; x < n; x++) for (let y = 0; y < n; y++) {
-        ctx.fillStyle = (x + y) % 2 ? '#141414' : '#f5f5f5';
-        ctx.fillRect(x * cs, y * cs, cs, cs);
-      }
-    });
-    checkerTex.wrapS = checkerTex.wrapT = THREE.RepeatWrapping;
-    const finishTex = RR.U.canvasTexture(512, 128, (ctx, w, h) => {
-      const cs = 32;
-      for (let x = 0; x < w / cs; x++) for (let r = 0; r < 2; r++) {
-        ctx.fillStyle = (x + r) % 2 ? '#141414' : '#f5f5f5';
-        ctx.fillRect(x * cs, r === 0 ? 0 : h - cs, cs, cs);
-      }
-      ctx.fillStyle = '#0b1e2d'; ctx.fillRect(0, cs, w, h - 2 * cs);
-      ctx.fillStyle = '#ffc857'; ctx.font = 'bold 60px Arial, sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('FINISH', w / 2, h / 2 + 2);
-    });
+    // the checker and banner are session-lifetime (sharedTex); the pole/strip clones below are
+    // per race and disposed with the group
+    const checkerTex = sharedTex().checker, finishTex = sharedTex().finish;
     const finishFlags = [];
     for (const s of [-1, 1]) {
       const px = pt.x + pt.tz * gOff * s, pz = pt.z - pt.tx * gOff * s;
@@ -392,9 +436,12 @@
   let ghostMesh = null, ghostPlay = null, ghostDeltaT = 0, ghostHull = null;
   const gOut = {};
 
+  let ghostLap = 0, ghostPrevD = null;     // the ghost's own lap counter, for the loop course
+
   function clearGhost() {
-    if (ghostMesh) { RR.Engine.scene.remove(ghostMesh); ghostMesh = null; }
+    if (ghostMesh) { RR.Engine.scene.remove(ghostMesh); RACE.disposeObject(ghostMesh); ghostMesh = null; }
     ghostPlay = null; ghostDeltaT = 0; ghostHull = null;
+    ghostLap = 0; ghostPrevD = null;
     if (RR.Replay && RR.Replay.clear) RR.Replay.clear();
   }
 
@@ -428,22 +475,40 @@
       ghostMesh.rotateX(p.pitch);
       ghostMesh.rotateZ(-p.roll);
     }
-    // delta chip: how far ahead/behind the ghost is, in seconds, refreshed 4x a second
+    // delta chip: how far ahead/behind the ghost is, in seconds, refreshed 4x a second.
+    // progressAt hands back the IN-LAP distance, so on the two-lap lake circuit the ghost keeps
+    // its own lap counter (a drop of more than half a lap between samples is the seam; a rise
+    // that big is the seam the other way) and the comparison is absolute against routeD, which
+    // already carries lap*len. Without that the chip flipped by a whole lap at every seam.
     ghostDeltaT -= dt;
     if (ghostDeltaT <= 0 && S.player) {
       ghostDeltaT = 0.25;
       const gd = RR.Replay.progressAt ? RR.Replay.progressAt(ghostPlay, S.route, S.time) : null;
-      const spd = Math.max(4, Math.hypot(S.player.vel.x, S.player.vel.z));
-      if (gd != null) S.ghostDelta = (gd - (S.player.routeD % S.route.len)) / spd;
+      if (gd != null) {
+        const len = S.route.len;
+        if (S.route.loop && ghostPrevD != null) {
+          const dd = gd - ghostPrevD;
+          if (dd < -len * 0.5) ghostLap++;
+          else if (dd > len * 0.5) ghostLap = Math.max(0, ghostLap - 1);
+        }
+        ghostPrevD = gd;
+        // divide by the player's smoothed speed, not this frame's: a chop slam that halves the
+        // instantaneous speed would double the chip for one sample
+        const spd = Math.max(6, S.player._spdAvg || Math.hypot(S.player.vel.x, S.player.vel.z));
+        S.ghostDelta = (ghostLap * len + gd - S.player.routeD) / spd;
+      }
     }
   }
   RACE.ghostDelta = () => (S ? S.ghostDelta : null);
+  // the ghost's absolute progress, for a HUD or a test that wants more than the chip
+  RACE.ghostInfo = () => (S && ghostPlay ? { lap: ghostLap, d: ghostPrevD, delta: S.ghostDelta, time: S.ghostTime, next: ghostDeltaT } : null);
 
   // opts: { timeTrial, tour }. Both default off; a one-boat field is treated as a time trial so
   // main.js needs no change for ghosts to work.
   RACE.start = function (courseIdx, boats, playerBoat, opts) {
     opts = opts || {};
-    if (gateGroup) { RR.Engine.scene.remove(gateGroup); gateGroup = null; }
+    if (gateGroup) { RR.Engine.scene.remove(gateGroup); RACE.disposeObject(gateGroup); gateGroup = null; }
+    disposeDeadHulls(S);                 // the previous field, if main.js has already cleared it
     clearGhost();
     const course = RACE.COURSES[courseIdx];
     if (RR.Progress && RR.Progress.noteRun) RR.Progress.noteRun(null);   // last run's strip is history
@@ -454,8 +519,12 @@
       route: buildRoute(course),
       boats, player: playerBoat,
       phase: tour ? 'racing' : 'countdown', countdownT: 3.6,
+      countShown: 4,                   // sentinel: '3' fires on the first countdown frame (onCount is set after start returns)
+      startHoldSince: null,            // countdownT at which the player's throttle went down and stayed down
+      startVerdict: null,              // 'perfect' | 'jump' | 'none', decided at GO (+0.25 s of grace)
       time: 0,
       wrongWayT: 0,
+      finalLap: false,
       results: [],
       finishTimeout: 12,
       timeTrial, tour,
@@ -499,7 +568,8 @@
   // Tearing the race down on the way back to the title. The ghost mesh is ours alone — main.js
   // only knows about real boats — so without this it sits on the water behind the menu flythrough.
   RACE.end = function () {
-    if (gateGroup) { RR.Engine.scene.remove(gateGroup); gateGroup = null; }
+    if (gateGroup) { RR.Engine.scene.remove(gateGroup); RACE.disposeObject(gateGroup); gateGroup = null; }
+    disposeDeadHulls(S);                 // main.js clears the field before it calls this
     clearGhost();
     if (RR.Powerups && RR.Powerups.clear) RR.Powerups.clear();
     // quit-to-title mid-finale: the screen the beat would open no longer exists, and a stuck
@@ -519,18 +589,29 @@
     }
     b.routeHint = q.idx;
     let d = q.d;
+    // Wrong way is heading against the route tangent, not a per-frame routeD drop: the old
+    // -0.5 m/frame test needed 30 m/s backwards at 60 fps and never fired in play. Needs way on
+    // (> 4 m/s, so deliberate astern with S never trips it), accumulates on sim time and DECAYS
+    // at 2x rather than resetting, so one jittery frame in a tight bend does not restart the
+    // clock; capped at 2 s so the banner clears within 0.5 s of pointing the right way again.
+    const spd = Math.hypot(b.vel.x, b.vel.z);
+    const against = spd > 4 && (b.vel.x * q.tx + b.vel.z * q.tz) < -0.6 * spd;
+    b._backT = against ? Math.min(2, (b._backT || 0) + dt) : Math.max(0, (b._backT || 0) - 2 * dt);
     if (route.loop) {
       // compare raw in-lap distances — never routeD % len, which snaps to ~0 right at the seam
       const prev = b._inLap == null ? d : b._inLap;
       let delta = d - prev;
-      if (delta < -route.len * 0.5) { b.lap++; delta += route.len; if (b.isPlayer && S.phase === 'racing') RACE.onLap && RACE.onLap(b.lap); }
+      if (delta < -route.len * 0.5) {
+        b.lap++; delta += route.len;
+        if (b.isPlayer && S.phase === 'racing') {
+          S.finalLap = b.lap === S.course.laps - 1;          // main.js flashes FINAL LAP off this
+          if (RACE.onLap) RACE.onLap(b.lap);
+        }
+      }
       else if (delta > route.len * 0.5) { delta -= route.len; b.lap = Math.max(0, b.lap - 1); }
       b._inLap = d;
       b.routeD = b.lap * route.len + d;
-      b._backT = delta < -0.5 ? (b._backT || 0) + dt : 0;
     } else {
-      const delta = d - b.routeD;
-      b._backT = delta < -0.5 && Math.hypot(b.vel.x, b.vel.z) > 4 ? (b._backT || 0) + dt : 0;
       b.routeD = d;
     }
 
@@ -551,17 +632,22 @@
   // A 130 m radius on a sixty-metre river is not a gate, it is a formality: the pair of buoys has
   // been standing there since launch and nothing ever asked you to drive between them. Now it does.
   //
-  // Passing INSIDE the pair pays 0.12-0.30, graded on how central the line was and on how many
+  // Passing INSIDE the pair pays 0.16-0.40, graded on how central the line was and on how many
   // gates in a row you have taken cleanly. Passing outside still counts you through — a run broken
   // by something you did not choose to attempt would feel like theft — but it pays 0.07. Sloppy
-  // players feel the boat get heavy; nobody gets stopped.
+  // players feel the boat get heavy; nobody gets stopped. A gate cannot be MISSED: it is scored
+  // by route distance the moment the hull is past its line, so nextCp never lags routeD and the
+  // finish needs no gate count (it used to ask for 60%, a rule that could not fail).
   //
-  // These numbers came UP this round. The salute was retired, and with it a payout worth 0.25-0.46
-  // per bascule, chainable, on a river with ten of them: that was the largest single supply in the
-  // boost economy and it is now zero. Rather than hand it back on a timer — passive refill stays a
-  // 33 s trickle, because boost you did not earn is a cooldown, not a resource — the two things you
-  // steer for pay more, and POWER-UPS become the new lump sum (a TURBO fills the tank outright).
-  const CP_FLOOR = 0.12, CP_SPAN = 0.18, CP_SLOPPY = 0.07;
+  // These numbers came UP this round, and again the round after. The salute was retired, and with
+  // it a payout worth 0.25-0.46 per bascule, chainable, on a river with ten of them: that was the
+  // largest single supply in the boost economy and it is now zero. Then the ledger showed the
+  // 0.030/s passive trickle had become the largest supply instead (3.7 of 8.0 per Main Stem run,
+  // 42%), so physics.js made it conditional on speed (only above ~0.85 top, the "brave for a
+  // while" it always claimed to be) and the difference moved here: floor 0.12 -> 0.16, span
+  // 0.18 -> 0.24. The two things you steer for pay, and POWER-UPS are the lump sum (a TURBO
+  // fills the tank outright).
+  const CP_FLOOR = 0.16, CP_SPAN = 0.24, CP_SLOPPY = 0.07;
   const CP_STREAK_FULL = 6;          // gates in a row to saturate the consistency half of the pay
   const CP_QUALITY_M = 18;           // metres off the centreline at which the line-quality half is spent
 
@@ -591,11 +677,16 @@
     if (b.finished) return;
     const route = S.route;
     const target = route.loop ? S.course.laps * route.len : S.finishD;
-    if (b.routeD >= target - 2 && (route.loop || b.nextCp >= S.checkpoints.length * 0.6)) {
+    // Distance alone decides the line. There is no gate count here on purpose: gates are scored
+    // by route distance (updateProgress), so every gate behind the hull is already taken and a
+    // "60% of checkpoints" clause could never be false — see THE BUOY RULE.
+    if (b.routeD >= target - 2) {
       b.finished = true;
       b.finishTime = S.time;
       S.results.push({ boat: b, time: S.time });
-      if (b === S.player) {
+      if (b !== S.player) {
+        if (RACE.onRivalFinish) RACE.onRivalFinish(b, S.results.length);   // the win going, announced
+      } else {
         S.phase = 'finished';
         S.summary = bankRun();
         if (S.timeTrial && RR.Replay && RR.Replay.commit) {
@@ -631,9 +722,18 @@
     const out = { course: id, time: S.time, chain: 0, best: 0, chainImproved: false, tour: !!S.tour };
     if (S.tour || !P) return out;
     try {
+      // records are per HULL as well as overall: one podracer run must not lock BEST for every
+      // other boat. `timeImproved` stays the overall line (the banner's meaning today);
+      // `hullImproved` is the one the selected hull's card cares about.
+      const hull = S.player && S.player.spec ? S.player.spec.id : null;
+      out.hull = hull;
       out.prevTime = P.bestTime(id);
-      out.timeImproved = P.recordTime(id, S.time, len);
+      out.prevHullTime = hull ? P.bestTime(id, hull) : null;
+      const rec = P.recordTime(id, S.time, len, hull);
+      out.timeImproved = rec && typeof rec === 'object' ? !!rec.overall : !!rec;
+      out.hullImproved = rec && typeof rec === 'object' ? !!rec.hull : !!rec;
       out.bestTime = P.bestTime(id);
+      out.hullBestTime = hull ? P.bestTime(id, hull) : null;
       const top = S.player && S.player.spec ? S.player.spec.top : null;
       const m = P.awardMedal(id, S.time, len, top);
       out.medal = m.medal; out.prevMedal = m.prev; out.medalUp = m.improved;
@@ -645,8 +745,12 @@
   }
   RACE.summary = () => (S ? S.summary || null : null);
 
-  RACE.best = function (id) {
-    if (RR.Progress && RR.Progress.bestTime) { const v = RR.Progress.bestTime(id); if (v != null) return v; }
+  // best(id) is the overall course record; best(id, hullId) the record for that hull alone
+  // (null until that hull has finished the course). The legacy rr_best_ key only ever held the
+  // overall line, so it is not consulted for a hull.
+  RACE.best = function (id, hullId) {
+    if (RR.Progress && RR.Progress.bestTime) { const v = RR.Progress.bestTime(id, hullId); if (v != null) return v; }
+    if (hullId) return null;
     try { const v = parseFloat(localStorage.getItem('rr_best_' + id)); return isFinite(v) ? v : null; }
     catch (e) { return null; }
   };
@@ -696,20 +800,28 @@
       return;
     }
     if (S.phase === 'countdown') {
-      const prev = Math.ceil(S.countdownT);
       S.countdownT -= dt;
-      const now = Math.ceil(S.countdownT);
-      if (now !== prev && now > 0 && RACE.onCount) RACE.onCount(now);
+      // '3' on the FIRST countdown frame: main.js assigns onCount after start() returns, so the
+      // sentinel (countShown 4) fires it here rather than 0.6 s in when ceil first changes. The
+      // 3.6 s hold itself stays — the camera needs the beat to settle after snapTo.
+      const show = Math.min(3, Math.ceil(S.countdownT));
+      if (show !== S.countShown && show > 0 && RACE.onCount) { S.countShown = show; RACE.onCount(show); }
+      // THE START. A throttle pressed within +/-0.25 s of GO is a perfect start: a 1.0 s kick of
+      // thrust (physics' boostKick accel, no tank spent). Held from before -0.6 s is a jump start:
+      // 0.5 s of dead throttle. Player only, offline only; the rivals leave on the frame of GO.
+      startWatch();
       if (S.countdownT <= 0) {
         S.phase = 'racing';
         beginGhostRecording();
         if (RACE.onCount) RACE.onCount(0);
+        startVerdict(0);
       }
       // hold boats on the line
       for (const b of S.boats) { b.vel.x *= 0.5; b.vel.z *= 0.5; }
       return;
     }
     S.time += dt;
+    if (S.startVerdict == null) { startWatch(); startVerdict(S.time); }
 
     for (const b of S.boats) {
       if (b.remote) continue;         // multiplayer rivals: progress + finish come over the network
@@ -717,6 +829,9 @@
       if (hitCp && b === S.player && RACE.onCheckpoint) RACE.onCheckpoint(b.nextCp, S.checkpoints.length, hitCp);
       checkBoostGates(b);
       checkFinish(b);
+      // smoothed speed (8 s), for the projected finish on the results card and the ghost chip
+      const sp = Math.hypot(b.vel.x, b.vel.z);
+      b._spdAvg = b._spdAvg == null ? sp : b._spdAvg + (sp - b._spdAvg) * Math.min(1, dt / 8);
     }
     updateGhost(dt);
 
@@ -729,8 +844,8 @@
     });
     order.forEach((b, i) => { b.racePos = i + 1; });
 
-    // player wrong-way indicator
-    S.wrongWay = (S.player._backT || 0) > 1.2;
+    // player wrong-way indicator (1.0 s against the tangent with way on — see updateProgress)
+    S.wrongWay = (S.player._backT || 0) > 1.0;
 
     if (S.phase === 'finished') {
       S.finishTimeout -= dt;
@@ -739,13 +854,56 @@
       // 0.3 s behind you must not cut the three seconds of skyline short.
       const ready = S.finaleRunning ? (S.finaleDone || S.finishTimeout <= 0) : (allDone || S.finishTimeout <= 0);
       if (ready && RACE.onRaceOver) {
-        // fill DNF entries by current position
-        for (const b of S.boats) if (!b.finished) S.results.push({ boat: b, time: Infinity });
+        fillResults();
         const cb = RACE.onRaceOver; RACE.onRaceOver = null;
         cb(S.results);
       }
     }
   };
+
+  // The card opens on the beat, so most of the field is still on the water. Nobody in this game
+  // fails to finish: the unfinished tail goes in WATER ORDER (routeD desc — it already carries
+  // lap*len, so the loop is fine) with a PROJECTED time, marked as such (`projected`, `gapM`) so
+  // the card can print '≈1:52' or '−312 m' rather than a fabricated time, and the cup hands out
+  // its points in that order. It used to append them in boat-array order as time Infinity, and
+  // the rival who was second on the water could collect sixth-place points. MP remotes (routeD
+  // stale, race.js never steps them) sort last among the unfinished.
+  function fillResults() {
+    const route = S.route;
+    const target = route.loop ? S.course.laps * route.len : S.finishD;
+    const rest = S.boats.filter((b) => !b.finished && S.results.every((r) => r.boat !== b));
+    rest.sort((a, b) => (a.remote !== b.remote) ? (a.remote ? 1 : -1) : b.routeD - a.routeD);
+    for (const b of rest) {
+      const gapM = Math.max(0, target - (b.routeD || 0));
+      const spd = Math.max(8, b._spdAvg || 0);
+      S.results.push({ boat: b, time: S.time + gapM / spd, projected: true, gapM });
+    }
+  }
+
+  // ---------- the start ----------
+  // holdSince = seconds BEFORE GO at which the player's throttle went down and has stayed down
+  // (negative once racing); null while it is up. Input.throttle is the damped key/thumb/trigger
+  // value, so 0.25 reads ~50 ms after the press.
+  function startWatch() {
+    if (S.mp || !S.player || !RR.Input) return;
+    const down = (RR.Input.throttle || 0) > 0.25;
+    if (!down) { S.startHoldSince = null; return; }
+    if (S.startHoldSince == null) S.startHoldSince = S.phase === 'countdown' ? S.countdownT : -S.time;
+  }
+  function startVerdict(t) {
+    if (S.startVerdict != null) return;
+    if (S.mp || !S.player) { S.startVerdict = 'none'; return; }
+    const h = S.startHoldSince;
+    if (h != null && h > 0.6) {                                   // sat on the throttle: prop spins, boat waits
+      S.startVerdict = 'jump'; S.player.resetLock = 0.5;
+      if (RACE.onJumpStart) RACE.onJumpStart();
+    } else if (h != null && h <= 0.25) {                          // +/-0.25 s of GO: the kick, no tank spent
+      S.startVerdict = 'perfect'; S.player.boostKickT = 1.0;
+      if (RACE.onPerfectStart) RACE.onPerfectStart();
+    } else if (h != null || t > 0.25) {                           // early but honest, or simply late
+      S.startVerdict = 'none';
+    }
+  }
 
   // pulse the next gate's beacons so the player always knows where to aim
   RACE.animateGates = function (t) {
@@ -887,7 +1045,9 @@
     cupMigrate(c);
     const rIdx = Math.min(c.round, RACE.CUP_ROUNDS.length - 1);
     const n = c.points.length;
-    const row = { course: RACE.CUP_ROUNDS[rIdx], pos: new Array(n).fill(0), pts: new Array(n).fill(0), time: new Array(n).fill(null) };
+    // `est` marks a projected time (the boat was still on the water when the card opened), so the
+    // bracket can print it as an estimate rather than pass it off as a crossing
+    const row = { course: RACE.CUP_ROUNDS[rIdx], pos: new Array(n).fill(0), pts: new Array(n).fill(0), time: new Array(n).fill(null), est: new Array(n).fill(0) };
     for (let i = 0; i < results.length; i++) {
       const idx = S.boats.indexOf(results[i].boat);
       if (idx < 0) continue;
@@ -897,6 +1057,7 @@
       row.pos[idx] = i + 1;
       row.pts[idx] = p;
       row.time[idx] = isFinite(results[i].time) ? results[i].time : null;
+      row.est[idx] = results[i].projected ? 1 : 0;
       const nm = results[i].boat.isPlayer ? 'YOU' : results[i].boat.pilotName;
       if (nm) c.names[idx] = nm;
     }
@@ -950,6 +1111,7 @@
       const row = c.rounds[i] || null;
       const results = row ? c.names.map((name, k) => ({
         idx: k, name, isPlayer: k === 0, pos: row.pos[k] || null, pts: row.pts[k] || 0, time: row.time[k],
+        projected: !!(row.est && row.est[k]),                   // old saves have no est: never projected
       })).filter((r) => r.pos).sort((a, b) => a.pos - b.pos) : [];
       return {
         idx: i, id, name: course ? course.name : id.toUpperCase(),

@@ -169,7 +169,9 @@
     }
   }
 
-  // surface height if (x,z) is on a ramp, else null
+  // surface height if (x,z) is over a ramp's deck, else null. Geometry only: whether the hull is
+  // actually RUNNING the deck (velocity along the axis, or already climbing from the foot) is
+  // physics.js's call, so a flank clipped at 90 deg is water, not a 3 m step.
   RAMPS.query = function (x, z) {
     for (let i = 0; i < RAMPS.list.length; i++) {
       const r = RAMPS.list[i];

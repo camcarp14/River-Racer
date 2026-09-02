@@ -15,7 +15,8 @@
      ↑↓ ←→ select · ENTER confirm · BKSP back                          (menus.js)
 
    Gamepad: left stick steer · RT throttle · LT brake · A throttle · X boost · B fire item ·
-   LB look astern · right stick free look (tour) · stick click re-centres. */
+   LB look astern · right stick free look (tour) · stick click re-centres · Start pause (ESC) ·
+   Back reset (R) · on a menu: d-pad select, A confirm, B back (synthesised as the keys above). */
 (function () {
   const I = { throttle: 0, brake: 0, steer: 0, boost: false, lookBack: false, lookX: 0, lookY: 0, lookDX: 0, lookDY: 0, lookCenter: false, raw: {} };
   const keys = {};
@@ -35,7 +36,12 @@
   I.saluteCount = 0;
   I.salute = function () { if (I.onSalute) I.onSalute(); };
 
+  // Typing in a text box (the multiplayer name field) is not driving: no latch, no F chord, no
+  // preventDefault on the arrows — the same guard menus.js keeps for M and I.
+  const typing = (t) => !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable));
+
   window.addEventListener('keydown', (e) => {
+    if (typing(e.target)) return;
     const held = keys[e.code];
     keys[e.code] = true;
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
@@ -55,6 +61,8 @@
     }
     if (I.onKey) I.onKey(e.code);
   });
+  // keyup clears regardless of target: clearing can never latch a key, and a W that went down
+  // before focus moved into the box must not stay down after it comes up in there.
   window.addEventListener('keyup', (e) => { keys[e.code] = false; });
   window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
@@ -86,6 +94,27 @@
   let fireLatch = 0;
   I.touchFire = function () { fireLatch = 2; };
   I.pressed = (code) => !!keys[code] || ((I.padItem || T.item || fireLatch > 0) && code === 'KeyE');
+
+  // ---- pad buttons that are keys ---------------------------------------------------------------
+  // Start, Back and the menu buttons do not get their own plumbing: touch.js already dispatches a
+  // synthetic ESC for its pause thumb, and menus.js / main.js listen for keys, so the pad does the
+  // same. Edge-detected here so a held button fires exactly once. The menu set (d-pad, A, B) is
+  // only synthesised while a menu is up — in a race A is the throttle and B fires your item.
+  const padHeld = {};
+  function padKey(code) {
+    const o = { code, key: code, bubbles: true, cancelable: true };
+    window.dispatchEvent(new KeyboardEvent('keydown', o));
+    window.dispatchEvent(new KeyboardEvent('keyup', o));
+  }
+  const PAD_MENU = [[12, 'ArrowUp'], [13, 'ArrowDown'], [14, 'ArrowLeft'], [15, 'ArrowRight'], [0, 'Enter'], [1, 'Backspace']];
+  function padButtons(p) {
+    const edge = (i) => { const on = !!(p.buttons[i] && p.buttons[i].pressed); const was = !!padHeld[i]; padHeld[i] = on; return on && !was; };
+    const start = edge(9), back = edge(8);
+    const menuUp = !!(RR.Menus && RR.Menus.screen && RR.Menus.screen() !== 'none');
+    for (const [i, code] of PAD_MENU) { if (edge(i) && menuUp) padKey(code); }   // edges tracked even off a menu
+    if (start) padKey('Escape');
+    if (back) padKey('KeyR');
+  }
 
   // ---- free look: drag the world with the pointer -----------------------------------------
   // Only the Architecture Tour's seats read this (RR.Camera.seat), so a drag anywhere else is
@@ -121,12 +150,19 @@
     // LOOK BACK: hold it and the whole chase rig swings round onto the bow to look astern.
     let lb = !!(keys.KeyB || keys.KeyQ);
 
-    let lx = 0, ly = 0, recentre = false, padFire = false;
+    let lx = 0, ly = 0, recentre = false, padFire = false, padLive = false;
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     for (const p of pads) {
       if (!p || !p.connected) continue;
-      const ax = p.axes[0] || 0;
-      if (Math.abs(ax) > 0.12) st = RR.U.clamp(st - ax, -1, 1);
+      let ax = p.axes[0] || 0;
+      // Deadzone RESCALED, not stepped (0.11 -> 0, 0.13 -> 0.13 was a jump at the edge), and
+      // x*sqrt|x| for precision near centre at 40 m/s: half stick is 0.35 of lock, full is full.
+      if (Math.abs(ax) > 0.12) {
+        ax = Math.sign(ax) * (Math.abs(ax) - 0.12) / 0.88;
+        ax *= Math.sqrt(Math.abs(ax));
+        st = RR.U.clamp(st - ax, -1, 1);
+        padLive = true;
+      }
       const rt = p.buttons[7] ? p.buttons[7].value : 0;
       const lt = p.buttons[6] ? p.buttons[6].value : 0;
       if (rt > 0.05) th = Math.max(th, rt);
@@ -140,6 +176,7 @@
       if (Math.abs(rx) > 0.14) lx = rx;                               // stick right = look right
       if (Math.abs(ry) > 0.14) ly = -ry;                              // stick up (negative) = look up
       if (p.buttons[10] && p.buttons[10].pressed) recentre = true;    // stick click: eyes front
+      padButtons(p);
       break;
     }
 
@@ -160,9 +197,13 @@
     I.brake = RR.U.damp(I.brake, br, rate, dt);
     // A key is a switch and needs the ramp. A thumb on a stick is ALREADY an analog signal, and
     // 0.18 s of extra smoothing on top of it is the difference between steering the boat and
-    // asking it politely — so a live stick gets the fast approach the keys can't have.
-    const touching = T.on && T.steer !== 0;
-    I.steer = RR.U.damp(I.steer, st, touching ? 9 : st === 0 ? 9 : 5.5, dt);
+    // asking it politely — a live stick (touch OR pad; a pad used to fall through to the key
+    // ramp) takes the fast approach. The key ramp is 12 (was 5.5): 90% of lock in 0.19 s instead
+    // of 0.43, measured, which with physics.js's 15 turn-in takes the key-to-yaw t90 from
+    // 0.38-0.53 s to ~0.30 on every racer (8.5 alone left it at 0.38-0.40: the ramp, not the
+    // hull, was the lag). Release stays 9, so a tap still unwinds cleanly.
+    const analog = (T.on && T.steer !== 0) || padLive;
+    I.steer = RR.U.damp(I.steer, st, analog ? 12 : st === 0 ? 9 : 12, dt);
     I.boost = bo;
     I.lookBack = lb;
     I.padItem = padFire;
