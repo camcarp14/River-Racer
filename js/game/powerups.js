@@ -31,23 +31,30 @@
   //
   // front / mid / back are the DRAW WEIGHTS at 1st, mid-field and last. See rollFor().
   //
+  // FRONT WEIGHTS ARE DEFENCE. Measured before this tune, oddsAt(0) was turbo 25% / slick 22% /
+  // dye 14% — 61% of the leader's table only ever hurt the boats behind her, and items ON widened
+  // the field by 23 s against items OFF (fairness2, MAIN STEM, SKIPPER). P1 now draws the SHIELD
+  // first and keeps a TURBO she can actually use; the offence lives in the tail's column, where it
+  // compresses the race instead of stretching it.
+  //
   // NAMES AND BLURBS ARE PLAIN. Every one of them says what the thing does to whom, in words you
   // would use out loud. GALE OFF THE LAKE is gone: its effect was a sideways nudge you could not
   // see and could not name, and a power-up you cannot perceive is not a power-up. The TORPEDO
   // replaces it in the same slot in the draw table — the tail's big swing at whoever is winning.
   PU.ITEMS = [
     { id: 'turbo', name: 'TURBO', short: 'TURBO', kind: 'self', color: 0x25ff7a, glyph: '»',
-      blurb: 'Huge speed burst for 3 seconds.', front: 30, mid: 26, back: 18 },
+      blurb: 'Huge speed burst for 3 seconds.', front: 12, mid: 26, back: 18 },
     // id stays 'fender' — hud.js and the saved-preference path key off ids, and renaming a key to
     // match a label is how you break a save file for a caption.
     { id: 'fender', name: 'SHIELD', short: 'SHIELD', kind: 'self', color: 0x7ec8e3, glyph: '◌',
-      // It blocks items and one hard wall crash, but NOT a plain boat-to-boat ram — physics only
-      // sets crashTimer on wall contact. Say what it does rather than what the name implies.
-      blurb: 'Blocks the next item that hits you.', front: 40, mid: 20, back: 6 },
+      // It blocks items and one HARD wall crash, but NOT a plain boat-to-boat ram — physics only
+      // reports a shield hit on wall contact, and only above severity 0.45 (physics.js SHIELD_AWARE,
+      // ~8 m/s into the quay). A graze keeps it. Say what it does rather than what the name implies.
+      blurb: 'Blocks the next item or hard crash.', front: 46, mid: 20, back: 6 },
     { id: 'slick', name: 'OIL SLICK', short: 'OIL SLICK', kind: 'drop', color: 0x2a3c4e, glyph: '≈',
-      blurb: 'Drops 3 slicks behind you. They spin out.', front: 26, mid: 22, back: 10 },
+      blurb: 'Drops 3 slicks behind you. They spin out.', front: 16, mid: 22, back: 10 },
     { id: 'dye', name: 'GREEN DYE', short: 'GREEN DYE', kind: 'drop', color: 0x2ecc71, glyph: '◉',
-      blurb: 'Green cloud astern. Blinds anyone in it.', front: 16, mid: 20, back: 12 },
+      blurb: 'Green cloud astern. Blinds anyone in it.', front: 8, mid: 20, back: 12 },
     { id: 'deepdish', name: 'DEEP DISH', short: 'DEEP DISH', kind: 'self', color: 0xffb03a, glyph: '●',
       blurb: 'You turn heavy and smash boats aside.', front: 4, mid: 26, back: 20 },
     { id: 'bowwave', name: 'SHOCKWAVE', short: 'SHOCKWAVE', kind: 'burst', color: 0x9fe8ff, glyph: '(',
@@ -55,7 +62,7 @@
     { id: 'gulls', name: 'GULL SWARM', short: 'GULLS', kind: 'ahead', color: 0xf2f6f8, glyph: '^',
       blurb: 'Birds mob the 4 boats ahead of you.', front: 0, mid: 12, back: 26 },
     { id: 'torpedo', name: 'TORPEDO', short: 'TORPEDO', kind: 'ahead', color: 0xff5a3a, glyph: '➤',
-      blurb: 'Homes up the river and wipes out the leader.', front: 0, mid: 4, back: 34 },
+      blurb: 'Homes on the next boat up the river.', front: 0, mid: 4, back: 34 },
   ];
   const BY_ID = {};
   for (const it of PU.ITEMS) BY_ID[it.id] = it;
@@ -67,23 +74,48 @@
     ROW_FRACS: [-0.62, -0.30, 0.30, 0.62],  // lateral, in channel widths. NEVER dead centre: taking
     // one has to be a line choice, and a crate on the racing line is not a choice.
     CRATE_R: 2.7,                           // grab radius on top of the hull radius
-    AI_REACH: 4.5,                          // a rival reaches further; aiSteer() is the honest version
+    // Reach WAS the rivals' whole advantage: 4.5 m of it on top of aiSteer meant a rival passing
+    // 8.7 m wide of a crate still pocketed it (measured T0b) while the player needed 4.4 m. aiSteer
+    // is the honest version and main.js wires it in, so the extra reach is down to a metre — and
+    // the player gets two, because you cannot see your own bow.
+    AI_REACH: 1.0, PLAYER_REACH: 2.0,
     RESPAWN: 7.0,
     ROLL_T: 0.85,                           // how long the slot spins before it locks (player only)
     SHIELD_T: 12.0, SHIELD_BOUNCE: 22,      // what the blocked boat gets thrown back with
     HEAVY_T: 8.0, HEAVY_MASS: 6.0, HEAVY_TOP: 0.97,
     // The one-shot hit DEEP DISH lands per victim. SLAM_CD is a DRAMA budget as much as a balance
-    // one: the slam is worth a beat of slow motion, and at 0.7 s a heavy boat sitting on top of you
-    // for its whole eight seconds could spend a third of them in slow motion.
-    SLAM_PUSH: 21, SLAM_SPIN: 3.2, SLAM_CD: 1.1,
-    SPIN_T: 1.6, SPIN_W: 5.5, SPIN_DRAG: 1.9,
+    // one: at 1.1 s a heavy boat held station on one rival and slammed it SEVEN times in eight
+    // seconds (measured T4, thrown to 48.3 m/s against a 41 m/s top). Three seconds per victim, and
+    // the reach is fixed rather than radius*9 — that read 8.8 m on a jet ski and 34 m on the tour
+    // boat, so nobody could learn where the ring bites.
+    SLAM_PUSH: 21, SLAM_YAW: 0.5, SLAM_CD: 3.0, SLAM_REACH: 8.0, SLAM_HOLD: 30,
+    // SPIN_DRAG 1.9 stopped a spun hull to 5% of her speed: a slick cost 126 m, 3.3 s (behave3 V2).
+    // At 1.0 it costs about 2 s — a mistake you drive out of, not a race you lose.
+    SPIN_T: 1.6, SPIN_W: 5.5, SPIN_DRAG: 1.0,
+    // The post-hit grace, and how fast a yaw kick is paid out (95% of it inside 0.25 s).
+    GRACE_T: 2.5, IMMUNE_T: 1.5, YAW_RATE: 12,
     SLICK_T: 14.0, SLICK_R: 7.0, SLICK_N: 3, SLICK_SPREAD: 9.0, DROP_ARM: 0.9,
     DYE_T: 10.0, DYE_R0: 8.0, DYE_R1: 17.0, BLIND_T: 2.2, DYE_DRAG: 0.55,
     GULL_T: 4.5, GULL_RANGE: 320, GULL_MAX: 4, GULL_TOP: 0.80, GULL_WHEEL: 0.5,
-    TORP_SPD: 62, TORP_LIFE: 7.0, TORP_RANGE: 520, TORP_R: 4.6, TORP_TRACK: 2.6,
+    // At 62 m/s the fish closed on a 38 m/s hull at 24 m/s, so seven seconds of life reached about
+    // 200 m of the 520 m it aimed at (measured U7: 200 m hit at 6.0 s, 280 m expired unfired) — the
+    // tail's big swing was a dud. 90 m/s closes at ~52 and reaches ~360 m, and TORP_TRACK 2.6 still
+    // lets a boat that moves get missed.
+    TORP_SPD: 90, TORP_LIFE: 7.0, TORP_RANGE: 520, TORP_R: 4.6, TORP_TRACK: 2.6,
     TORP_SLOW: 0.40, TORP_ARM: 0.35,
-    WAVE_R: 34, WAVE_PUSH: 26, WAVE_SELF: 8.0, WAVE_SPIN: 2.6,
+    // WAVE_YAW is RADIANS of hull, not rad/s of angVel: physics unwinds angVel at 6.5/s and halves
+    // it every frame bumpRecover is up, so 1.9 rad/s of applied spin was 0.11 rad/s two frames
+    // later (measured T5) and two of the three throw items read as a shove with no rotation.
+    WAVE_R: 34, WAVE_PUSH: 26, WAVE_SELF: 8.0, WAVE_YAW: 0.45,
     TURBO_T: 3.0, TURBO_KICK: 16.0, TURBO_ACC: 26, TURBO_TOP: 1.55, TURBO_WASH: 13,
+    // THE AI'S ITEM ECONOMY, on ONE curve — RR.AI.tierW, the same convex w that tunes their
+    // driving (0 rookie · 0.55 skipper · 1 legend), so nobody tunes one and mis-tunes the other.
+    // AI_FIRE_GAP is the minimum seconds between one rival's shots. Measured without it: 19.1
+    // (ROOKIE) / 21.3 (SKIPPER) / 15.0 (LEGEND) items per minute from the field, while the player
+    // drew ONE crate a race — a rookie race was a torpedo range. AI_ITEMS_PER_MIN is what the gap
+    // is aimed at with five rivals, and what the bar measures: <= 6 rookie, <= 9 skipper, <= 12
+    // legend (5 rivals * 60 / gap is the ceiling; crate supply keeps them well under it).
+    AI_FIRE_GAP: [12.0, 3.0], AI_ITEMS_PER_MIN: [6, 9, 12],
   };
   PU.K = K;
 
@@ -251,6 +283,14 @@
       if (m.f && m.f === myId()) bounceOff(S.player, m.x, m.z, vb);
       return;
     }
+    if (m.k === 'sl' || m.k === 'dy') {
+      const list = m.k === 'sl' ? slicks : dyes;
+      for (const p of list) {
+        if (p.oid !== m.f || (p.seq | 0) !== (m.n | 0) || (p.k | 0) !== (m.i | 0)) continue;
+        p.t = m.k === 'sl' ? Math.min(p.t, 0.35) : 0;    // spent, or blown away by a shield
+      }
+      return;
+    }
     if (m.k === 'tp') {
       const p = torpByKey(m.f, m.n | 0);
       if (!p) return;                        // already gone here: it expired, or it hit us first
@@ -278,6 +318,39 @@
   const rd = (v) => Math.round(v * 10) / 10;
   const rd3 = (v) => Math.round(v * 1000) / 1000;
 
+  // ROUTE DISTANCE IS ABSOLUTE ARC LENGTH: race.js writes routeD = lap*len + d, so on the LAKE
+  // MICHIGAN CIRCUIT lap 2 starts at 2301 on a 2301 m route. Every pathAt sample therefore has to
+  // WRAP, not clamp — a clamp pins the whole of lap 2 to the finish-line tangent, which is what
+  // left the torpedo dead on launch and the AI's turbo test reading the seam (measured T13: fire
+  // returned true and torps was [] on the next frame). One helper, used at every pathAt call site.
+  function lapD(route, d) {
+    const len = route.len;
+    return route.loop ? (((d % len) + len) % len) : U().clamp(d, 0, len - 1);
+  }
+  // Where the course ENDS in absolute arc length, so a fish expires at the flag, not at the seam.
+  function courseEnd(route) {
+    return route.loop ? ((S && S.course && S.course.laps) || 1) * route.len : route.len;
+  }
+  // ai.js's tier weight, so items and driving run off one curve (rivals-14). Feature-detected: the
+  // local fallback is the same formula.
+  function tierW() {
+    const d = diff();
+    if (RR.AI && RR.AI.tierW) return RR.AI.tierW(d);
+    return Math.pow(U().clamp((d - 0.7) / 0.75, 0, 1), 0.65);
+  }
+
+  // THE POST-HIT GRACE, in one place. Measured (fairness2, MAIN STEM, SKIPPER, autopilot player):
+  // 13/7/9 hits on the player per race, with the same boat 'RUN OVER BY DEEP DISH' twice running —
+  // items chained on whoever was already in trouble. A boat that is spun, blinded, freshly slammed
+  // or within GRACE_T of its last hit cannot be hit again, by anything: slick, dye, gulls, torpedo,
+  // DEEP DISH and SHOCKWAVE all ask here and nowhere else.
+  function vulnerable(b) {
+    const s = b._pu;
+    if (!s) return true;
+    if (s.spin > 0 || s.blind > 0 || (s.immune || 0) > 0) return false;
+    return RR.Engine.time() - (s.lastHitT || -1e9) >= K.GRACE_T;
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Scene objects. Seven instanced meshes and one screen quad, built once per race, torn down with
   // it. Everything sits on layer 1 — these are UI in world clothes and have no business in the
@@ -291,7 +364,7 @@
   const M4 = new THREE.Matrix4(), Q0 = new THREE.Quaternion(), V3 = new THREE.Vector3(), SC = new THREE.Vector3();
   const UP = new THREE.Vector3(0, 1, 0);
   const HIDE = new THREE.Matrix4().makeScale(0, 0, 0);
-  const TPT = {}, PPT = {};                    // pathAt scratch — no allocation in update()
+  const TPT = {}, PPT = {}, SPT = {};          // pathAt scratch — no allocation in update()
   const C0 = new THREE.Color();
   // GULL_MAX victims × 16 birds each — sized so the fourth victim is not the one that silently
   // gets no flock.
@@ -654,6 +727,20 @@
   // ---------------------------------------------------------------------------------------------
   // Placement: rows across the channel, deterministic, never on the grid or on the flag.
   // ---------------------------------------------------------------------------------------------
+  // Nine metres clear of anything else that draws a ring on the water. MEASURED (crates.js): a
+  // crate 2.3 m from the HARBOR LOCK gate centre made taking the gate and taking the crate one
+  // move and drew one unreadable glyph; course 2 had one 7 m from MARINA CITY SLIPS.
+  function nearFurniture(state, x, z, r) {
+    const r2 = r * r;
+    for (const g of state.boostGates || []) if (U().dist2(x, z, g.x, g.z) < r2) return true;
+    for (const cp of state.checkpoints || []) {
+      const bx = cp.tz * cp.off, bz = cp.tx * cp.off;
+      if (U().dist2(x, z, cp.x + bx, cp.z - bz) < r2) return true;
+      if (U().dist2(x, z, cp.x - bx, cp.z + bz) < r2) return true;
+    }
+    return false;
+  }
+
   function planCrates(state) {
     const route = state.route;
     const out = [];
@@ -677,8 +764,21 @@
         const cx = pt.x + pt.tz * off, cz = pt.z - pt.tx * off;
         const wq = RR.River.waterQuery(cx, cz, null);
         if (!wq || wq.clear < 4.5) continue;      // a crate you cannot reach is worse than no crate
+        if (pt.w < 16) continue;                  // never bait anybody between the piers: ai.js's
+        // own tight-water number, and the width where blocking and shoving are vetoed too
+        if (nearFurniture(state, cx, cz, 9)) continue;
+        if (RR.River.hitObstacle && RR.River.hitObstacle(cx, cz, 2.5)) continue;
+        // The beacon is an 11 m column and 8/16/34 crates on courses 0/1/2 stood under a bridge
+        // deck with 5.5-6.4 m of clearance, so the shaft speared the steel. clearanceAt is the real
+        // footprint (bridges.js:65) — duckY is a 57 m camera blob and would crop beacons a bridge
+        // away. Baked at build time: the spans do not move, only their leaves do.
+        let hy = 1;
+        if (RR.Bridges && RR.Bridges.clearanceAt) {
+          const cl = RR.Bridges.clearanceAt(cx, cz);
+          if (isFinite(cl)) hy = U().clamp((cl - 0.5) / 11, 0.12, 1);
+        }
         // claimT: online, how long this client waits for the host's answer before claiming again
-        out.push({ x: cx, z: cz, d: pt.d, t: 0, spin: rng() * 6.283, seed: rng() * 6.283, taken: false, claimT: 0 });
+        out.push({ x: cx, z: cz, d: pt.d, t: 0, spin: rng() * 6.283, seed: rng() * 6.283, taken: false, claimT: 0, hy });
       }
     }
     return out;
@@ -704,11 +804,17 @@
   function rollFor(boat) {
     const n = Math.max(2, S.boats.length);
     const p = (U().clamp(positionOf(boat), 1, n) - 1) / (n - 1);
+    // Below w 0.35 a RIVAL's reach items are cut to 30% of their weight. ROOKIE is described as
+    // 'good for learning the river' and a first-timer was being torpedoed and mobbed several times
+    // a race (measured: spin 9 / gulls 11 / blind 5 over four ROOKIE races). The player's table is
+    // never scaled, and the position weighting is untouched — only the tier tilts it.
+    const cut = !boat.isPlayer && tierW() < 0.35 ? 0.3 : 1;
+    const wOf = (it) => weightAt(it, p) * (it.kind === 'ahead' ? cut : 1);
     let total = 0;
-    for (const it of PU.ITEMS) total += weightAt(it, p);
+    for (const it of PU.ITEMS) total += wOf(it);
     let r = (drawRng ? drawRng() : Math.random()) * total;
     for (const it of PU.ITEMS) {
-      r -= weightAt(it, p);
+      r -= wOf(it);
       if (r <= 0) return it;
     }
     return PU.ITEMS[0];
@@ -729,11 +835,14 @@
       held: null, roll: 0,
       shield: 0, heavy: 0, spin: 0, spinDir: 1, blind: 0, gulls: 0,
       turbo: 0, slamCd: 0,
+      immune: 0, lastHitT: -1e9,             // the grace clock — see vulnerable()
+      yawKick: 0,                            // radians of hull still owed by a slam or a wave
+      fireQueued: false,                     // a trigger pulled during the spin, waiting on the lock
       seed: (seedTick = (seedTick + 2.399963) % 6.283),
       baseMass: b.mass || 1,
       stamp: -1e9,                           // when this client last changed the slot on authority
 
-      aiHold: 0, aiPatience: null, aiCheck: 0, seekX: 0, seekZ: 0, seekT: 0,
+      aiHold: 0, aiPatience: null, aiCheck: 0, aiFireT: -1e9, seekX: 0, seekZ: 0, seekT: 0,
     });
   }
 
@@ -742,6 +851,7 @@
     if (s.held) return false;
     s.held = item;
     s.roll = instant ? 0 : K.ROLL_T;
+    s.fireQueued = false;                  // a new item never inherits the last one's trigger
     s.aiPatience = null;                   // a fresh item gets a fresh clock — see aiBrain
     return true;
   }
@@ -779,9 +889,21 @@
   // who threw it, a jolt in the chair, and a beat of slow motion. Rivals get the world FX only —
   // they have no chair and no screen — which is why the camera work is gated on isPlayer.
   const lastHit = { label: '', from: '', t: -1e9 };
+  const hitLog = [];                    // the last 120 landings, for the harness and a bug report
   function land(victim, from, label, kick, dilScale, dilMs) {
     if (!victim) return;
+    st(victim).lastHitT = RR.Engine.time();      // arms the grace: nothing else may land for 2.5 s
+    hitLog.push({ t: rd(RR.Engine.time()), v: nameOf(victim), from: from ? nameOf(from) : '', label });
+    if (hitLog.length > 120) hitLog.shift();
     chip(victim, 'bad', from && from !== victim ? label + ' — ' + nameOf(from) : label, 1900);
+    // THE THROWER LEARNS IT LANDED, once, here — which is why no item counts its own hits any
+    // more. A slick or a dye that just won the race was invisible from the firing end unless you
+    // looked astern (powerups-12). Offline only by construction: online land() runs on the
+    // VICTIM'S client, so credit would have to ride the wire the way the torpedo's does.
+    if (from && from.isPlayer && victim !== from) {
+      chip(from, 'item', label.split(' — ')[0] + ' — GOT ' + nameOf(victim), 1600);
+      if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.15);
+    }
     if (!victim.isPlayer) return;
     // The HUD raises its own plate off the rising edge of status(), and a generic "SPUN OUT" is
     // exactly the thing the owner cannot read. This is the attribution, published, so the plate can
@@ -804,10 +926,12 @@
   // Every hostile effect asks first, and the answer is a bubble bursting: a wall of water off the
   // hull, a white ring, and — new — whatever was doing the hitting gets thrown back off it. A
   // shield that only deletes an event still feels like nothing happened.
-  function consumeShield(b, from) {
+  function consumeShield(b, from, label) {
     const s = st(b);
     if (s.shield <= 0) return false;
     s.shield = 0;
+    b.shielded = false;                  // physics.js reads this: the absorb is spent
+    b.shieldHit = 0;
     s.stamp = RR.Engine.time();
     popRing(b.pos.x, b.pos.y + 0.8, b.pos.z, 13, 0x7ec8e3);
     popWall(b.pos.x, b.pos.z, 14, 0x9fe8ff);
@@ -818,8 +942,11 @@
       send({ t: 'pht', k: 'sh', f: netIdOf(from), v: myId(), x: rd(b.pos.x), z: rd(b.pos.z) });
     }
     if (from && from !== b && !from.finished && mine(from)) bounceOff(from, b.pos.x, b.pos.z, b);
+    // a block that does not say WHAT was blocked, and by whom, teaches nothing about who is behind
+    if (from && from.isPlayer && from !== b) chip(from, 'item', 'SHIELD BLOCKED IT — ' + nameOf(b), 1500);
     if (b.isPlayer) {
-      chip(b, 'item', 'SHIELD BLOCKED IT', 1500);
+      chip(b, 'item', label ? 'SHIELD BLOCKED ' + label + (from && from !== b ? ' — ' + nameOf(from) : '')
+        : 'SHIELD BLOCKED IT', 1500);
       if (RR.Audio && RR.Audio.thud) RR.Audio.thud(0.7);
       if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.5);
       if (RR.Feel && RR.Feel.dilate) RR.Feel.dilate(0.7, 200);
@@ -851,7 +978,12 @@
   function fire(b) {
     const s = st(b);
     const it = s.held;
-    if (!it || s.roll > 0) return false;
+    if (!it) return false;
+    // A press during the 0.85 s spin used to be thrown away, and the crate flash is the most
+    // natural moment to press (measured T10: puFire() at rolling 0.65 returned false and the item
+    // was still held a second later). Queue it; applyEffects pulls the trigger on the lock frame.
+    if (s.roll > 0) { if (b.isPlayer) s.fireQueued = true; return false; }
+    s.fireQueued = false;
     s.held = null;
     s.stamp = RR.Engine.time();
 
@@ -865,8 +997,8 @@
       victims = list.length ? [list[0].o] : [];      // whoever is next up the road; see reTarget
       const route = S.route;
       if (route) {
-        const d0 = U().clamp(b.routeD || 0, 0, route.len - 1);
-        U().pathAt(route, d0, TPT);
+        const d0 = b.routeD || 0;            // ABSOLUTE arc length: a clamp here killed lap 2
+        U().pathAt(route, lapD(route, d0), TPT);
         m.d = rd(d0);
         m.o = rd((b.pos.x - TPT.x) * TPT.tz - (b.pos.z - TPT.z) * TPT.tx);
       }
@@ -927,6 +1059,9 @@
 
     } else if (it.id === 'fender') {
       s.shield = K.SHIELD_T;
+      // physics.js (SHIELD_AWARE) reads this flag and absorbs one hard contact outright — no
+      // scrub, no lost wheel — and reports it back as boat.shieldHit. See applyEffects.
+      if (own) b.shielded = true;
       popRing(ox, b.pos.y + 0.6, oz, 12, 0x7ec8e3);
       popWall(ox, oz, 11, 0x9fe8ff);
       if (RR.FX && RR.FX.spray) RR.FX.spray(ox, b.pos.y + 0.5, oz, 0, 5.0, 0, 30, 6.5, 1.6);
@@ -954,7 +1089,11 @@
         const back = b.radius + 3.5 + Math.abs(off) * 0.35;
         const dx = ox - fx * back + lx * off, dz = oz - fz * back + lz * off;
         if (slicks.length >= MAX_SLICK) slicks.shift();
-        slicks.push({ x: dx, z: dz, r: K.SLICK_R, t: K.SLICK_T, arm: K.DROP_ARM, owner: b });
+        // oid/seq/k name this patch on every screen, exactly the way the torpedo is named: online
+        // the victim tells the room which slick it just spent, or one slick spins the whole field
+        // in turn (powerups-15).
+        slicks.push({ x: dx, z: dz, r: K.SLICK_R, t: K.SLICK_T, arm: K.DROP_ARM, owner: b,
+          oid: m.w || null, seq: m.n | 0, k: i });
         if (RR.FX && RR.FX.spray) RR.FX.spray(dx, 0.4, dz, lx * off * 0.4, 2.4, lz * off * 0.4, 16, 4.0, 1.6, 2);
       }
       popRing(ox - fx * 6, 0.35, oz - fz * 6, 16, 0x7a5aa8);
@@ -965,7 +1104,8 @@
     } else if (it.id === 'dye') {
       const dx = ox - fx * (b.radius + 4.5), dz = oz - fz * (b.radius + 4.5);
       if (dyes.length >= MAX_DYE) dyes.shift();
-      dyes.push({ x: dx, z: dz, r: K.DYE_R0, t: K.DYE_T, life: K.DYE_T, arm: K.DROP_ARM, owner: b });
+      dyes.push({ x: dx, z: dz, r: K.DYE_R0, t: K.DYE_T, life: K.DYE_T, arm: K.DROP_ARM, owner: b,
+        oid: m.w || null, seq: m.n | 0, k: 0 });
       if (RR.FX && RR.FX.dyeBurst) {
         RR.FX.dyeBurst(dx, 0.8, dz, 70);
         RR.FX.dyeBurst(dx, 3.2, dz, 50);
@@ -985,11 +1125,12 @@
         const d2 = dx * dx + dz * dz;
         if (d2 > K.WAVE_R * K.WAVE_R || d2 < 1e-4) continue;
         if (!mine(o)) continue;
-        if (consumeShield(o)) continue;
+        if (!vulnerable(o)) continue;          // a boat already spinning is not hit twice
+        if (consumeShield(o, b, 'SHOCKWAVE')) continue;
         const d = Math.sqrt(d2), k = 1 - d / K.WAVE_R;
         o.vel.x += (dx / d) * K.WAVE_PUSH * k;
         o.vel.z += (dz / d) * K.WAVE_PUSH * k;
-        o.angVel += (dx * fz - dz * fx > 0 ? 1 : -1) * K.WAVE_SPIN * k;
+        st(o).yawKick = (dx * fz - dz * fx > 0 ? 1 : -1) * K.WAVE_YAW * k;   // hull, not angVel
         o.bumpRecover = Math.max(o.bumpRecover || 0, 0.5 + k * 0.7);
         if (RR.FX && RR.FX.spray) RR.FX.spray(o.pos.x, o.pos.y + 0.4, o.pos.z,
           (dx / d) * 9, 5.0, (dz / d) * 9, 18, 5.5, 1.8);
@@ -1009,8 +1150,9 @@
           }
         }
       }
-      // online the firer cannot count its own hits — every victim is somebody else's arithmetic
-      chip(b, 'item', hits ? 'SHOCKWAVE — HIT ' + hits : 'SHOCKWAVE', 1400);
+      // the count is gone: land() credits the thrower once per victim, by name (powerups-12), and
+      // online the firer cannot count its own hits anyway — every victim is somebody else's sum
+      chip(b, 'item', 'SHOCKWAVE', 1400);
       recoil(b, 0.85, 0.5, 280);
       if (b.isPlayer && RR.Audio && RR.Audio.splash) RR.Audio.splash(1.0);
 
@@ -1021,7 +1163,8 @@
       let hits = 0;
       for (const o of list) {
         if (!o || o.finished) continue;
-        if (mine(o) && consumeShield(o)) continue;
+        if (mine(o) && !vulnerable(o)) continue;
+        if (mine(o) && consumeShield(o, b, 'GULL SWARM')) continue;
         const so = st(o);
         so.gulls = K.GULL_T;
         if (mine(o)) so.stamp = RR.Engine.time();
@@ -1033,7 +1176,7 @@
         land(o, b, 'GULLS ON YOU', 0.7, 0.8, 220);
       }
       if (RR.Audio && RR.Audio.seagull) RR.Audio.seagull();
-      chip(b, 'item', hits ? 'GULL SWARM — HIT ' + hits : 'GULL SWARM — NOBODY AHEAD', 1600);
+      chip(b, 'item', hits ? 'GULL SWARM' : 'GULL SWARM — NOBODY AHEAD', 1600);
       recoil(b, 0.15, 0, 0);
 
     } else if (it.id === 'torpedo') {
@@ -1045,10 +1188,10 @@
       const target = victims ? (victims[0] || null) : (m.g && m.g.length ? boatById(m.g[0]) : null);
       const route = S.route;
       if (route) {
-        const d0 = m.d != null ? m.d : U().clamp(b.routeD || 0, 0, route.len - 1);
+        const d0 = m.d != null ? m.d : (b.routeD || 0);   // absolute, so it flies on lap 2
         let off = m.o;
         if (off == null) {
-          U().pathAt(route, U().clamp(d0, 0, route.len - 1), TPT);
+          U().pathAt(route, lapD(route, d0), TPT);
           off = (ox - TPT.x) * TPT.tz - (oz - TPT.z) * TPT.tx;
         }
         if (torps.length >= MAX_TORP) torps.shift();
@@ -1099,7 +1242,7 @@
         let dd = (b.routeD || 0) - c.d;                // cheap arc-length reject first
         if (route.loop) dd = ((dd % route.len) + route.len * 1.5) % route.len - route.len * 0.5;
         if (dd < -70 || dd > 70) continue;
-        const reach = b.radius + K.CRATE_R + (b.isPlayer ? 0 : K.AI_REACH);
+        const reach = b.radius + K.CRATE_R + (b.isPlayer ? K.PLAYER_REACH : K.AI_REACH);
         if (U().dist2(b.pos.x, b.pos.z, c.x, c.z) > reach * reach) continue;
         if (online) {
           // Online a client never decides it got the crate and never rolls the item: it CLAIMS,
@@ -1133,19 +1276,38 @@
       const s = b._pu;
       if (!s) continue;
       const own = mine(b);
-      if (s.roll > 0) s.roll = Math.max(0, s.roll - dt);
+      // Every timer keeps running after the PLAYER crosses the line — rivals are still racing for
+      // 2nd to 6th and the results card ranks them — but nothing MOVES a hull that has finished:
+      // main.js holds her at throttle 0.25 for the finale skyline shot, and a TURBO run under that
+      // camera is not a shot. own says whose hull it is; drive says whether it may be pushed.
+      const drive = own && !b.finished;
+      if (s.roll > 0) {
+        s.roll = Math.max(0, s.roll - dt);
+        // the trigger pulled during the spin, fired on the frame the slot locks (powerups-07)
+        if (s.roll <= 0 && s.fireQueued && b.isPlayer && !b.finished && S.phase === 'racing') fire(b);
+      }
       if (s.slamCd > 0) s.slamCd -= dt;
+      if (s.immune > 0) s.immune -= dt;
+      // A yaw KICK: radians written straight onto the heading, paid out over ~0.25 s, with no drag
+      // and nothing for physics' angVel unwind to scrub. This is what makes a SHOCKWAVE or a DEEP
+      // DISH slam read as the hull coming round instead of a shove (powerups-09).
+      if (s.yawKick) {
+        const step = s.yawKick * (1 - Math.exp(-K.YAW_RATE * dt));
+        s.yawKick -= step;
+        if (drive) b.heading = U().wrapAngle(b.heading + step);
+        if (Math.abs(s.yawKick) < 1e-3) s.yawKick = 0;
+      }
       if (s.turbo > 0) {
         s.turbo -= dt;
         // The sustained half of the item. Hold the burn hot so effects.js keeps the flame lit and
         // the rooster tail running, and push towards the raised ceiling every frame — physics.js
         // is bleeding her back down at 6 m/s² the whole time, so this is a fight, not an assignment.
-        if (own) b.boostHeat = Math.max(b.boostHeat || 0, 0.95);
+        if (drive) b.boostHeat = Math.max(b.boostHeat || 0, 0.95);
         b.turboFlame = 1;
         const fx = Math.sin(b.heading), fz = Math.cos(b.heading);
         const cap = (b.spec.top || 40) * K.TURBO_TOP;
         const sp = Math.hypot(b.vel.x, b.vel.z);
-        if (own && sp < cap) {
+        if (drive && sp < cap) {
           const add = Math.min(K.TURBO_ACC * dt, cap - sp);
           b.vel.x += fx * add; b.vel.z += fz * add;
         }
@@ -1162,7 +1324,7 @@
         // …and the prop wash reads on the RECEIVING end: anybody you go past at this speed gets
         // shoved off their line by the water you just moved.
         for (const o of S.boats) {
-          if (o === b || o.finished || !mine(o)) continue;
+          if (o === b || o.finished || !mine(o) || b.finished) continue;
           const dx = o.pos.x - b.pos.x, dz = o.pos.z - b.pos.z;
           const d2 = dx * dx + dz * dz;
           if (d2 > 196 || d2 < 1e-4) continue;               // 14 m
@@ -1175,9 +1337,19 @@
       }
       if (s.shield > 0) {
         s.shield -= dt;
-        // the shield eats one real impact as well as one item — that is what makes it worth holding
-        if (own && (b.bumpRecover || 0) > 0 && (b.crashTimer || 0) > 0.2) { b.bumpRecover = 0; consumeShield(b); }
-      }
+        if (own) b.shielded = s.shield > 0;
+        // It eats one real impact as well as one item — that is what makes it worth holding — but
+        // only a HARD one. It used to go on any bounce above severity 0.12 AFTER the bounce had
+        // already taken the speed: measured T2, a 15 m/s bank graze spent the bubble and the hull
+        // still fell 15.5 -> 6.1 m/s. P1's physics now absorbs the contact itself above severity
+        // 0.45 and reports boat.shieldHit; the fallback reads the same threshold off bumpRecover,
+        // which physics writes as 0.18 + 0.40*sev, so > 0.36 is exactly sev > 0.45.
+        if (own && RR.Physics && RR.Physics.SHIELD_AWARE) {
+          if ((b.shieldHit || 0) > 0) { b.shieldHit = 0; consumeShield(b, null, 'A HARD CRASH'); }
+        } else if (own && (b.bumpRecover || 0) > 0.36 && (b.crashTimer || 0) > 0.2) {
+          b.bumpRecover = 0; consumeShield(b, null, 'A HARD CRASH');
+        }
+      } else if (b.shielded) b.shielded = false;
       if (s.heavy > 0) {
         s.heavy -= dt;
         if (s.heavy <= 0) { if (own) b.mass = s.baseMass; }
@@ -1185,16 +1357,16 @@
           // the trade, honoured without touching physics.js: heavy runs 7% short of her top end
           const cap = (b.spec.top || 40) * K.HEAVY_TOP;
           const sp = Math.hypot(b.vel.x, b.vel.z);
-          if (own && sp > cap) {
+          if (drive && sp > cap) {
             const k = Math.max(cap / sp, 1 - (6.0 * dt) / sp);
             b.vel.x *= k; b.vel.z *= k;
           }
-          bulldoze(b, dt);          // runs on every client; only owned VICTIMS are actually moved
+          if (!b.finished) bulldoze(b, dt);   // every client; only owned VICTIMS are actually moved
         }
       }
       if (s.spin > 0) {
         s.spin -= dt;
-        if (own) {
+        if (drive) {
           b.angVel = s.spinDir * K.SPIN_W;
           const k = Math.exp(-K.SPIN_DRAG * dt);
           b.vel.x *= k; b.vel.z *= k;
@@ -1208,7 +1380,7 @@
       }
       if (s.blind > 0) {
         s.blind -= dt;
-        if (own) {
+        if (drive) {
           const k = Math.exp(-K.DYE_DRAG * dt);     // forty pounds of powder is thick water
           b.vel.x *= k; b.vel.z *= k;
         }
@@ -1218,7 +1390,7 @@
         // Birds are not scenery: they cost you the top of the rev range, whoever you are.
         const cap = (b.spec.top || 40) * K.GULL_TOP;
         const sp = Math.hypot(b.vel.x, b.vel.z);
-        if (own && sp > cap) {
+        if (drive && sp > cap) {
           const k = Math.max(cap / sp, 1 - (9.0 * dt) / sp);
           b.vel.x *= k; b.vel.z *= k;
         }
@@ -1227,7 +1399,7 @@
       // enough — but gulls fighting for the helm is the whole reason the item is worth drawing, so
       // the player gets a real shove on the heading too, small enough to catch and correct.
       const w = (s.blind > 0 ? 0.95 : 0) + (s.gulls > 0 ? 0.85 : 0);
-      if (own && w > 0) {
+      if (drive && w > 0) {
         const amp = b.isPlayer ? (s.gulls > 0 ? K.GULL_WHEEL : 0) : w;
         if (amp > 0) b.heading = U().wrapAngle(b.heading + Math.sin(t * 4.7 + s.seed) * amp * dt);
         if (!b.isPlayer) {
@@ -1239,17 +1411,24 @@
   }
 
   // DEEP DISH does not just weigh more, it MOVES people. Mass alone reads as "they bounced off me";
-  // the item has to read as "I went through them". Two layers: a continuous shove that lasts as
-  // long as you are on top of somebody, and a one-shot SLAM the first time each victim is caught —
-  // a full 21 m/s throw with a spin on it, because the moment of contact is the event.
-  // x3.4 on a 0.98 m hull is a 3.3 m bite — you had to be almost touching, and rivals planted at
-  // 10, 13 and 18 m were simply never caught. It hits like a truck when it connects, so the
-  // problem was reach, not force: x9 gives it ~8.8 m, still far short of SHOCKWAVE's 34 m but wide
-  // enough that driving AT someone actually collects them.
-  function crushR(b) { return (b.radius || 3) * 9.0; }
+  // the item has to read as "I went through them". Two layers: a one-shot SLAM the first time each
+  // victim is caught — the full 21 m/s throw, because the moment of contact is the event — and a
+  // gentler shove while they are still under the ring, which cannot land again for SLAM_CD.
+  //
+  // The reach is FIXED. radius*9 read 8.8 m on a jet ski, 15.1 on a speedboat and 34 on the tour
+  // boat, so the ring the item draws was a different weapon in every hull and nobody could learn
+  // it. radius + 8 keeps the measured 8.8 m floor (jet ski 9.0, speedboat 9.7, F1 9.5).
+  //
+  // And the throw goes ACROSS the heavy boat's heading, not radially away from her: pushing a boat
+  // you caught from ASTERN — the item's whole point, "smash boats aside" — threw her DOWN THE ROAD
+  // at 48.3 m/s against a 41 m/s top (measured T4/x-02). Aside is where they go, with a quarter of
+  // a forward component so it still reads as a hit, and nothing that adds to their top end.
+  function crushR(b) { return (b.radius || 3) + K.SLAM_REACH; }
   function bulldoze(b, dt) {
     const rr = crushR(b);
     const heavyOwned = mine(b);
+    const fx = Math.sin(b.heading), fz = Math.cos(b.heading);
+    const lx = fz, lz = -fx;                 // the heavy boat's beam
     for (const o of S.boats) {
       if (o === b || o.finished) continue;
       const dx = o.pos.x - b.pos.x, dz = o.pos.z - b.pos.z;
@@ -1257,21 +1436,28 @@
       if (d2 > rr * rr || d2 < 1e-4) continue;
       const so = st(o);
       const own = mine(o);                   // the hull being run over decides that it was
+      if (!vulnerable(o)) { if (heavyOwned) b.bumpRecover = 0; continue; }
+      const sgn = (dx * lx + dz * lz) >= 0 ? 1 : -1;      // which beam they are on
+      const px = lx * sgn + fx * 0.25, pz = lz * sgn + fz * 0.25;
+      const pl = Math.hypot(px, pz) || 1;
       if (so.slamCd > 0) {
-        const d = Math.sqrt(d2);
-        if (own) { o.vel.x += (dx / d) * 70 * dt; o.vel.z += (dz / d) * 70 * dt; }
+        // still under the ring, but already slammed: they get moved aside, not juggled
+        if (own) { o.vel.x += (px / pl) * K.SLAM_HOLD * dt; o.vel.z += (pz / pl) * K.SLAM_HOLD * dt; }
         if (heavyOwned) b.bumpRecover = 0;
         continue;
       }
-      if (own && consumeShield(o, b)) { so.slamCd = K.SLAM_CD; continue; }
-      const d = Math.sqrt(d2);
-      const fx = Math.sin(b.heading), fz = Math.cos(b.heading);
+      if (own && consumeShield(o, b, 'DEEP DISH')) { so.slamCd = K.SLAM_CD; so.immune = K.IMMUNE_T; continue; }
       if (own) {
-        o.vel.x += (dx / d) * K.SLAM_PUSH; o.vel.z += (dz / d) * K.SLAM_PUSH;
-        o.angVel += (dx * fz - dz * fx > 0 ? 1 : -1) * K.SLAM_SPIN;
+        o.vel.x += (px / pl) * K.SLAM_PUSH; o.vel.z += (pz / pl) * K.SLAM_PUSH;
+        // never a boost: whatever the slam adds along the VICTIM'S own heading is capped at her top
+        const ofx = Math.sin(o.heading), ofz = Math.cos(o.heading);
+        const vf = o.vel.x * ofx + o.vel.z * ofz, otop = o.spec ? (o.spec.top || 40) : 40;
+        if (vf > otop) { o.vel.x -= ofx * (vf - otop); o.vel.z -= ofz * (vf - otop); }
+        so.yawKick = sgn * K.SLAM_YAW;       // hull, not angVel: physics scrubs angVel to nothing
         o.bumpRecover = Math.max(o.bumpRecover || 0, 1.1);
       }
       so.slamCd = K.SLAM_CD;                 // the beat is spent on every screen, hit or witness
+      so.immune = K.IMMUNE_T;                // and they are not run over again while they recover
       if (heavyOwned) b.bumpRecover = 0;     // the heavy one is not rattled by the light one
       popRing(o.pos.x, o.pos.y + 0.5, o.pos.z, 12, 0xffb03a);
       if (RR.FX && RR.FX.detonation) RR.FX.detonation(o.pos.x, o.pos.y + 0.3, o.pos.z, 0.85);
@@ -1283,6 +1469,13 @@
     }
   }
 
+  // A drop is spent on the boat that found it — and online that has to be true on every screen or
+  // one slick spins the whole room in turn. Same shape as the torpedo's claim: the victim declares.
+  function sendSpent(kind, p) {
+    if (!net() || !p.oid) return;
+    send({ t: 'pht', k: kind, f: p.oid, n: p.seq | 0, i: p.k | 0 });
+  }
+
   function updateHazards(dt) {
     for (let i = slicks.length - 1; i >= 0; i--) {
       const p = slicks[i];
@@ -1292,14 +1485,15 @@
         if (b.finished || !mine(b)) continue;    // your oil, but MY spin-out to declare
         if (b === p.owner && p.arm > 0) continue;
         const s = st(b);
-        if (s.spin > 0) continue;
+        if (!vulnerable(b)) continue;
         const rr = p.r + b.radius * 0.6;
         if (U().dist2(b.pos.x, b.pos.z, p.x, p.z) > rr * rr) continue;
-        if (consumeShield(b)) { p.t = 0; break; }
+        if (consumeShield(b, p.owner, 'OIL SLICK')) { p.t = 0; sendSpent('sl', p); break; }
         s.spin = K.SPIN_T;
         s.spinDir = (b.visRoll || 0) >= 0 ? 1 : -1;
         s.stamp = RR.Engine.time();
         p.t = Math.min(p.t, 0.35);           // a slick is spent on the boat that found it
+        sendSpent('sl', p);                  // …on every screen, not just this one (powerups-15)
         popRing(b.pos.x, 0.35, b.pos.z, 14, 0x7a5aa8);
         if (RR.FX && RR.FX.spray) {
           RR.FX.spray(b.pos.x, b.pos.y + 0.3, b.pos.z, 0, 4.5, 0, 34, 6.0, 2.0, 2);
@@ -1320,8 +1514,12 @@
         if (b === p.owner && p.arm > 0) continue;
         if (U().dist2(b.pos.x, b.pos.z, p.x, p.z) > p.r * p.r) continue;
         const s = st(b);
-        if (s.shield > 0) { consumeShield(b); continue; }
-        if (s.blind <= 0) land(b, p.owner, 'BLINDED BY GREEN DYE', 0.45, 0.8, 200);
+        // A block used to be worth exactly one frame: the shield went, the cloud stayed, and the
+        // next frame blinded you anyway (measured U5). Do what the slick does — the 13 m burst ring
+        // already reads as the cloud being blown apart.
+        if (s.shield > 0) { consumeShield(b, p.owner, 'GREEN DYE'); p.t = 0; sendSpent('dy', p); break; }
+        if (!vulnerable(b)) continue;
+        land(b, p.owner, 'BLINDED BY GREEN DYE', 0.45, 0.8, 200);
         s.blind = K.BLIND_T;
         s.stamp = RR.Engine.time();
       }
@@ -1354,7 +1552,8 @@
       p.life -= dt; p.arm -= dt;
       if (!route || p.life <= 0) { detonate(p, null); torps.splice(i, 1); continue; }
       p.d += K.TORP_SPD * dt;
-      if (p.d >= route.len - 4) { detonate(p, null); torps.splice(i, 1); continue; }
+      // absolute arc length, so on a loop it expires at the FLAG (laps*len), not at the seam
+      if (p.d >= courseEnd(route) - 4) { detonate(p, null); torps.splice(i, 1); continue; }
 
       // Re-acquire four times a second: it chases whoever is NEXT up the road, so a rival who
       // shields it or slides out of the way does not save the boat in front of them.
@@ -1364,6 +1563,7 @@
         let best = 1e9, pick = null;
         for (const b of S.boats) {
           if (b === p.owner || b.finished) continue;
+          if (!vulnerable(b)) continue;      // it passes a boat that is already spun and CLIMBS
           const gapM = (b.routeD || 0) - p.d;
           if (gapM > 1 && gapM < best) { best = gapM; pick = b; }
         }
@@ -1372,11 +1572,11 @@
       // aim: slide across to wherever the target is sitting in the channel
       const tgt = p.target;
       if (tgt && !tgt.finished) {
-        U().pathAt(route, U().clamp(tgt.routeD || 0, 0, route.len - 1), TPT);
+        U().pathAt(route, lapD(route, tgt.routeD || 0), TPT);
         const toff = (tgt.pos.x - TPT.x) * TPT.tz - (tgt.pos.z - TPT.z) * TPT.tx;
         p.off = U().damp(p.off, toff, K.TORP_TRACK, dt);
       }
-      U().pathAt(route, U().clamp(p.d, 0, route.len - 1), PPT);
+      U().pathAt(route, lapD(route, p.d), PPT);
       const half = Math.min(30, Math.max(5, PPT.w - 3));
       p.off = U().clamp(p.off, -half, half);
       const nx = PPT.x + PPT.tz * p.off, nz = PPT.z - PPT.tx * p.off;
@@ -1407,6 +1607,7 @@
       for (const b of S.boats) {
         if (b.finished || !mine(b)) continue;
         if (b === p.owner && p.arm > 0) continue;
+        if (!vulnerable(b)) continue;        // through a spun boat, still hunting the next one up
         const rr = K.TORP_R + b.radius;
         if (U().dist2(b.pos.x, b.pos.z, p.x, p.z) > rr * rr) continue;
         hit = b; break;
@@ -1438,12 +1639,14 @@
     }
     if (!victim) return;
     // credit is owed on every screen, including the shooter's — who learns it from the victim
-    if (!blocked && p.owner && p.owner.isPlayer) {
+    // online the victim's own client runs land() and the credit with it; here the shooter is being
+    // told by the wire, and this chip is the only credit that reaches their screen
+    if (!blocked && p.owner && p.owner.isPlayer && !mine(victim)) {
       chip(p.owner, 'item', 'TORPEDO HIT — ' + nameOf(victim), 1800);
       if (RR.Camera && RR.Camera.kick) RR.Camera.kick(0.3);
     }
     if (!mine(victim)) return;               // somebody else's hull: their client moves it, not ours
-    if (consumeShield(victim)) return;
+    if (consumeShield(victim, p.owner, 'TORPEDO')) return;
     const s = st(victim);
     s.spin = K.SPIN_T * 1.3;
     s.spinDir = (victim.visRoll || 0) >= 0 ? 1 : -1;
@@ -1465,7 +1668,7 @@
     const s = st(b);
     if (!s.held || s.roll > 0) return;
     if (s.aiHold > 0) { s.aiHold -= dt; return; }
-    const w = U().clamp((diff() - 0.7) / 0.75, 0, 1);     // 0 rookie · 0.4 skipper · 1 legend
+    const w = tierW();                     // ai.js's own curve: 0 rookie · 0.55 skipper · 1 legend
     // The clock is armed once per item (give() nulls it) and then allowed to RUN OUT. It used to be
     // re-armed on any frame it was already spent, so "patience gone, just use it" could only fire
     // on the one frame in twenty-one where the 0.35 s check gate happened to open on the same tick
@@ -1476,11 +1679,27 @@
     s.aiCheck -= dt;
     if (s.aiCheck > 0) return;
     s.aiCheck = 0.35;
+    // PATIENCE IS A FLOOR, NOT THE LIMIT. Patience alone let the field fire 15-21 items a minute at
+    // every tier (measured 12-race matrix), which decided the race before the driving did. One
+    // rival may not fire again inside AI_FIRE_GAP of her own last shot: 12 s at ROOKIE, 3 s at
+    // LEGEND, on the same w as her driving.
+    const gap = U().lerp(K.AI_FIRE_GAP[0], K.AI_FIRE_GAP[1], w);
+    if (RR.Engine.time() - (s.aiFireT || -1e9) < gap) return;
     if (s.aiPatience <= 0 || wants(b, s.held)) {
+      if (aiVeto(b, s.held, w)) return;
       fire(b);
+      s.aiFireT = RR.Engine.time();
       s.aiPatience = null;
       s.aiHold = U().lerp(2.2, 0.35, w);                  // no double-tapping the next crate
     }
+  }
+  // What a low tier will NOT do, whatever patience says: a ROOKIE does not put a torpedo into a
+  // boat she is already alongside. ahead() targets whoever is next up the road, so this protects
+  // the boat in front of her — usually the player — from a hit nobody could read coming.
+  function aiVeto(b, it, w) {
+    if (it.id !== 'torpedo' || w >= 0.35) return false;
+    const list = ahead(b, K.TORP_RANGE);
+    return !!(list.length && list[0].gapM < 40);
   }
   const wpt = {};
   function wants(b, it) {
@@ -1497,7 +1716,9 @@
     switch (it.id) {
       case 'turbo': {
         if (!S.route) return true;
-        U().pathAt(S.route, U().clamp((b.routeD || 0) + 60, 0, S.route.len - 1), wpt);
+        // wrapped, not clamped: on lap 2 of the lake circuit a clamp measured the bend against the
+        // FINISH-LINE tangent for the whole lap, so turbos landed in corners (powerups-x-03)
+        U().pathAt(S.route, lapD(S.route, (b.routeD || 0) + 60), wpt);
         const bend = Math.abs(U().wrapAngle(Math.atan2(wpt.tx, wpt.tz) - b.heading));
         return bend < 0.35 && Math.hypot(b.vel.x, b.vel.z) < (b.spec.top || 40) * 0.96;
       }
@@ -1512,27 +1733,35 @@
     }
   }
 
-  // Optional: a rival deviating for a crate the way a player does. main.js can call this between
-  // RR.AI.update and RR.Physics.update. Without it the field still collects — see K.AI_REACH — it
-  // just does not visibly go and get one.
+  // A rival deviating for a crate the way a player does. main.js calls this between RR.AI.update
+  // and RR.Physics.update; it is now the ONLY way the field goes and gets one, since K.AI_REACH is
+  // down to a metre.
   PU.aiSteer = function (pilot, dt) {
     if (!pilot || !pilot.boat || !active()) return;
     const b = pilot.boat;
     const s = st(b);
     if (s.held || b.finished) { s.seekX = 0; s.seekZ = 0; return; }
+    // Tight water, a hard bend and the grid are ai.js's own vetoes for blocking and shoving, and a
+    // crate is not worth more than either: rivals darting between bridge piers for one bumped 16
+    // times in 4 LEGEND races (rivals-12). Feature-detected — this works before and after ai.js
+    // publishes the flags.
+    if (pilot.tight || pilot.starting || (pilot.bend || 0) > 0.35) { s.seekX = 0; s.seekZ = 0; return; }
     s.seekT -= dt;
     if (s.seekT <= 0) {
       s.seekT = 0.25;
       s.seekX = 0; s.seekZ = 0;
       let best = 1e9;
       const fx = Math.sin(b.heading), fz = Math.cos(b.heading);
+      // never more than 0.6 of the channel off her line: in a 12 m gap 26 m of seek is a pier
+      let latMax = 26;
+      if (S.route) { U().pathAt(S.route, lapD(S.route, b.routeD || 0), SPT); latMax = Math.min(26, SPT.w * 0.6); }
       for (const c of crates) {
         if (c.taken) continue;
         const dx = c.x - b.pos.x, dz = c.z - b.pos.z;
         const along = dx * fx + dz * fz;
         if (along < 6 || along > 95) continue;
         const lat = Math.abs(dx * fz - dz * fx);
-        if (lat > 26) continue;
+        if (lat > latMax) continue;
         const cost = along + lat * 2.4;                  // near and nearly on the nose wins
         if (cost < best) { best = cost; s.seekX = c.x; s.seekZ = c.z; }
       }
@@ -1557,7 +1786,7 @@
       crateIM.setMatrixAt(i, M4);
       Q0.identity();
       const pulse = 1 + Math.sin(t * 3.4 + c.seed) * 0.07;
-      SC.set(pulse, 1, pulse);
+      SC.set(pulse, c.hy == null ? 1 : c.hy, pulse);      // clipped to the steel overhead, if any
       V3.y = y + 0.02;
       M4.compose(V3, Q0, SC);
       haloIM.setMatrixAt(i, M4);
@@ -1769,7 +1998,8 @@
         if (s.heavy > 0) b.mass = s.baseMass;
         s.held = null; s.roll = 0; s.shield = 0; s.heavy = 0; s.spin = 0;
         s.blind = 0; s.gulls = 0; s.turbo = 0; s.slamCd = 0;
-        b.turboFlame = 0;
+        s.immune = 0; s.yawKick = 0; s.fireQueued = false;
+        b.turboFlame = 0; b.shielded = false; b.shieldHit = 0;
       }
     }
     if (overlay) overlay.visible = false;
@@ -1805,6 +2035,7 @@
     crates = []; slicks = []; dyes = []; rings = []; walls = []; torps = [];
     S = null; keyWas = false; lastFireT = -1e9;
     lastHit.label = ''; lastHit.from = ''; lastHit.t = -1e9;
+    hitLog.length = 0;
     netReset();
   };
 
@@ -1816,12 +2047,17 @@
     group.visible = on;
     if (!on) { if (overlay) overlay.visible = false; return; }
     const t = RR.Engine.time();
-    if (S.phase === 'racing') {
+    // The sim runs from the flag to the last boat home, not to the PLAYER's line: rivals fight for
+    // 2nd to 6th for up to 12 s after she finishes and the results card ranks them. MEASURED (T11)
+    // with this gated on 'racing': a torpedo's d froze at 626 for a whole second, a rival's heavy
+    // timer sat at 8.0 and its flame stayed lit. Every write that MOVES a hull is gated on
+    // !b.finished inside applyEffects; only the fire key needs a live race.
+    if (S.phase !== 'countdown') {
       collect(dt);
       applyEffects(dt, t);
       updateHazards(dt);
       for (const b of S.boats) if (!b.isPlayer && !b.remote && !b.finished) aiBrain(b, dt);
-      pollPlayerKey();
+      if (S.phase === 'racing') pollPlayerKey();
     }
     drawCrates(t);
     drawHazards(t);
@@ -1831,6 +2067,10 @@
 
   // E or SPACE fires it. Polled, not bound, so input.js never has to move for this.
   let keyWas = false;
+  // main.js calls this on resume and on leaving photo mode. SPACE both confirms a menu row and
+  // fires the held item, and the key is still down on the frame the race comes back — so the rising
+  // edge below threw whatever you were holding every time you unpaused (powerups-08).
+  PU.armKey = function () { keyWas = true; };
   function pollPlayerKey() {
     const I = RR.Input;
     const down = !!(I && I.pressed && (I.pressed('KeyE') || I.pressed('Space')));
@@ -1862,6 +2102,25 @@
   };
   // Live crate list — {x, z, d, taken}. The minimap can draw off this; do not mutate it.
   PU.crates = function () { return crates; };
+  // Live hazards near a point, for ai.js's avoidance: {x, z, r, kind} per slick and dye cloud whose
+  // disc comes within r. Read-only and allocation-light — it is called from a pilot's update.
+  PU.hazardsNear = function (x, z, r) {
+    const out = [];
+    if (!active()) return out;
+    const rr = r || 0;
+    for (const p of slicks) {
+      const q = rr + p.r;
+      if (U().dist2(x, z, p.x, p.z) <= q * q) out.push({ x: p.x, z: p.z, r: p.r, kind: 'slick' });
+    }
+    for (const p of dyes) {
+      const q = rr + p.r;
+      if (U().dist2(x, z, p.x, p.z) <= q * q) out.push({ x: p.x, z: p.z, r: p.r, kind: 'dye' });
+    }
+    return out;
+  };
+  // Every landing this race, in order: {t, v, from, label}. The harness measures the post-hit grace
+  // off this, and a bug report can say who was hit twice.
+  PU.hitLog = function () { return hitLog.slice(); };
   // Put an item in a slot directly. Tests and the harness use it; a future "start with one" option
   // would too. Returns false if that boat is already holding something.
   PU.grant = function (id, boat) {
@@ -1885,6 +2144,11 @@
       if (p.owner === me) continue;
       const gapM = (me.routeD || 0) - p.d;
       if (gapM <= 0 || gapM > K.TORP_SPD * 3) continue;
+      // A fish locked on a boat sitting BETWEEN it and you is not your problem yet: the plate ran
+      // red for a torpedo that hit the boat behind (measured W4), and the HUD frames that plate as
+      // the last moment a SHIELD is worth spending. The 4 Hz re-acquire flips it to you if it
+      // misses.
+      if (p.target && p.target !== me && (p.target.routeD || 0) < (me.routeD || 0)) continue;
       const eta = gapM / K.TORP_SPD;
       if (!best || eta < best) best = eta;
     }

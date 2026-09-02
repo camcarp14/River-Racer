@@ -17,7 +17,10 @@
               has an answer.
      inboard — FIRE, a disc, gold the moment you are holding something; and above it, well clear,
               a small PAUSE disc, which dispatches ESC so main.js's one pause path stays the
-              only pause path.
+              only pause path — and, held for 0.6 s with its ring filling, dispatches KeyR, so a
+              phone player wedged behind a pier has the same paid tow the keyboard has.
+     map     — a tap on the minimap dispatches KeyC. The camera was the one desktop key with no
+              way in at all on the glass, and the map is the one target no thumb is near.
 
    What is NOT here, deliberately: an ASTERN button. Look-astern is a hold worth a dedicated
    sixth control on a keyboard, where controls are free; on a phone it was a 7.6x4em plate in the
@@ -160,6 +163,28 @@ html,body{overscroll-behavior:none}
   display:flex;align-items:center;justify-content:center;gap:.42em;opacity:.72}
 #rt-pause i{width:.4em;height:1.4em;border-radius:1px;background:var(--chi-blue,#7EC8E3)}
 #rt-pause.act{opacity:1;background:rgba(126,200,227,.30)}
+/* RESET is a LONG PRESS of this disc (0.6 s) rather than a sixth control: the note at the top of
+   this file measured what a permanent control costs in screen, and R is pressed once a race at
+   most. The ring IS the timer — it fills as you hold, so nobody discovers the gesture by accident
+   and nobody who starts it is left guessing. */
+#rt-pause .rt-ring{position:absolute;left:-3px;top:-3px;right:-3px;bottom:-3px;border-radius:50%;
+  pointer-events:none;opacity:0;transition:opacity 120ms linear;
+  background:conic-gradient(var(--gold,#FFC857) calc(var(--rp,0) * 360deg),rgba(0,0,0,0) 0);
+  -webkit-mask:radial-gradient(closest-side,rgba(0,0,0,0) 78%,#000 80%);
+          mask:radial-gradient(closest-side,rgba(0,0,0,0) 78%,#000 80%)}
+#rt-pause.hold .rt-ring{opacity:.9}
+#rt-pause.fired{background:rgba(255,200,87,.45)}
+/* CAM on a tap of the minimap — the map is top-right, clear of both thumbs, and the camera was the
+   one desktop key a phone player could not reach at all. The zone is placed in PIXELS off the live
+   #minimap rect (layout()), because the map sits in a different place on the phone HUD than on a
+   tablet's desktop one and no fixed em offset can serve both. */
+#rt-cam{display:none;align-items:flex-end;justify-content:center;padding-bottom:.3em}
+#rt-cam .rt-cap{font-size:.56em;opacity:.5;transition:opacity 140ms linear}
+#rt-cam.act .rt-cap{opacity:1;color:var(--gold,#FFC857)}
+/* boost refused: the band under the thumb says no, on the same 0.72 s the HUD's two reserve
+   segments blink for. */
+#rt-thr.deny #rt-boost{animation:rtdeny 360ms steps(1) 2}
+@keyframes rtdeny{0%{background:rgba(239,51,64,.50)}50%{background:rgba(239,51,64,0)}}
 
 /* ------------------------------------------------------------------ the architecture tour */
 /* The tour is one of six things on the title screen, and on a phone it was a dead end: you board
@@ -210,7 +235,8 @@ html,body{overscroll-behavior:none}
       '<div class="rt-band" id="rt-rev"><span class="rt-cap">REV</span></div>' +
     '</div>' +
     '<div id="rt-fire" class="rt-hit rt-panel"><i class="star6"></i><span class="rt-cap">FIRE</span></div>' +
-    '<div id="rt-pause" class="rt-hit rt-panel"><i></i><i></i></div>' +
+    '<div id="rt-pause" class="rt-hit rt-panel"><i></i><i></i><u class="rt-ring"></u></div>' +
+    '<div id="rt-cam" class="rt-hit"><span class="rt-cap">CAM</span></div>' +
     '<div id="rt-tour">' +
       '<div id="rt-about" class="rt-tb rt-panel"><span class="rt-cap">ABOUT</span></div>' +
       '<div id="rt-wheel" class="rt-tb rt-panel">' +
@@ -405,13 +431,80 @@ html,body{overscroll-behavior:none}
   }
   const pause = () => key('Escape');
 
-  let releaseFire = null, releasePause = null;
+  // ---- PAUSE: tap = ESC, 0.6 s hold = RESET -------------------------------------------------
+  // Wedged behind a pier or spun in the lock, the desktop escape hatch did not exist on the glass:
+  // the only way out was PAUSE -> RESTART RACE. The hold dispatches KeyR like every other control
+  // here dispatches its key, so main.js's paid tow (-0.30 boost, 1.2 s dead throttle) stays the
+  // single owner of the penalty. ESC moved to RELEASE, because a press that is on its way to
+  // becoming a reset must not pause the game first.
+  const HOLD_MS = 600;
+  let pauseId = null, pauseT0 = 0, pauseFired = false, pauseHold = 0, pauseRaf = 0;
+  const pauseRing = (v) => els.pause.style.setProperty('--rp', v.toFixed(3));
+  function pauseAnim() {
+    pauseRaf = 0;
+    if (pauseId === null) return;
+    pauseRing(clamp((performance.now() - pauseT0) / HOLD_MS, 0, 1));
+    pauseRaf = requestAnimationFrame(pauseAnim);
+  }
+  function pauseDown(e) {
+    if (pauseId === null && e.changedTouches.length) {
+      pauseId = e.changedTouches[0].identifier;
+      pauseFired = false;
+      pauseT0 = performance.now();
+      pauseRing(0);
+      els.pause.classList.add('act');
+      els.pause.classList.add('hold');
+      // a timer, not the rAF: on a stalled main thread the ring stops filling but the reset must
+      // still land at 0.6 s of real time
+      pauseHold = setTimeout(function () {
+        pauseHold = 0;
+        if (pauseId === null || pauseFired) return;
+        pauseFired = true;
+        pauseRing(1);
+        key('KeyR');
+        els.pause.classList.add('fired');
+        setTimeout(function () { if (els) els.pause.classList.remove('fired'); }, 260);
+      }, HOLD_MS);
+      if (!pauseRaf) pauseRaf = requestAnimationFrame(pauseAnim);
+    }
+    stop(e);
+  }
+  function pauseUp(e) {
+    if (pauseId !== null && findTouch(e.changedTouches, pauseId)) releasePauseBtn(false);
+    stop(e);
+  }
+  // silent: a blur / visibilitychange / the controls being taken away is not a pause request
+  function releasePauseBtn(silent) {
+    if (pauseId === null) return;
+    const fired = pauseFired;
+    pauseId = null; pauseFired = false;
+    if (pauseHold) { clearTimeout(pauseHold); pauseHold = 0; }
+    if (pauseRaf) { cancelAnimationFrame(pauseRaf); pauseRaf = 0; }
+    els.pause.classList.remove('act');
+    els.pause.classList.remove('hold');
+    pauseRing(0);
+    if (!fired && !silent) pause();
+  }
+
+  // boostDenied: RR.HUD.boostDenied() calls this, so the band under the thumb answers on the same
+  // frame as the two red reserve segments on the dial.
+  let denyTmr = 0;
+  TC.boostDenied = function () {
+    if (!els) return;
+    els.thr.classList.remove('deny');
+    void els.thr.offsetWidth;                       // restart the two flashes, not just extend them
+    els.thr.classList.add('deny');
+    if (denyTmr) clearTimeout(denyTmr);
+    denyTmr = setTimeout(function () { denyTmr = 0; if (els) els.thr.classList.remove('deny'); }, 760);
+  };
+
+  let releaseFire = null;
   const releaseTour = [];
   function releaseAll() {
     if (!els) return;
     releaseSteer(); releaseThr();
     if (releaseFire) releaseFire();
-    if (releasePause) releasePause();
+    releasePauseBtn(true);
     for (const r of releaseTour) r();
     // lookBack has no on-screen control any more, but input.js still ORs T.lookBack into the
     // camera every frame — so this keeps clearing it. A field that can only ever be false is
@@ -441,6 +534,21 @@ html,body{overscroll-behavior:none}
     // one number, owned here: the track sizes itself off it so the knob cannot lie about lock
     root.style.setProperty('--rt-r', steerR.toFixed(1) + 'px');
     steerRest();
+    camZone();
+  }
+
+  // The CAM tap zone is the minimap's own rect: hud.js owns where the map is (and it moves between
+  // the phone HUD and the tablet's desktop one), so the zone is measured off it rather than guessed
+  // at in ems. A map that is not there yet simply has no zone.
+  function camZone() {
+    const mm = document.getElementById('minimap');
+    const r = mm && mm.getBoundingClientRect();
+    if (!r || !r.width || !r.height) { els.cam.style.display = 'none'; return; }
+    els.cam.style.display = 'flex';
+    els.cam.style.left = r.left.toFixed(1) + 'px';
+    els.cam.style.top = r.top.toFixed(1) + 'px';
+    els.cam.style.width = r.width.toFixed(1) + 'px';
+    els.cam.style.height = r.height.toFixed(1) + 'px';
   }
 
   // Ten times a second, not per frame — this is two class toggles and one transform. It hangs off
@@ -477,6 +585,9 @@ html,body{overscroll-behavior:none}
       }
     }
 
+    // the map arrives with the HUD, which can be later than the first layout()
+    if (els.cam.style.display === 'none') camZone();
+
     const held = RR.Powerups && RR.Powerups.heldId ? RR.Powerups.heldId() : null;
     els.fire.classList.toggle('armed', !!held);
     const S = RR.Race && RR.Race.state ? RR.Race.state() : null;
@@ -512,7 +623,7 @@ html,body{overscroll-behavior:none}
     els = {
       steer: $('rt-steer'), stick: $('rt-stick'), knob: $('rt-knob'),
       thr: $('rt-thr'), tank: $('rt-tank'),
-      fire: $('rt-fire'), pause: $('rt-pause'),
+      fire: $('rt-fire'), pause: $('rt-pause'), cam: $('rt-cam'),
       wheel: $('rt-wheel'), wheelCap: $('rt-wheel-cap'), about: $('rt-about'), seat: $('rt-seat'),
       pips: root.querySelectorAll('#rt-pips i'),
     };
@@ -528,7 +639,13 @@ html,body{overscroll-behavior:none}
 
     releaseFire = button(els.fire, () => { T.item = true; if (IN.touchFire) IN.touchFire(); },
                                    () => { T.item = false; });
-    releasePause = button(els.pause, pause, null);
+    els.pause.addEventListener('touchstart', pauseDown, { passive: false });
+    els.pause.addEventListener('touchend', pauseUp, { passive: false });
+    els.pause.addEventListener('touchcancel', pauseUp, { passive: false });
+    els.pause.addEventListener('touchmove', stop, { passive: false });
+    // one tap of the map = C. Not a double-tap: the map is top-right, out of both thumbs' reach,
+    // and a stray brush costs a camera cut you undo with another tap.
+    button(els.cam, () => key('KeyC'), null);
     // the ride's three. Every one of them is a key the device does not have, dispatched as the key.
     releaseTour.push(button(els.wheel, () => key('KeyF'), null));
     releaseTour.push(button(els.about, () => key('Space'), null));

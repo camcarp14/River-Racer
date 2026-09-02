@@ -10,6 +10,26 @@
   const NAMES = ['“Wacker” Wade', 'Lou Canal', 'Stella Skyline', 'Deep Dish Dre',
     'Goose Island Gus', 'El Tracks Elena', 'Marina Mae', 'Bridgeport Bo',
     'Pilsen Pearl', 'Bubbly Creek Benny', 'Lockport Lucia', 'Calumet Cal'];
+  A.NAMES = NAMES;                       // race.js's cup roster draws from this list; so does main.js
+
+  // Twelve names and every race was Wade, Lou, Stella, Dre, Gus — in that order — because the
+  // pilot took NAMES[idx]. A field is drawn per race instead; the cup overrides it with its own
+  // stored roster, which is the whole point of a season. mulberry, never Math.random: a field is
+  // game state and has to be reproducible from its seed.
+  let field = null;
+  A.newField = function (seed) {
+    const pool = NAMES.slice();
+    const rng = U().mulberry((seed >>> 0) || 1);
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+    }
+    field = pool;
+    return pool.slice(0, 5);
+  };
+  // The tier weight, exported so the item brain runs off the SAME curve the driving does. It used
+  // its own linear one, so SKIPPER played its items at 40% of legend while driving at 55%.
+  A.tierW = (d) => Math.pow(U().clamp(((d == null ? 1 : d) - 0.7) / 0.75, 0, 1), 0.65);
 
   A.K = {
     APEX_GAIN: 0.62,        // half-widths pulled toward the inside of a bend at full lock
@@ -21,11 +41,12 @@
     DRAFT_SEEK: 0.25,       // steer bias toward a tow
     DRAFT_MIN: 8, DRAFT_MAX: 30,
     MISTAKE_PERIOD: 12.0,   // seconds between mistake rolls
-    MISTAKE_CHANCE: 0.55,   // scaled by tier: ~0.50 rookie · 0.29 skipper · 0.0 legend
+    MISTAKE_CHANCE: 0.55,   // scaled by tier in tune(): 0.45 rookie · 0.20 skipper · 0.0 legend
     BLOCK_GAIN: 0.35,       // half-widths of cover
     BLOCK_RANGE: 14,        // metres behind
     BLOCK_HOLD: 0.7, BLOCK_COOLDOWN: 5.0,
     SHOVE_RANGE: 9, SHOVE_COOLDOWN: 3.5,
+    PASS_HOLD: 1.5,         // seconds a pilot commits to the side she chose to pass on
     BOOST_TANK: 0.90,       // physics.js pays 15% more for a boost lit from a tank this full
     BOOST_SPILL: 0.97,      // a tank this full is about to waste the next gate — light it
   };
@@ -36,12 +57,16 @@
   // SKIPPER lands. d: 0.7 rookie · 1.0 skipper · 1.45 legend.
   function tune(d) {
     const K = A.K;
-    const q = U().clamp((d - 0.7) / 0.75, 0, 1);
-    const w = Math.pow(q, 0.65);                  // 0 rookie · 0.552 skipper · 1 legend
+    const w = A.tierW(d);                         // 0 rookie · 0.552 skipper · 1 legend
     const L = (a, b) => a + (b - a) * w;
     return {
-      throttle:   L(0.76, 1.00),      // 0.89  straight-line throttle cap. Drag is normalised to
-      // topSpeed, so cruise settles at sqrt(throttle): 87% / 94% / 100% of the hull's top end.
+      throttle:   L(0.76, 1.00),      // 0.89  straight-line throttle cap.
+      // Drag is normalised to topSpeed, so the DRAG LAW alone settles at sqrt(throttle) — 87% /
+      // 94% / 100%. The skin-friction term below full throttle takes a further bite out of that,
+      // and physics.js now fades it with the wetted surface as the hull comes up on plane, so a
+      // planing rival settles very close to the sqrt figure and a displacement one (the BELLE)
+      // still sits well under it. Measured cruise, FORMULA 350 GT: 0.76 -> 84%, 0.89 -> 92%,
+      // 1.00 -> 100% of top. The old comment quoted the drag law alone and was 10-17 points out.
       liftBend:   L(0.36, 0.60),      // 0.49  rad of channel swing before they ease at all
       liftFloor:  L(0.40, 0.78),      // 0.61  throttle held at the apex of a big bend
       liftSpan:   L(0.78, 0.68),      // 0.73  rad from first ease to the floor
@@ -86,16 +111,29 @@
     const k = tune(d);
     return {
       boat, route, diff: d, k,
-      name: NAMES[idx % NAMES.length],
-      // preferred offset across the channel (-1..1 of half width). Legends barely use it — the
+      name: (field || NAMES)[idx % NAMES.length],
+      // Preferred offset across the channel (-1..1 of half width). Legends barely use it — the
       // fast line is the fast line, and a rival sitting a lane wide of it is a rival losing.
-      lane: ((idx % 4) - 1.5) * 0.42 * k.lane,
+      //
+      // The SIGN has to agree with the grid. race.js puts boat i on the LEFT (+) when i is odd,
+      // and this pilot drives boat i = idx + 1, so an EVEN idx is a left-hand boat and wants a
+      // positive lane. The old ((idx % 4) - 1.5) gave three of five rivals the opposite sign, so
+      // every race opened with them slewing diagonally across each other's bows: measured, a
+      // full-severity three-boat crash at t = 1.4 s, every single start, identically.
+      lane: (idx % 2 ? -1 : 1) * [0.63, 0.63, 0.21, 0.21, 0.42, 0.42][idx % 6] * 0.42 * k.lane,
       skill: U().clamp(k.throttle + (idx * 0.37 % 1) * 0.10 - 0.03, 0.3, 1),
       aggression: 0.15 + d * 0.35 + (idx * 0.61 % 1) * 0.3,
       wobbleSeed: idx * 13.7,
       ctl: { throttle: 0, brake: 0, steer: 0, boost: false },
       stuckTimer: 0,
-      boostTimer: (0.4 + idx * 0.5) * k.boostGap,
+      // Nobody leans on anybody off the line: block and shove are held off for the first six
+      // seconds, which is the run to the first bridge.
+      blockT: 6, shoveT: 6,
+      // ROOKIE rivals do not light the full-tank boost on the first racing frame. They did — the
+      // grid tank is 1.0 and this timer runs through the 3.6 s countdown — so a first-timer lost
+      // every start to something they could not see, and then met the pile-up above. The 3.6
+      // covers the countdown; they light it 1.5-5 s after the horn instead.
+      boostTimer: d < 0.85 ? 3.6 + 1.5 + idx * 0.8 : (0.4 + idx * 0.5) * k.boostGap,
       boosting: false,
       apex: 0, block: 0, _blockTgt: 0, blockT: 0, blockHold: 0, steerSm: 0,
       draftBias: 0, mistakeT: A.K.MISTAKE_PERIOD, errT: 0, errKind: '', errDir: 1,
@@ -109,6 +147,24 @@
     const k = pilot.k || (pilot.k = tune(pilot.diff == null ? 1 : pilot.diff));
     const speed = Math.hypot(b.vel.x, b.vel.z);
     const S = RR.Race && RR.Race.state && RR.Race.state();
+
+    // ---- across the line, and done ----
+    // A finished rival used to keep full throttle: on a sprint she ran out of route, panicked on
+    // the |err| clamp and did donuts at the flag; on the two-lap circuit she started a THIRD lap
+    // and came back round through the player at 40 m/s during the finale shot. She coasts now.
+    if (b.finished) {
+      const c = pilot.ctl;
+      c.throttle = speed > 8 ? 0 : 0.25;
+      c.brake = 0; c.boost = false;
+      pilot.boosting = false; pilot._blockTgt = 0; pilot.block = 0; pilot.shoveHold = 0; pilot.apex = 0;
+      // steer back to the middle of the channel and stay out of the way
+      const path = route.path;
+      const dd = path.loop ? ((b.routeD % path.len) + path.len) % path.len : Math.min(path.len - 1, b.routeD);
+      U().pathAt(path, dd, pt);
+      const want = Math.atan2(pt.x - b.pos.x, pt.z - b.pos.z);
+      c.steer = U().clamp(U().wrapAngle(want - b.heading) * 1.2, -1, 1);
+      return c;
+    }
 
     // progress along route (race.js keeps b.routeD updated); loops wrap the lookahead.
     // Reading further down the channel IS the skill: it is what lets a pilot start the turn early
@@ -158,6 +214,11 @@
     if (pilot.blockHold <= 0) pilot._blockTgt = 0;
     const tightHere = pt.w < 16 ||
       (RR.Bridges && RR.Bridges.duckY && isFinite(RR.Bridges.duckY(b.pos.x, b.pos.z)));
+    // published for powerups.js: crate-seeking has the same tight-water veto blocking and shoving
+    // have had all along, and does not fire while the field is still sorting itself out
+    pilot.tight = tightHere;
+    pilot.bend = bend;
+    pilot.starting = b.routeD < 200;
     if (pilot.blockT <= 0 && !tightHere && S && S.phase === 'racing' && pilot.aggression > 0.35) {
       const bfx = Math.sin(b.heading), bfz = Math.cos(b.heading);
       for (const o of S.boats) {
@@ -180,7 +241,79 @@
     // steer toward the lookahead point, offset into lane + apex + block + draft, with a lazy
     // sine wobble. Better pilots wobble less and correct harder — legends hold a surgical line.
     const wobble = Math.sin(t * 0.6 + pilot.wobbleSeed) * k.wobble;
-    const laneOff = (pilot.lane + pilot.apex + wobble + (pilot.block || 0) + (pilot.draftBias || 0)) *
+    // ---- traffic sense ----
+    // The pack used to read as bumper cars — 228 rival-on-rival hits per four LEGEND races — because
+    // nothing here knew another boat was in front of it. Two rules fix most of it: keep a following
+    // distance, and pick the side you pass on by where the room actually is.
+    let follow = 1, passBias = 0;
+    if (S && S.phase === 'racing') {
+      const ffx = Math.sin(b.heading), ffz = Math.cos(b.heading);
+      let nearAhead = null, nearAlong = 1e9, squeeze = false;
+      // the lateral window has to be wider than a hull: two 2 m radii touch at 4 m of separation,
+      // so a 3 m window let the pair that was about to hit each other read as clear
+      const latW = tightHere ? 6.5 : 4.5;
+      for (const o of S.boats) {
+        if (o === b) continue;
+        const dx = o.pos.x - b.pos.x, dz = o.pos.z - b.pos.z;
+        const along = dx * ffx + dz * ffz, lat = dx * ffz - dz * ffx;
+        if (along > 1 && along < 11 && Math.abs(lat) < latW && along < nearAlong) { nearAlong = along; nearAhead = { o, along, lat }; }
+        // Under a bridge or in the lock there is no room to be two abreast. Whoever is BEHIND on
+        // the road gives way — measured, two rivals arriving at the first bridge on the same line
+        // hit each other at full severity, twice, and the pair then blocked the span.
+        if (tightHere && Math.abs(along) < 7 && Math.abs(lat) < 6.5 && (o.routeD || 0) > (b.routeD || 0)) squeeze = true;
+      }
+      if (squeeze) follow = Math.min(follow, k.liftFloor * 0.75);
+      if (nearAhead) {
+        const closing = (b.vel.x * ffx + b.vel.z * ffz) - (nearAhead.o.vel.x * ffx + nearAhead.o.vel.z * ffz);
+        // lift rather than climb into her transom — but only when actually closing on her
+        if (closing > 0.5 && nearAhead.along < 8) follow = Math.min(follow, k.liftFloor);
+        // and commit to a side: whichever has more channel left, held for PASS_HOLD so the pilot
+        // does not dither across her wake
+        pilot.passT = Math.max(0, (pilot.passT || 0) - dt);
+        if (pilot.passT <= 0 && !tightHere) {
+          const myLat = (b.pos.x - pt.x) * pt.tz - (b.pos.z - pt.z) * pt.tx;
+          const hers = myLat + nearAhead.lat;
+          pilot.passDir = hers > 0 ? -1 : 1;               // go the side she is not on
+          pilot.passT = A.K.PASS_HOLD;
+        }
+        if (pilot.passT > 0) passBias = pilot.passDir * 0.34;
+      } else { pilot.passT = Math.max(0, (pilot.passT || 0) - dt); }
+    }
+    // …and steer round the working river. Tour boats, taxis and kayaks are solid to the physics and
+    // the pilots drove straight into them (31 contacts per four ROOKIE races, one rival wedged on a
+    // Wendella for 2.6 s). Same treatment for a slick or a dye cloud, once powerups.js publishes them.
+    let dodge = 0;
+    const lookR = 34;
+    if (RR.Life && RR.Life.craft) {
+      const dfx = Math.sin(b.heading), dfz = Math.cos(b.heading);
+      for (const c of RR.Life.craft) {
+        const dx = c.g.position.x - b.pos.x, dz = c.g.position.z - b.pos.z;
+        const along = dx * dfx + dz * dfz, lat = dx * dfz - dz * dfx;
+        if (along < 2 || along > lookR || Math.abs(lat) > 13) continue;
+        dodge += -Math.sign(lat || 1) * U().clamp(1 - Math.abs(lat) / 13, 0, 1) * 0.35 * (1 - along / lookR);
+      }
+    }
+    if (RR.Powerups && RR.Powerups.hazardsNear) {
+      const hz = RR.Powerups.hazardsNear(b.pos.x, b.pos.z, lookR);
+      const dfx = Math.sin(b.heading), dfz = Math.cos(b.heading);
+      for (const h of (hz || [])) {
+        const dx = h.x - b.pos.x, dz = h.z - b.pos.z;
+        const along = dx * dfx + dz * dfz, lat = dx * dfz - dz * dfx;
+        const r = (h.r || 6) + 3;
+        if (along < 2 || along > lookR || Math.abs(lat) > r) continue;
+        dodge += -Math.sign(lat || 1) * U().clamp(1 - Math.abs(lat) / r, 0, 1) * 0.45 * (1 - along / lookR);
+      }
+    }
+    dodge = U().clamp(dodge, -0.5, 0.5);
+    // The RACING LINE fades in over the first 200 m; the LANE does not. That distinction is the
+    // whole fix: the lane is what holds a boat on the side of the channel the grid put her on
+    // (createPilot now signs it to match), so fading it out sends all six converging on the
+    // centreline together — measured, two same-row pairs hitting at severity 0.6-0.8 within
+    // 30 m of the flag. It is the apex cut and the wobble that make them cross each other, so
+    // those are what wait until the field is strung out.
+    const settle = U().smoothstep(60, 220, b.routeD);
+    const laneOff = (pilot.lane + (pilot.apex + wobble) * settle +
+      (pilot.block || 0) + (pilot.draftBias || 0) + passBias + dodge) *
       Math.max(4, pt.w - 8);
     const tx = pt.x - pt.tz * laneOff;
     const tz = pt.z + pt.tx * laneOff;
@@ -233,6 +366,10 @@
     // (>1.2 rad of channel swing) is worth touching the brake for.
     let th = 1;
     if (bend > k.liftBend) th = U().lerp(1, k.liftFloor, U().smoothstep(k.liftBend, k.liftBend + k.liftSpan, bend));
+    th = Math.min(th, follow);                                 // a boat three metres off the bow
+    // what the pilot MEANT to ask for, before the panic clamp: the unstick timer reads this, or a
+    // rival wedged nose-first (which is exactly when |err| trips the clamp) never counts as stuck
+    const wantTh = th * pilot.skill;
     if (Math.abs(err) > 1.1) th = Math.min(th, k.panicTh);
     pilot.ctl.brake = bend > k.brakeBend && speed > b.spec.top * k.brakeSpeed ? k.brakeForce : 0;
     th *= pilot.skill;
@@ -281,8 +418,11 @@
     if (gapM < -k.leadCap) pilot.boosting = false;
     pilot.ctl.boost = pilot.boosting;
     // final dash: inside the last 250 m the tank is worth nothing at the flag — empty it.
+    // Measured against the WHOLE race, not the lap: routeD carries lap*len, so `len - routeD % len`
+    // also hits 250 at the end of lap 1 on the two-lap circuit and every legend started lap 2 dry.
     if (S && S.route) {
-      const toGo = S.route.len - (b.routeD % S.route.len);
+      const total = S.route.loop ? (S.course.laps || 1) * S.route.len : (S.finishD || S.route.len);
+      const toGo = total - b.routeD;
       if (toGo < 250 && (pilot.diff > 1.2 || Math.abs(gapM) < 60)) {
         pilot.ctl.boost = b.boostEnergy > 0.05;
         pilot.boosting = pilot.ctl.boost;
@@ -290,8 +430,13 @@
     }
     if (b.bumpRecover > 0) { pilot.ctl.boost = false; pilot.boosting = false; }  // rattled pilots don't hit the button
 
-    // unstick: if wedged against a wall, back off and re-aim
-    if (speed < 1.2 && pilot.ctl.throttle > 0.5) pilot.stuckTimer += dt;
+    // Unstick: if wedged against a wall, back off and re-aim. Gated on what the pilot ASKED for
+    // (wantTh), not on what came out after the panic clamp and a 'lift' mistake had cut it — those
+    // two push the throttle under 0.5 in exactly the situation this exists for. A pilot grinding
+    // along the concrete at walking pace counts as stuck too, which is where they actually get
+    // caught now that a nose-in hit no longer pins the hull outright.
+    const grinding = speed < 3.5 && ((b.scrapeT || 0) > 0 || (b.contactT || 0) > 0);
+    if ((speed < 1.2 || grinding) && wantTh > 0.5 && (!S || S.phase === 'racing')) pilot.stuckTimer += dt;
     else pilot.stuckTimer = Math.max(0, pilot.stuckTimer - dt * 2);
     if (pilot.stuckTimer > 1.4) {
       pilot.ctl.throttle = 0;

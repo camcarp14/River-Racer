@@ -317,6 +317,12 @@
       setT(amb.hum.gain.gain, EPS, 0.40);
     }
     if (scrapeVoice) setT(scrapeVoice.gain.gain, EPS, 0.08);
+    if (windVoice) setT(windVoice.gain.gain, EPS, 0.30);
+    // The motor was the one voice this watchdog never covered: measured -38.6 dBFS before ESC and
+    // -38.3 dBFS three seconds into the pause, i.e. the engine roars on under the menu at whatever
+    // throttle you were carrying. e.exGain and e.sub are inside e.out, so one gain is enough, and
+    // doUpdate re-targets it on the next feed — resume needs no code at all.
+    if (engine) setT(engine.out.gain, EPS, 0.25);
     if (engine) setT(engine.sprayGain.gain, EPS, 0.12);
     if (rivalVoices) for (var i = 0; i < rivalVoices.length; i++) setT(rivalVoices[i].g.gain, EPS, 0.20);
     if (sendGain) setT(sendGain.gain, EPS, 0.25);
@@ -1010,6 +1016,92 @@
     chimeNote(t + 0.08, 1975.53, 0.22, 0.34);
   }
 
+  // The finish beat asks for wind and got silence: feel.js:106/130 has called wind(1,400) then
+  // wind(0,900) since the finale was written, so the "city lets you go" moment landed as an abrupt
+  // drop to near-nothing. One voice — brown noise, 900 Hz pole — on the ambience bus, two ramps.
+  var windVoice = null;
+  function doWind(level, ms) {
+    if (!ready()) return;
+    if (!windVoice) {
+      var src = noiseSource('brown');
+      var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900; lp.Q.value = 0.6;
+      var g = gain(EPS);
+      src.connect(lp); lp.connect(g); g.connect(ambBus || master);
+      src.start();
+      windVoice = { src: src, lp: lp, gain: g };
+    }
+    // 0.09 sits just over the water wash's own 0.045 ceiling: a swell, not a gale
+    var lv = Math.max(clamp01(level) * 0.09, EPS);
+    var t = now(), dur = Math.max(0.05, (ms == null ? 500 : ms) / 1000);
+    var gp = windVoice.gain.gain;
+    gp.cancelScheduledValues(t);
+    gp.setValueAtTime(Math.max(gp.value, EPS), t);
+    gp.linearRampToValueAtTime(lv, t + dur);
+  }
+
+  // --------------------------------------------------------------------------
+  // Boost, passes and rival finishes — the events that had no voice at all
+  // --------------------------------------------------------------------------
+  // SHIFT on a dry tank was indistinguishable from a broken key (measured: 1.5 s of SHIFT at
+  // energy 0.05 produced zero Audio and zero HUD calls). A dry click — a hard, short, dead knock,
+  // deliberately unmusical so it can never be mistaken for a chime that paid you something.
+  function doBoostDenied() {
+    if (!ready()) return;
+    var t = now();
+    var n = ctx.createBufferSource(); n.buffer = noiseBuffer('white');
+    var bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1500; bp.Q.value = 1.6;
+    var g = gain(0);
+    n.connect(bp); bp.connect(g); g.connect(fxBus);
+    env(g, t, 0.002, 0.11, 0.045);
+    n.start(t); n.stop(t + 0.08);
+    cleanupOnEnd(n, [n, bp, g]);
+    var o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(210, t);
+    o.frequency.exponentialRampToValueAtTime(120, t + 0.05);
+    var og = gain(0);
+    o.connect(og); og.connect(fxBus);
+    env(og, t, 0.002, 0.10, 0.06);
+    o.start(t); o.stop(t + 0.1);
+    cleanupOnEnd(o, [o, og]);
+  }
+
+  // Ignition: a 180 ms filtered-noise whoosh on the ENGINE bus, so it arrives from the motor and
+  // not from the UI. No camera kick with it — the measured FOV punch already carries the light-up,
+  // and a shake on every SHIFT tap fights the nausea ceiling at camera.js:409-411.
+  function doBoostIgnite() {
+    if (!ready()) return;
+    var t = now(), dur = 0.18;
+    var n = noiseSource('white');
+    var bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.9;
+    bp.frequency.setValueAtTime(420, t);
+    bp.frequency.exponentialRampToValueAtTime(2800, t + dur);
+    var g = gain(0);
+    n.connect(bp); bp.connect(g); g.connect(engineBus || fxBus);
+    g.gain.setValueAtTime(EPS, t);
+    g.gain.linearRampToValueAtTime(0.55, t + 0.035);
+    g.gain.exponentialRampToValueAtTime(EPS, t + dur);
+    n.start(t); n.stop(t + dur + 0.05);
+    cleanupOnEnd(n, [n, bp, g]);
+  }
+
+  // A place changing hands is the most emotionally loaded event in a racing game and it was a
+  // number flip. Two notes: up for one gained, down for one lost.
+  function doPassTick(up) {
+    if (!ready()) return;
+    var t = now();
+    if (up) { chimeNote(t, 784.0, 0.14, 0.09); chimeNote(t + 0.075, 1174.66, 0.15, 0.16); }
+    else { chimeNote(t, 784.0, 0.13, 0.09); chimeNote(t + 0.075, 523.25, 0.14, 0.18); }
+  }
+
+  // A rival crossing the line ahead of you: the same horn as a bridge, heard from the far side of
+  // the basin — quiet, dark, and two blasts so it reads as a finish and not as traffic.
+  function doRivalFinish() {
+    if (!ready()) return;
+    var t = now();
+    hornBlast(t, 146.83, 1.05, 0.045);
+    hornBlast(t + 1.15, 146.83, 0.75, 0.032);
+  }
+
   // --------------------------------------------------------------------------
   // One-shots
   // --------------------------------------------------------------------------
@@ -1575,9 +1667,13 @@
 
   function schedulerTick() {
     if (!ctx || !music.playing) return;
-    // suspend guard: ONLY after a genuinely long gap (backgrounded tab) skip ahead instead
-    // of flooding past-due notes. Ordinary main-thread stalls ride on the wide lookahead.
-    if (music.nextTime < ctx.currentTime - 2.5) {
+    // Stall guard. 2.5 s was too patient: the lookahead is only 0.35 s, so any hitch between the
+    // two (first-race shader compile, GC, a brief tab switch) left every note stamped in the past
+    // with its envelope already finished — measured, the music bus read -120 dBFS in 5 of 6
+    // windows under 1-3 s frames. 0.5 s resyncs instead, and `missed` keeps the bar grid so the
+    // countdown-to-downbeat handshake still lands on its downbeat. The lookahead stays at 0.35 s:
+    // scheduleRaceStep reads boostHeat/kickMute at schedule time, so a longer one lags the mix.
+    if (music.nextTime < ctx.currentTime - 0.5) {
       var missed = Math.ceil((ctx.currentTime - music.nextTime) / music.stepDur);
       music.step = (music.step + missed) % music.stepsTotal;
       music.nextTime = ctx.currentTime + 0.05;
@@ -1718,6 +1814,13 @@
     bridgeHorn: safe(doBridgeHorn),
     lScreech: safe(function (pan) { doLScreech(pan); }),
     houseBleed: safe(doHouseBleed),
-    boostGate: safe(doBoostGate)
+    boostGate: safe(doBoostGate),
+    // FEEDBACK: the events that had no voice — boost denied / lit, a place changing hands, a rival
+    // crossing the line, and the wind feel.js asks for at the finish.
+    boostDenied: safe(doBoostDenied),
+    boostIgnite: safe(doBoostIgnite),
+    passTick: safe(doPassTick),
+    rivalFinish: safe(doRivalFinish),
+    wind: safe(doWind)
   };
 })();

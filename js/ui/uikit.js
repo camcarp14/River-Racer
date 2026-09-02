@@ -373,6 +373,11 @@
 #ticker{position:absolute;left:1.625em;bottom:1.25em;display:flex;flex-direction:column;gap:.22em;
   opacity:0;transition:opacity var(--t-std) var(--e-out)}
 #ticker.on{opacity:1}
+/* The key wall parks on top of this for the first 9 s of every race — measured 160x17 px of
+   overlap, both at opacity 1, which is exactly the window the grid shuffle happens in. #ticker and
+   #boost-hint are siblings in TEMPLATE order ticker -> hint, so no sibling selector reaches back:
+   hud.js puts .wall on #hud while the legend is up and the strip steps over it. */
+#hud.wall #ticker{transform:translateY(-5.6em)}
 .tick-row{display:flex;align-items:center;gap:.6em;background:var(--panel);padding:.35em .7em;
   border-left:3px solid var(--rule-soft);border-radius:0 2px 2px 0;
   font:700 .74em/1 var(--f-ui);letter-spacing:.12em;color:var(--text-dim);min-width:11em}
@@ -883,8 +888,17 @@
      and narrow enough to stay out of the right-hand button stack */
   #item-call{font-size:1.5em;bottom:6.6em;max-width:56vw}
 
-  /* the rival ticker is the gap line's own information in longer words: the gap line stays */
-  #ticker{display:none}
+  /* The ticker was hidden outright here, so a phone player never learned a rival's name (and the
+     gap line alone says a number, not who). One compact row — nearest boat + gap — parked in the
+     empty band between the clock and the map, where no thumb reaches and nothing else lives.
+     nth-child(n+2) keeps it to ONE row: hud.js orders them ahead-then-behind, so leading you get
+     the boat chasing you and otherwise the boat you are chasing. */
+  #ticker{display:flex;left:auto;right:calc(9.4em + var(--sar));top:calc(.75em + var(--sat));
+    bottom:auto;max-width:11em}
+  #ticker .tick-row:nth-child(n+2){display:none}
+  .tick-row{min-width:0;gap:.5em;padding:.3em .55em;font-size:.6em;letter-spacing:.1em}
+  /* the wall is a keyboard legend and is display:none on the glass — nothing to step over */
+  #hud.wall #ticker{transform:none}
   /* The landmark blade, squeezed into the last free band on the left: the steering pad claims
      everything below 62% of the height, so the blade sits above it and gives up its architect
      line to do so — the NAME is the callout, the credit was always the footnote.
@@ -1021,6 +1035,7 @@
   #vol-panel input[type=range]{height:40px}
   /* the key wall is a keyboard legend; the controls are on the glass */
   #boost-hint{display:none}
+  #hud.wall #ticker{transform:none}
   /* …and so is the gold E on the item box, which promises a key this device does not have. The
      word beside it stays: the foot then reads FIRE, which is what the pad on the glass says too.
      Written after the rule that shows it and at the same specificity, so this simply wins. */

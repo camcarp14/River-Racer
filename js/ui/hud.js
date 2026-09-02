@@ -63,7 +63,8 @@
   let lastPos = 0, lastBoost = '', lastSpeed = -1, lastArc = '';
   let lastLap = '', lastTimer = '', lastWrong = null;
   let hintT = 0, hintGone = false, hintItems = null, hintTour = null;
-  let tickerT = 0;
+  let tickerT = 0, denyT = 0, lastWall = null, lastVig = -1, lastSpd = -1;
+  let lastGapsOn = null, lastAhead = '', lastBehind = '';
 
   // The key wall must never list a key that does nothing in the run you are actually in: SPACE is
   // the docent aboard the Architecture Tour and the item trigger everywhere else, and with items
@@ -90,6 +91,7 @@
       plate: $('pos-plate'), pos: $('pos-big'), posSuf: $('pos-suffix'), posTotal: $('pos-total'),
       lap: $('lap-line'), timer: $('timer'), timerNum: $('timer-num'), delta: $('delta'),
       gaps: $('gaps'), raceInfo: $('race-info'), speedo: $('speedo'),
+      gapA: $('gaps').children[0].querySelector('b'), gapB: $('gaps').children[1].querySelector('b'),
       cpFlash: $('checkpoint-flash'), wrong: $('wrongway'),
       count: $('countdown'), cdNum: $('cd-num'), cdStar: $('cd-star'), scatter: $('cd-scatter'),
       tag: $('landmark-tag'), ltName: $('lt-name'), ltSub: $('lt-sub'), docent: $('docent'),
@@ -142,12 +144,12 @@
   // full-tank bonus was a secret nobody could see themselves earning.
   const BOOST_COL = ['#EF3340', '#EF3340', '#7EC8E3', '#7EC8E3', '#7EC8E3',
     '#7EC8E3', '#7EC8E3', '#7EC8E3', '#FFC857', '#FFC857'];
-  function drawBoost(energy, burn) {
+  function drawBoost(energy, burn, deny) {
     const ctx = els && els.boostCtx;
     if (!ctx) return;
     const cells = Math.round(RR.U.clamp(energy, 0, 1) * 10);
     const prime = energy > 0.90;
-    const key = cells + '|' + (prime ? 1 : 0) + '|' + (burn ? 1 : 0);
+    const key = cells + '|' + (prime ? 1 : 0) + '|' + (burn ? 1 : 0) + '|' + (deny ? 1 : 0);
     if (key === lastBoost) return;
     lastBoost = key;
     const S = els.boost.width, c = S / 2, em = S / RING_EM;
@@ -157,10 +159,11 @@
     const r = em * 5.42, D = Math.PI / 180;
     for (let k = 0; k < 10; k++) {
       const a0 = (135 + k * 27) * D;
-      const on = k < cells;
+      const red = deny && k < 2;                  // the two reserve segments, blinking a refusal
+      const on = k < cells || red;
       const col = on ? BOOST_COL[k] : 'rgba(255,255,255,.075)';
       ctx.strokeStyle = col;
-      if (on && (burn || (prime && k >= 8))) { ctx.shadowBlur = em * 0.55; ctx.shadowColor = col; }
+      if (on && (burn || red || (prime && k >= 8))) { ctx.shadowBlur = em * 0.55; ctx.shadowColor = col; }
       else ctx.shadowBlur = 0;
       ctx.beginPath();
       ctx.arc(c, c, r, a0, a0 + 24 * D);
@@ -187,7 +190,17 @@
       if (els.inc) els.inc.classList.remove('on');
       incOn = false; incTxt = ''; incNear = null;
     }
-    if (on && !hintGone) { hintT = 9; els.hint.classList.remove('gone'); }
+    // arm the wall only when it is NOT already counting: H.show(true) also runs on resume from
+    // pause and on leaving photo mode, and each of those used to restart the full 9 s on top of
+    // the ticker. resetSession still gives every race its own wall.
+    if (on && !hintGone && hintT <= 0) { hintT = 9; els.hint.classList.remove('gone'); }
+  };
+
+  // SHIFT on a dry tank: blink the two red reserve segments twice (0.72 s, 4 phases of 0.18 s) —
+  // the segments the engine will not light below are the answer to "why did nothing happen".
+  H.boostDenied = function () {
+    denyT = 0.72;
+    if (RR.Touch && RR.Touch.boostDenied) RR.Touch.boostDenied();
   };
 
   // ---------- countdown ----------
@@ -242,6 +255,10 @@
     if (!els) return;
     if (kind === 'item') { itemCall(text, /SHIELD BLOCKED/.test(text) ? 'save' : 'fire'); return; }
     let c = chips.get(kind);
+    // A 150 ms live chip (the per-frame physics tells below) must never overwrite an EVENT chip
+    // that is still up: main.js writes 'CAUGHT IT +0.12 · 23°' on the same kind, on the same
+    // frame boat.drifting goes true, and the tell would eat it a frame later.
+    if (c && (ms != null && ms <= 200) && c.t > 0.25) return;
     if (!c) {
       const el = document.createElement('div');
       el.className = 'chip ' + kind;
@@ -322,13 +339,17 @@
     els.delta.classList.add('on');
   };
 
+  // The two <b> nodes are KEPT and only their text is written: rebuilding both fragments with
+  // innerHTML at 10 Hz was 17.8 DOM mutations a second on its own (measured probeA1).
   H.setGaps = function (ahead, behind) {
     if (!els) return;
     const on = ahead != null || behind != null;
-    els.gaps.classList.toggle('on', on);
+    if (on !== lastGapsOn) { els.gaps.classList.toggle('on', on); lastGapsOn = on; }
     if (!on) return;
-    els.gaps.children[0].innerHTML = 'AHEAD<b>' + (ahead == null ? '—' : ahead.toFixed(1) + 's') + '</b>';
-    els.gaps.children[1].innerHTML = 'BEHIND<b>' + (behind == null ? '—' : behind.toFixed(1) + 's') + '</b>';
+    const a = ahead == null ? '—' : ahead.toFixed(1) + 's';
+    const b = behind == null ? '—' : behind.toFixed(1) + 's';
+    if (a !== lastAhead) { els.gapA.textContent = a; lastAhead = a; }
+    if (b !== lastBehind) { els.gapB.textContent = b; lastBehind = b; }
   };
 
   // ---------- cinematic overlay ----------
@@ -339,8 +360,10 @@
   };
 
   // ---------- rival ticker ----------
+  // classList.add/remove RE-SERIALISE the class attribute even when nothing changes — measured 89
+  // mutations in 10 s from this one line — so every toggle below is a toggle(name, want).
   function drawTicker(race, boat) {
-    if (!race || !race.boats || race.boats.length < 2 || race.tour) { els.ticker.classList.remove('on'); return; }
+    if (!race || !race.boats || race.boats.length < 2 || race.tour) { els.ticker.classList.toggle('on', false); return; }
     let ahead = null, behind = null, ag = 0, bg = 0;
     const spd = Math.max(6, Math.hypot(boat.vel.x, boat.vel.z));
     for (const b of race.boats) {
@@ -352,8 +375,8 @@
     const rows = [];
     if (ahead) rows.push(['ahead', nameOf(ahead), ag]);
     if (behind) rows.push(['behind', nameOf(behind), bg]);
-    if (!rows.length) { els.ticker.classList.remove('on'); return; }
-    els.ticker.classList.add('on');
+    if (!rows.length) { els.ticker.classList.toggle('on', false); return; }
+    els.ticker.classList.toggle('on', true);
     while (els.ticker.children.length > rows.length) els.ticker.lastChild.remove();
     while (els.ticker.children.length < rows.length) {
       const r = document.createElement('div');
@@ -686,6 +709,17 @@
     updateIncoming(P);
   }
 
+  // The clock replaced its whole text node 60 times a second (measured 606 childList mutations
+  // over 10 s of racing) for a hundredths digit that is unreadable at speed. Tenths outside the
+  // last 10 s of a lap or the race; hundredths inside it, where the digit is the entire point.
+  function clockText(sec, fine) {
+    if (!isFinite(sec)) return '--:--.--';
+    const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+    const f = fine ? String(Math.floor((sec * 100) % 100)).padStart(2, '0')
+                   : String(Math.floor((sec * 10) % 10));
+    return m + ':' + String(s).padStart(2, '0') + '.' + f;
+  }
+
   // ---------- per frame ----------
   H.update = function (dt, boat, race) {
     if (!els) return;
@@ -694,23 +728,31 @@
     if (mph !== lastSpeed) { els.speed.textContent = mph; lastSpeed = mph; }
 
     const top = (boat.spec && boat.spec.top) || 40;
-    els.arc.style.setProperty('--spd', RR.U.clamp(speed / (top * 1.35), 0, 1).toFixed(3));
+    // --spd and the vignette used to be written EVERY FRAME (measured 12.3 + 4.1 style mutations a
+    // second). 0.005 of the arc is a third of a degree of sweep and 0.01 of the vignette is
+    // invisible: below those, the write buys nothing and costs a style recalc.
+    const spdN = RR.U.clamp(speed / (top * 1.35), 0, 1);
+    if (Math.abs(spdN - lastSpd) >= 0.005) { els.arc.style.setProperty('--spd', spdN.toFixed(3)); lastSpd = spdN; }
     const hot = speed > top * 0.92;
     const arcCol = boat.boostHeat > 0.35 ? '#EF3340' : hot ? '#FFC857' : '#7EC8E3';
     if (arcCol !== lastArc) { els.arc.style.setProperty('--arc', arcCol); lastArc = arcCol; }
     els.arc.classList.toggle('hot', hot || boat.boostHeat > 0.35);
 
     // speed vignette: the edges close in as you approach — and boost past — top speed
-    if (els.vig) els.vig.style.opacity = (RR.U.clamp((speed / top - 0.7) * 2.0, 0, 1) * 0.5 + (boat.boostHeat || 0) * 0.2).toFixed(2);
+    const vig = RR.U.clamp((speed / top - 0.7) * 2.0, 0, 1) * 0.5 + (boat.boostHeat || 0) * 0.2;
+    if (els.vig && Math.abs(vig - lastVig) >= 0.01) { els.vig.style.opacity = vig.toFixed(2); lastVig = vig; }
 
-    drawBoost(boat.boostEnergy || 0, (boat.boostHeat || 0) > 0.35);
+    if (denyT > 0) denyT = Math.max(0, denyT - dt);
+    drawBoost(boat.boostEnergy || 0, (boat.boostHeat || 0) > 0.35, denyT > 0 && Math.floor(denyT / 0.18) % 2 === 1);
 
     updateItems(dt);
     paintHintKeys(race);
 
-    // chips driven straight off the physics fields
-    if ((boat.draft || 0) > 0.25) H.chip('draft', 'DRAFTING', 150);
-    if (boat.drifting) H.chip('drift', 'DRIFT ×' + (boat.driftTime || 0).toFixed(1) + 's', 150);
+    // The boost economy, said out loud: a third of the tank is earned by drafting, airtime and a
+    // caught slide, and none of it was named. P1 made boat.drifting the CATCH itself.
+    if ((boat.draft || 0) > 0.25) H.chip('draft', 'DRAFT +SPEED', 150);
+    if (boat.airborne) H.chip('air', 'AIR +BOOST', 150);
+    if (boat.drifting) H.chip('drift', 'DRIFT +BOOST', 150);
     updateChips(dt);
 
     if (race) {
@@ -743,7 +785,11 @@
           ? 'LAP ' + Math.min(race.course.laps, boat.lap + 1) + '/' + race.course.laps
           : 'CHECKPOINT ' + Math.min(boat.nextCp, total) + '/' + total;
         if (lap !== lastLap) { els.lap.textContent = lap; lastLap = lap; }
-        const tm = RR.U.formatTime(race.time);
+        // hundredths only where they are read: the last 10 s of the lap or the race
+        const rt = race.route;
+        const left = rt ? (rt.loop ? rt.len - (((boat.routeD || 0) % rt.len) + rt.len) % rt.len
+                                   : rt.len - (boat.routeD || 0)) : 1e9;
+        const tm = clockText(race.time, left / Math.max(speed, 8) < 10);
         if (tm !== lastTimer) { els.timerNum.textContent = tm; lastTimer = tm; }
       }
       const ww = !!race.wrongWay;
@@ -755,7 +801,7 @@
         tickerT = 0.1;
         if (race.timeTrial) {
           H.setGaps(null, null);
-          els.ticker.classList.remove('on');
+          els.ticker.classList.toggle('on', false);
           H.setDelta(RR.Race && RR.Race.ghostDelta ? RR.Race.ghostDelta() : null);
         } else {
           H.setDelta(null);
@@ -769,6 +815,10 @@
       hintT -= dt;
       if (hintT <= 0) { hintGone = true; els.hint.classList.add('gone'); }
     }
+    // …and while it is up it lands ON the rival ticker (measured 160x17 px of overlap at t=1.6 s,
+    // both at opacity 1). They are siblings in TEMPLATE order ticker -> hint, so no `~` selector
+    // reaches back: a class on #hud lifts the ticker over the wall instead.
+    if (!hintGone !== lastWall) { lastWall = !hintGone; els.hud.classList.toggle('wall', lastWall); }
 
     if (cpFlashT > 0) { cpFlashT -= dt; if (cpFlashT <= 0) els.cpFlash.style.opacity = 0; }
     if (tagT > 0) { tagT -= dt; if (tagT <= 0) { els.tag.classList.remove('on'); tagName = null; } }
@@ -776,7 +826,8 @@
 
   H.resetSession = function () {
     tagSeen.clear(); tagName = null; lastPos = 0; hintGone = false; hintT = 0;
-    hintItems = null; hintTour = null;
+    hintItems = null; hintTour = null; denyT = 0; lastWall = null;
+    lastVig = -1; lastSpd = -1; lastGapsOn = null; lastAhead = ''; lastBehind = ''; lastTimer = '';
     clearCall(); callWall = -1e9;
     slotCls = null; lastFace = ''; lastItemName = '';
     lastAct = ''; lastSub = ''; lastHeldId = null; lockT = firedT = blurbT = 0;

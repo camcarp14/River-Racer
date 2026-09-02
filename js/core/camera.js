@@ -37,8 +37,22 @@
   let trauma = 0;
   let boom = 1, leash = 24, lostT = 0, recov = 0;
   let rigYaw = 0, leadYaw = 0, lookBackT = 0;
+  let swingTail = 0, revHold = 0, rev = 0;
 
-  C.cycle = function () { mode = (mode + 1) % MODES.length; };
+  // The camera you chose is the camera you get: C used to be forgotten at every race start, so a
+  // hull-cam player pressed it twice before every race and every RACE AGAIN. Storage is wrapped
+  // because a file:// origin is allowed to refuse it outright.
+  const CAM_KEY = 'rr_cam';
+  C.cycle = function () {
+    mode = (mode + 1) % MODES.length;
+    try { localStorage.setItem(CAM_KEY, String(mode)); } catch (e) { /* no storage */ }
+    return mode;
+  };
+  C.savedMode = function () {
+    let v = 0;
+    try { v = parseInt(localStorage.getItem(CAM_KEY), 10); } catch (e) { /* no storage */ }
+    return (v >= 0 && v < MODES.length) ? v : 0;
+  };
   C.kick = function (amount) { trauma = Math.min(1, trauma + amount); };
   C.setMode = function (m) { mode = m; };
   C.duck = function () { return C._duck || 0; };          // audio reverb send reads this
@@ -93,6 +107,7 @@
     C._duck = 0; C._roll = 0; C._fovB = 0;
     boom = 1; lostT = 0; recov = 0; relT = -1;   // a new race reclaims the rig from any release
     rigYaw = boat.heading; leadYaw = 0; lookBackT = 0;
+    swingTail = 0; revHold = 0; rev = 0;
     leash = Math.hypot(pos.x - boat.pos.x, pos.z - boat.pos.z) + 3;
   };
 
@@ -253,6 +268,14 @@
     const wantBack = !!(RR.Input && RR.Input.lookBack) ? 1 : 0;
     lookBackT = U().damp(lookBackT, wantBack, wantBack ? 8.0 : 6.5, dt);
     if (lookBackT < 0.0015) lookBackT = 0;
+    // HALFWAY ROUND is the dangerous pose: astern of the transom along rigYaw puts the lens 16.5 m
+    // ABEAM of a hull in a ~30 m channel, in the quay, and the boom then retracted to BOOM[6] and
+    // parked the lens 2.12 m off the hull for a full second (measured probeD2, speedboat 30 m/s).
+    // Pull the radius in to ~9 m through the swing instead, and snap the pose onto the channel
+    // fallback rather than retracting the arm — the swing motion masks the jump.
+    const swing = lookBackT > 0.03 && lookBackT < 0.97;
+    const swingK = swing ? 1 - 0.45 * Math.sin(Math.PI * lookBackT) : 1;
+    swingTail = swing ? 0.7 : Math.max(0, swingTail - dt);
 
     // ---- the gimbal. Azimuth comes straight off the hull heading, so the shot yaws WITH her.
     const azT = boat.heading + Math.PI * lookBackT;
@@ -263,7 +286,7 @@
     // IN and DOWN with speed, not out. The boom used to EXTEND at 0.10 m per m/s, which pushed the
     // lens 4 m further back exactly as the FOV punch opened up — the two cancelled and 85 mph
     // looked like 40. Low and close is what makes a bascule coming at you read as a wall.
-    const back = (m.back + spd * m.backSpd) * (1 - 0.14 * spdN * m.spdK) * (1 - 0.55 * recov);
+    const back = (m.back + spd * m.backSpd) * (1 - 0.14 * spdN * m.spdK) * (1 - 0.55 * recov) * swingK;
 
     // Never demand the lens sit further inside the channel than the boat itself does — a boat
     // grinding along the quay would otherwise reject every boom length and suck the camera in.
@@ -284,7 +307,7 @@
     if (!clean) {
       toWater(boat.pos.x + ox, boat.pos.z + oz, 0);
       const astern = cq.clear;
-      const wch = U().clamp((edge - astern) / 6, 0, 1);
+      const wch = swing ? 1 : U().clamp((edge - astern) / 6, 0, 1);
       if (wch > 0 && chPath) {
         U().pathAt(chPath, chD - chSign * back, cpt);
         const lim = Math.max(0, cpt.w - Math.max(edge, 0.5));
@@ -304,9 +327,20 @@
         if (cq.clear > bestC) { bestC = cq.clear; bf = BOOM[i]; }   // else the least bad one
       }
     }
-    boom = U().damp(boom, bf, bf < boom ? 12 : 2.5, dt);       // retract fast, extend back slowly
+    // retract fast, extend back slowly — except out of a look-back, where the slow 2.5/s extension
+    // was the whole 1 s recovery tail after the swing (measured dh 2.12 -> 13.2 m over ~1 s).
+    boom = U().damp(boom, bf, (bf < boom || swing || swingTail > 0) ? 12 : 2.5, dt);
+    // ---- REVERSING is blind: the rig kept looking forward while you backed into whatever you hit
+    // (measured probeA1: 5 s astern, dh 15.4-16.5 m, lens 5.4-6.2 m up, parked where the boat is
+    // going). Lift the lens 1.2 m and drop the aim 1.0 m and the transom — and the wall behind it —
+    // come into frame. No automatic 180: the full swing disorients on a brake tap.
+    const speedF = boat.vel.x * s + boat.vel.z * c;
+    const asking = speedF < -2 && (!RR.Input || (RR.Input.throttle || 0) < 0.05);
+    revHold = asking ? Math.min(0.6, revHold + dt) : Math.max(0, revHold - dt * 3);
+    rev = U().damp(rev, revHold >= 0.4 ? 1 : 0, 3.0, dt);   // damped: no step in pitch
     // a short boom has to come down with it or the shot turns into a plan view of your own deck
-    const up = (m.up + spd * m.upSpd) * (1 - 0.42 * spdN * m.spdK) * (0.42 + 0.58 * boom) * (1 - 0.42 * recov);
+    const up = (m.up + spd * m.upSpd) * (1 - 0.42 * spdN * m.spdK) * (0.42 + 0.58 * boom) * (1 - 0.42 * recov)
+               + 1.2 * rev;
 
     let tx = boat.pos.x + ox * boom;
     let tz = boat.pos.z + oz * boom;
@@ -320,10 +354,10 @@
       if (isFinite(deckY) && boat.pos.y < deckY - 1.5) duckTgt = 1;
     }
     C._duck = U().damp(C._duck || 0, duckTgt, 10, dt);   // 100 ms: dives under WITH you, never snaps
-    let lookUpEff = m.lookUp;
+    let lookUpEff = m.lookUp - 1.0 * rev;                // reversing: the aim drops to the transom
     if (C._duck > 0.01 && isFinite(deckY)) {
       ty = U().lerp(ty, Math.min(ty, deckY - 1.45), C._duck);
-      lookUpEff = m.lookUp - 0.5 * C._duck;
+      lookUpEff -= 0.5 * C._duck;
     }
 
     // keep the pose the spring is chasing inside the channel too, or it drags the lens at the wall
@@ -389,7 +423,12 @@
     leadYaw = U().damp(leadYaw, leadT, 5.0, dt);
     const aim = rigYaw + leadYaw;
     const reach = m.reach + spd * 0.42;
-    look.set(boat.pos.x + Math.sin(aim) * reach, boat.pos.y + lookUpEff, boat.pos.z + Math.cos(aim) * reach);
+    // A hover hull's cockpit is the TRAILING pod, not the nose: anchored on boat.pos the podracer's
+    // pod sat behind the ITEM plate at 114 mph (fb-podracer-fast.png). Anchoring the aim 3 m astern
+    // pulls the aim point in, tilts the lens down a touch, and lifts the pod up the frame.
+    const aBack = (boat.spec && boat.spec.hover) ? 3 : 0;
+    look.set(boat.pos.x - s * aBack + Math.sin(aim) * reach, boat.pos.y + lookUpEff,
+             boat.pos.z - c * aBack + Math.cos(aim) * reach);
 
     cam.position.copy(pos);
     cam.up.set(0, 1, 0);

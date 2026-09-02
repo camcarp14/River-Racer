@@ -24,8 +24,52 @@
     if (RR.Bridges && RR.Bridges.tags) M.setBridges(RR.Bridges.tags);
   };
 
+  // ---- the land+channel bitmap ------------------------------------------------------------
+  // Every river polygon, both banks, re-stroked 30 times a second was the whole cost of this map
+  // (every 3rd point of every path, filled AND stroked, per frame). The channel never moves, so it
+  // is baked ONCE into an offscreen canvas in world space and blitted through the same transform.
+  // Cached at SCALE_TRACK px/m — 1:1 at track scale, downsampled at lake scale — and drawn through
+  // ctx.scale, so the damped zoom (:78) still works on it.
+  let mapCache = null, cacheTried = false;
+  function buildCache() {
+    cacheTried = true;
+    if (!riverShape || !riverShape.length) return;
+    let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9;
+    for (const poly of riverShape) {
+      for (const p of poly) {
+        if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
+        if (p[1] < z0) z0 = p[1]; if (p[1] > z1) z1 = p[1];
+      }
+    }
+    const pad = 40;
+    x0 -= pad; z0 -= pad; x1 += pad; z1 += pad;
+    const wm = x1 - x0, hm = z1 - z0;
+    if (!(wm > 0 && hm > 0)) return;
+    const ppm = Math.min(SCALE_TRACK, 2048 / Math.max(wm, hm));
+    const cvv = document.createElement('canvas');
+    cvv.width = Math.max(1, Math.round(wm * ppm));
+    cvv.height = Math.max(1, Math.round(hm * ppm));
+    const c2 = cvv.getContext('2d');
+    if (!c2) return;
+    c2.setTransform(ppm, 0, 0, ppm, -x0 * ppm, -z0 * ppm);
+    c2.fillStyle = CHAN;
+    c2.strokeStyle = 'rgba(126,200,227,.30)';   // land/water edge — the fills alone are too close in value
+    c2.lineWidth = 1 / ppm;                     // one pixel in the bitmap, whatever it is scaled to
+    for (const poly of riverShape) {
+      c2.beginPath();
+      for (let i = 0; i < poly.length; i++) {
+        if (i) c2.lineTo(poly[i][0], poly[i][1]); else c2.moveTo(poly[i][0], poly[i][1]);
+      }
+      c2.closePath();
+      c2.fill();
+      c2.stroke();
+    }
+    mapCache = { cv: cvv, x: x0, z: z0, w: wm, h: hm };
+  }
+
   function buildShape() {
     riverShape = [];
+    mapCache = null; cacheTried = false;
     for (const key in RR.River.paths) {
       if (key.startsWith('lake')) continue;
       const p = RR.River.paths[key];
@@ -94,18 +138,8 @@
     ctx.fillRect(RR.River.lakeWestX, cz - 12000, 40000, 24000);
 
     const inv = 1 / scale;
-    ctx.fillStyle = CHAN;
-    ctx.strokeStyle = 'rgba(126,200,227,.30)';   // land/water edge — the fills alone are too close in value
-    ctx.lineWidth = 1 * inv;
-    for (const poly of riverShape) {
-      ctx.beginPath();
-      for (let i = 0; i < poly.length; i++) {
-        if (i) ctx.lineTo(poly[i][0], poly[i][1]); else ctx.moveTo(poly[i][0], poly[i][1]);
-      }
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-    }
+    if (!mapCache && !cacheTried) buildCache();
+    if (mapCache) ctx.drawImage(mapCache.cv, mapCache.x, mapCache.z, mapCache.w, mapCache.h);
 
     const route = race.route;
     const inLapD = route.loop ? player.routeD % route.len : player.routeD;
